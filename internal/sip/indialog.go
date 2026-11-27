@@ -643,6 +643,19 @@ type ReInvitation struct {
 	// too. A B2BUA that relays the PRACK of its other leg, with its body,
 	// sets it.
 	ManualPRACK bool
+	// Cancelled, when set, is a channel whose close cancels the
+	// re-INVITE, as CancelReInvite does. It is for a user that may have
+	// the reason to give the change up before ReInviteWith has sent the
+	// re-INVITE, when CancelReInvite would find none to cancel: a B2BUA
+	// passes the Cancelled of the re-INVITE that it relays here, so that
+	// a CANCEL that comes while the re-INVITE waits for its turn is not
+	// lost (InDialogRequest.Cancelled). A user that holds the re-INVITE
+	// in hand calls CancelReInvite instead.
+	Cancelled <-chan struct{}
+	// CancelHeaders, when set, gives the header fields of that CANCEL
+	// once Cancelled has closed, such as the Reason of the CANCEL that a
+	// B2BUA took on its other leg (RFC 3326 2).
+	CancelHeaders func() []HeaderField
 }
 
 // ReInvite is ReInviteWith for a re-INVITE with body and headers, whose
@@ -719,11 +732,20 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 	d.invite = inviteSent
 	d.expectReliable(cseq.Number)
 	t := d.takeTurn()
+	reinvite := &reInviteSent{offers: offers, manualPRACK: re.ManualPRACK, handsOver: re.OnProvisional != nil}
+	d.sentReInvite = reinvite
 	c.mu.Unlock()
 
-	reinvite := reInviteSent{offers: offers, manualPRACK: re.ManualPRACK, handsOver: re.OnProvisional != nil}
+	if re.Cancelled != nil {
+		// The watch ends with the final response of the re-INVITE, after
+		// which there is nothing left to cancel (RFC 3261 9.1).
+		over := make(chan struct{})
+		defer close(over)
+		c.ua.spawn(func() { d.cancelWhenAsked(re, over) })
+	}
 	var final *Message
 	ct, err := t.send(c, req)
+	d.sending(reinvite, ct)
 	if err == nil {
 		for resp := range ct.Responses() {
 			t.took(resp)
@@ -731,7 +753,7 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 				final = resp
 				break
 			}
-			if resp.StatusCode > 100 && d.reInviteProvisional(resp, &reinvite) && re.OnProvisional != nil {
+			if resp.StatusCode > 100 && d.reInviteProvisional(resp, reinvite) && re.OnProvisional != nil {
 				re.OnProvisional(resp)
 			}
 		}
@@ -744,6 +766,7 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 
 	c.mu.Lock()
 	d.invite = noInvite
+	d.sentReInvite = nil
 	// RFC 3262 4: the UAC keeps the RSeq until the final response. One
 	// that comes after it is discarded, which the RFC allows.
 	seq := d.reliable[cseq.Number]
@@ -790,6 +813,100 @@ type reInviteSent struct {
 	// offerRSeq is the RSeq of that response when it carried the offer,
 	// whose answer goes into its PRACK; 0 otherwise.
 	offerRSeq uint32
+
+	// ct is the client transaction of the re-INVITE, which CancelReInvite
+	// cancels; nil while the re-INVITE waits for its turn (turn), and
+	// when it never went out. cancelAsked tells that CancelReInvite was
+	// called in that time, with cancelHeaders, so that the CANCEL goes as
+	// soon as the request has.
+	ct            *ClientTransaction
+	cancelAsked   bool
+	cancelHeaders []HeaderField
+}
+
+// ErrNoReInvite is what CancelReInvite returns when this UA has no
+// re-INVITE within the dialog to cancel: it sent none, or the one it
+// sent has its final response already.
+var ErrNoReInvite = errors.New("sip: no re-INVITE of this UA within the dialog to cancel")
+
+// CancelReInvite cancels the re-INVITE that this UA has in progress
+// within the dialog (ReInviteWith). The CANCEL goes out once a
+// provisional response to the re-INVITE has come, and not at all once a
+// final response has (RFC 3261 9.1): a re-INVITE that still waits for
+// its turn or for the first response of the peer gets its CANCEL later,
+// and CancelReInvite returns before it goes. ReInviteWith then returns
+// the final response of the re-INVITE, normally 487 (Request
+// Terminated), and the session stays as it was (RFC 3261 14.1). A peer
+// that has made the change of the session already answers 2xx instead,
+// and the session is the one of that exchange (RFC 6141 3.3, 3.8).
+//
+// headers go into the CANCEL, such as a Reason that tells why the UA
+// gives the change up (RFC 3326 2): a UE that cannot reserve the
+// resources for a session it is changing cancels its re-INVITE (TS
+// 24.229 6.1.4.2 item b), and a B2BUA sends one for the CANCEL that it
+// took on its other leg.
+//
+// CancelReInvite returns ErrNoReInvite when there is no re-INVITE of
+// this UA in progress within the dialog. The INVITE that created the
+// dialog is not one: OutgoingCall.Cancel cancels that.
+func (d *CallDialog) CancelReInvite(headers ...HeaderField) error {
+	c := d.c
+	c.mu.Lock()
+	r := d.sentReInvite
+	if r == nil {
+		c.mu.Unlock()
+		return ErrNoReInvite
+	}
+	ct := r.ct
+	if ct == nil {
+		r.cancelAsked, r.cancelHeaders = true, headers
+		c.mu.Unlock()
+		return nil
+	}
+	c.mu.Unlock()
+	return d.sendCancel(ct, headers)
+}
+
+// cancelWhenAsked cancels the re-INVITE that ReInviteWith is sending
+// once re.Cancelled has closed (ReInvitation.Cancelled), and gives up
+// when the re-INVITE has its final response (over).
+func (d *CallDialog) cancelWhenAsked(re ReInvitation, over <-chan struct{}) {
+	select {
+	case <-re.Cancelled:
+	case <-over:
+		return
+	}
+	var headers []HeaderField
+	if re.CancelHeaders != nil {
+		headers = re.CancelHeaders()
+	}
+	d.CancelReInvite(headers...)
+}
+
+// sending gives the re-INVITE r the client transaction that carries it,
+// ct, and sends the CANCEL that CancelReInvite asked for while the
+// re-INVITE had none yet. A nil ct is a re-INVITE that did not go out,
+// which no CANCEL follows.
+func (d *CallDialog) sending(r *reInviteSent, ct *ClientTransaction) {
+	c := d.c
+	c.mu.Lock()
+	r.ct = ct
+	cancel, headers := r.cancelAsked, r.cancelHeaders
+	c.mu.Unlock()
+	if cancel && ct != nil {
+		d.sendCancel(ct, headers)
+	}
+}
+
+// sendCancel asks the client transaction of the re-INVITE for the
+// CANCEL, which it sends once a provisional response has come (RFC 3261
+// 9.1).
+func (d *CallDialog) sendCancel(ct *ClientTransaction, headers []HeaderField) error {
+	err := ct.Cancel(headers...)
+	if err != nil {
+		d.c.ua.log.Warn("CANCEL for the re-INVITE not sent", "call_id", ct.Request.Get("Call-ID"), "error", err.Error())
+	}
+	return err
 }
 
 // reInviteProvisional is RFC 3262 4 and 5 and RFC 6141 4.7 for resp, a

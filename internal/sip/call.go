@@ -224,6 +224,12 @@ type CallDialog struct {
 	// dialog. There is at most one, in either direction (RFC 3261 14.1,
 	// 14.2).
 	invite inviteProgress
+	// sentReInvite is the re-INVITE of this UA that has no final
+	// response (ReInviteWith); nil when none has, the INVITE that
+	// created the dialog included, which is no re-INVITE and is
+	// cancelled on the call itself (OutgoingCall.Cancel). It is what
+	// CancelReInvite cancels.
+	sentReInvite *reInviteSent
 	// unacked are the re-INVITEs of the peer whose 2xx waits for its
 	// ACK, by CSeq number. A second re-INVITE may come before the ACK of
 	// the first (RFC 3261 14.2), so there may be more than one.
