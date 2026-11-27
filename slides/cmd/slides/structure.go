@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/yuu-biz/ims-practice/slides/internal/deck"
@@ -23,10 +25,7 @@ func structureOf(d *deck.Deck) []string {
 			out = append(out, fmt.Sprintf("group %s of %s", g.ID, strings.Join(g.Nodes, " ")))
 		}
 		for _, e := range d.Model.Events {
-			// The names of the fields may be translated, where they say
-			// what a value is rather than name a header or an AVP; the
-			// number of them is the same.
-			fields := fmt.Sprint(len(e.Fields))
+			fields := fieldsOf(e)
 			switch e.Kind {
 			case deck.EventMessage:
 				out = append(out, fmt.Sprintf("message %s %q (%s) %s -> %s, fields %s", e.ID, deck.PlainText(e.Label), e.Protocol, e.From, e.To, fields))
@@ -68,4 +67,40 @@ func compareStructure(a, b []string) []string {
 		}
 	}
 	return out
+}
+
+var (
+	// literalName is the name of a header, an AVP or a parameter, such
+	// as Server-Name or Call-ID: the same in every language. A name in
+	// words, such as "what it stores", is translated.
+	literalName = regexp.MustCompile(`^[A-Za-z0-9]+(-[A-Za-z0-9]+)+$|^[A-Z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*$`)
+	// literalValue are the parts of a value that no translation changes:
+	// a name of a code such as DIAMETER_FIRST_REGISTRATION and a number
+	// in parentheses such as (2001).
+	literalValue = regexp.MustCompile(`[A-Z][A-Z0-9]*(_[A-Z0-9]+)+|\(\d+\)`)
+)
+
+// fieldsOf lists what the languages share of the fields of an event:
+// how many there are, the names that are headers or AVPs, and the
+// inline code, the names of codes and the numbers of the values.
+func fieldsOf(e deck.Event) string {
+	var parts []string
+	for _, f := range e.Fields {
+		var name string
+		if literalName.MatchString(f.Name) {
+			name = f.Name + ":"
+		}
+		var literal []string
+		for _, span := range f.Value {
+			if span.Code {
+				literal = append(literal, "`"+span.Text+"`")
+			} else {
+				literal = append(literal, literalValue.FindAllString(span.Text, -1)...)
+			}
+		}
+		// A translation may put the parts of a value in another order.
+		slices.Sort(literal)
+		parts = append(parts, "["+strings.TrimSpace(name+" "+strings.Join(literal, " "))+"]")
+	}
+	return fmt.Sprintf("%d %s", len(e.Fields), strings.Join(parts, " "))
 }

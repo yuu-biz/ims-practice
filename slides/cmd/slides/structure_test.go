@@ -35,3 +35,29 @@ func TestStructureComparesWhatTheLanguagesShare(t *testing.T) {
 		t.Error("another step passes")
 	}
 }
+
+// TestStructureComparesLiteralFields makes sure that a header name and
+// the codes and numbers of a value are the same in both languages, and
+// that the words of a field are not compared.
+func TestStructureComparesLiteralFields(t *testing.T) {
+	field := func(name, value string) []string {
+		e := deck.Event{ID: "x", Kind: deck.EventMessage, Label: []deck.Span{{Text: "UAA"}}, From: "a", To: "b", Protocol: "Cx",
+			Fields: []deck.Field{{Name: name, Value: []deck.Span{{Text: value}}}}}
+		return []string{fieldsOf(e)}
+	}
+	if p := compareStructure(field("Experimental-Result", "DIAMETER_FIRST_REGISTRATION (2001)"), field("Experimental-Result", "初回の DIAMETER_FIRST_REGISTRATION (2001)")); len(p) != 0 {
+		t.Errorf("translated words differ: %v", p)
+	}
+	if p := compareStructure(field("what it stores", "this S-CSCF"), field("記録すること", "この S-CSCF")); len(p) != 0 {
+		t.Errorf("translated names differ: %v", p)
+	}
+	for _, other := range [][]string{
+		field("Server-Name", "DIAMETER_FIRST_REGISTRATION (2001)"),
+		field("Experimental-Result", "DIAMETER_SUBSEQUENT_REGISTRATION (2001)"),
+		field("Experimental-Result", "DIAMETER_FIRST_REGISTRATION (2002)"),
+	} {
+		if p := compareStructure(field("Experimental-Result", "DIAMETER_FIRST_REGISTRATION (2001)"), other); len(p) == 0 {
+			t.Errorf("%v passes", other)
+		}
+	}
+}
