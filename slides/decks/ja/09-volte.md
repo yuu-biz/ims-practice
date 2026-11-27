@@ -2,6 +2,536 @@
 title: VoLTE の呼の流れ
 footer: ims-practice 勉強会 9. VoLTE
 lang: ja
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: volte10, label: volte10, role: 発信側の端末, at: [0, 0]}
+  - {id: epc, label: EPC + PCRF, role: アクセス網のスタブ, at: [1, 2]}
+  - {id: volte12, label: volte12, role: 着信側の端末, at: [0, 2]}
+  - {id: pcscf, label: P-CSCF, role: 最初の中継点, at: [1, 1]}
+  - {id: ue2, label: ue2, role: ソフトフォン, at: [2, 2]}
+  - {id: icscf, label: I-CSCF, role: ホーム網の入口, at: [2, 0]}
+  - {id: hss, label: HSS, role: 認証ベクトル, at: [3, 0]}
+  - {id: scscf, label: S-CSCF, role: 認証と登録, at: [3, 1]}
+  - {id: mmtel, label: MMTel AS, role: 通話の AS, at: [4, 1]}
+events:
+  # attach と P-CSCF の発見
+  - id: at-si
+    msg: GET /system-information
+    from: volte10
+    to: epc
+    proto: HTTP
+    fields:
+      - セル: MCC 001、MNC 01、TAC 1、ECI 257
+  - id: at-stream
+    msg: GET /ues/<IMSI>/events
+    from: volte10
+    to: epc
+    proto: HTTP
+    fields:
+      - パス: "`/ues/001010000000010/events`"
+      - 届くもの: 網が自分から送るメッセージ
+  - id: at-req
+    msg: ATTACH REQUEST
+    from: volte10
+    to: epc
+    proto: HTTP
+    note: (POST .../attach-request)
+    fields:
+      - ESM のコンテナ: PDN CONNECTIVITY REQUEST
+      - access_point_name: "`ims`"
+      - PCO: P-CSCF のアドレスを求める
+  - id: at-accept
+    msg: ATTACH ACCEPT
+    from: epc
+    to: volte10
+    proto: HTTP
+    note: (200)
+    fields:
+      - eps_bearer_identity: 5。信号のための default bearer
+      - eps_qos: QCI 5。IMS の信号の種類
+      - pdn_address: 172.28.0.120。加入者の静的なアドレス
+      - PCO: 識別子 000CH のコンテナに 172.28.0.40
+  - id: at-complete
+    msg: ATTACH COMPLETE
+    from: volte10
+    to: epc
+    proto: HTTP
+    fields:
+      - ESM のコンテナ: ACTIVATE DEFAULT EPS BEARER CONTEXT ACCEPT
+  - id: ue-pcscf
+    do: P-CSCF のアドレスを決める
+    at: volte10
+    fields:
+      - 確かめること: PDN のアドレスが、P-CSCF に届く自分のアドレスと同じか
+      - 使うもの: 一覧の先頭のアドレスと、ポート 5060
+  # IMS-AKA の 1 回目（手順 1 から 6）
+  - id: reg1-ue-p
+    msg: REGISTER
+    from: volte10
+    to: pcscf
+    proto: SIP
+    note: (1 回目)
+    fields:
+      - 送り先: UE の 5060 番から P-CSCF の 5060 番へ
+      - Security-Client: 自分のアソシエーションの申し出
+      - Require: "`sec-agree`。Proxy-Require にも入る"
+      - Authorization: "`algorithm=AKAv1-MD5`。nonce と response は空"
+  - id: pcscf-keep
+    do: Security-Client を預かる
+    at: pcscf
+    fields:
+      - 選ぶ方式: sec-agree があるので IMS-AKA
+      - 外して保存するもの: Security-Client
+      - Authorization に足すもの: '`integrity-protected="no"`'
+  - id: reg1-p-i
+    msg: REGISTER
+    from: pcscf
+    to: icscf
+    proto: SIP
+    note: (1 回目)
+  - id: reg1-i-s
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (1 回目)
+  - id: mar
+    msg: MAR
+    from: scscf
+    to: hss
+    proto: Cx
+    fields:
+      - 見たもの: '`integrity-protected="no"`。IMS-AKA の最初の登録'
+      - SIP-Auth-Data-Item: "方式 `Digest-AKAv1-MD5` の項目を 1 つ"
+  - id: hss-vector
+    do: 認証ベクトルを作る
+    at: hss
+    fields:
+      - 進めるもの: SQN_HE
+      - 計算するもの: RAND から MILENAGE で XRES、CK、IK、AUTN
+  - id: maa
+    msg: MAA
+    from: hss
+    to: scscf
+    proto: Cx
+    fields:
+      - SIP-Authenticate: RAND と AUTN を並べた 32 オクテット
+      - SIP-Authorization: XRES
+      - Confidentiality-Key: CK
+      - Integrity-Key: IK
+  - id: scscf-challenge
+    do: 問いを組み立てる
+    at: scscf
+    fields:
+      - nonce: RAND と AUTN の base64
+      - P-CSCF 向けのもの: "`ik` と `ck` のパラメータ"
+      - 取っておくもの: RAND と XRES
+  - id: r401-s-i
+    msg: "401"
+    from: scscf
+    to: icscf
+    proto: SIP
+    fields:
+      - WWW-Authenticate: "nonce、`algorithm=AKAv1-MD5`、`ik`、`ck`"
+  - id: r401-i-p
+    msg: "401"
+    from: icscf
+    to: pcscf
+    proto: SIP
+  - id: pcscf-sa
+    do: 鍵を外し、自分の申し出を足す
+    at: pcscf
+    fields:
+      - 外すもの: "`ik` と `ck`。鍵は UE まで運ばれない"
+      - 足すもの: Security-Server。保護サーバーポートは 5064 番
+  - id: r401-p-ue
+    msg: "401"
+    from: pcscf
+    to: volte10
+    proto: SIP
+    fields:
+      - 届く先: UE の 5060 番
+  # IMS-AKA の 2 回目（手順 7 から 12）
+  - id: ue-verify
+    do: 網を確かめる
+    at: volte10
+    fields:
+      - 比べるもの: AUTN の MAC と、USIM が計算した MAC
+      - もう 1 つの確認: SQN が新しいこと
+      - 計算するもの: RES、CK、IK
+  - id: reg2-ue-p
+    msg: REGISTER
+    from: volte10
+    to: pcscf
+    proto: SIP
+    note: (2 回目)
+    fields:
+      - 送り先: UE の 5062 番から P-CSCF の 5064 番へ
+      - Security-Verify: P-CSCF の Security-Server を写したもの
+      - Authorization: RES をパスワードにした response
+  - id: pcscf-verify
+    do: 取り決めを確かめる
+    at: pcscf
+    fields:
+      - 届いた先: 保護サーバーポート 5064 番
+      - Security-Verify: 自分が送った Security-Server と同じ
+      - Authorization に足すもの: '`integrity-protected="yes"`'
+  - id: reg2-p-i
+    msg: REGISTER
+    from: pcscf
+    to: icscf
+    proto: SIP
+    note: (2 回目)
+  - id: reg2-i-s
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (2 回目)
+  - id: scscf-verify
+    do: RES を確かめる
+    at: scscf
+    fields:
+      - 計算: XRES をパスワードにした Digest
+      - 一致したとき: SAR で登録を HSS に知らせる
+  - id: sar
+    msg: SAR
+    from: scscf
+    to: hss
+    proto: Cx
+  - id: saa
+    msg: SAA
+    from: hss
+    to: scscf
+    proto: Cx
+  - id: ok-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+  - id: ok-i-p
+    msg: 200 OK
+    from: icscf
+    to: pcscf
+    proto: SIP
+  - id: ok-p-ue
+    msg: 200 OK
+    from: pcscf
+    to: volte10
+    proto: SIP
+    fields:
+      - 送り先: P-CSCF の 5064 番から UE の 5062 番へ
+      - このあと: UE はすべての要求を 5064 番に送る
+      - P-Associated-URI: 規制されていない識別子。先頭が既定
+  # Rx の信号の経路
+  - id: aar-sig
+    msg: AAR
+    from: pcscf
+    to: epc
+    proto: Rx
+    note: (信号の経路)
+    fields:
+      - Flow-Usage: AF_SIGNALLING
+      - Media-Component-Number: 0。Flow-Number も 0
+      - Specific-Action: 2 と 4。bearer の喪失と解放
+      - Framed-IP-Address: 172.28.0.120
+  - id: aaa-sig
+    msg: AAA
+    from: epc
+    to: pcscf
+    proto: Rx
+    note: (信号の経路)
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+      - PCRF がしたこと: このアドレスの IP-CAN セッションと結び付けた
+  - id: reg-ue2
+    msg: REGISTER
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (ソフトフォン)
+    fields:
+      - 認証: SIP Digest とパスワード
+      - アクセス網: attach していない
+  - id: aar-ue2
+    msg: AAR
+    from: pcscf
+    to: epc
+    proto: Rx
+    note: (ue2 の信号の経路)
+    fields:
+      - Framed-IP-Address: 172.28.0.101
+  - id: aaa-ue2
+    msg: AAA
+    from: epc
+    to: pcscf
+    proto: Rx
+    note: (ue2 の信号の経路)
+    fields:
+      - Experimental-Result-Code: IP-CAN_SESSION_NOT_AVAILABLE (5065)
+  - id: pcscf-nopolicy
+    do: ポリシー制御なしで扱う
+    at: pcscf
+    fields:
+      - この UE については: 通話の AAR も送らない
+  # 通話のメディアと dedicated bearer
+  - id: inv-10-p
+    msg: INVITE
+    from: volte10
+    to: pcscf
+    proto: SIP
+    fields:
+      - Request-URI: "`tel:+12025550112`"
+      - Supported: "`100rel, timer, 199, precondition`。Require には入れない"
+      - SDP: offer。AMR-WB が先で、PCMU は最後
+      - "curr:qos local": "`none`。まだ資源を確保していない"
+      - "des:qos": "local は `mandatory`、remote は `optional`"
+  - id: inv-p-12
+    msg: INVITE
+    from: pcscf
+    to: volte12
+    proto: SIP
+    note: (両側の S-CSCF と MMTel AS を通ったあと)
+  - id: r183-12-p
+    msg: "183"
+    from: volte12
+    to: pcscf
+    proto: SIP
+    fields:
+      - Require: "`100rel`、`precondition`"
+      - SDP: "answer。`m=audio 60734 RTP/AVP 96 100` と `b=AS:41`"
+      - "conf:qos": "`remote sendrecv`。発信側の資源がそろったら知らせてほしい"
+      - "des:qos": 発信側の区間も mandatory に上げる
+  - id: aar-12
+    msg: AAR
+    from: pcscf
+    to: epc
+    proto: Rx
+    note: (着信側のメディア)
+    fields:
+      - AF-Application-Identifier: "`urn:urn-7:3gpp-service.ims.icsi.mmtel`"
+      - Media-Sub-Component: フロー 1 と 2。RTP と RTCP
+      - Flow-Description: "`permit in 17 from 172.28.0.121 to 172.28.0.50 40004`"
+      - Max-Requested-Bandwidth-UL: "80000。`b=AS` から。単位は bit/s"
+      - Rx-Request-Type: INITIAL_REQUEST
+  - id: pcrf-grant
+    do: 音声を許可する
+    at: epc
+    fields:
+      - QCI: 1。帯域を保証する会話音声
+      - 速度: P-CSCF が求めた帯域から。単位は kbit/s
+  - id: aaa-12
+    msg: AAA
+    from: epc
+    to: pcscf
+    proto: Rx
+    note: (着信側のメディア)
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  - id: bearer-12
+    msg: ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST
+    from: epc
+    to: volte12
+    proto: HTTP
+    fields:
+      - eps_bearer_identity: 6。linked は default bearer の 5
+      - eps_qos: QCI 1。上り 80、下り 41 kbit/s
+      - tft: UE と中継ノードの間の RTP と RTCP、上下で 4 つ
+  - id: ue12-reserved
+    do: 資源を確保したとみなす
+    at: volte12
+    fields:
+      - 答え: "`activate-dedicated-eps-bearer-context-accept`"
+      - プリコンディション: 自分の区間を sendrecv にする
+  - id: aar-10
+    msg: AAR
+    from: pcscf
+    to: epc
+    proto: Rx
+    note: (発信側のメディア)
+    fields:
+      - きっかけ: volte10 へ向かう 183。同じ answer を持っている
+      - Framed-IP-Address: 172.28.0.120
+  - id: aaa-10
+    msg: AAA
+    from: epc
+    to: pcscf
+    proto: Rx
+    note: (発信側のメディア)
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  - id: bearer-10
+    msg: ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST
+    from: epc
+    to: volte10
+    proto: HTTP
+    fields:
+      - tft: 相手のアドレスは中継ノードの 172.28.0.50
+  - id: ue10-reserved
+    do: 資源を確保したとみなす
+    at: volte10
+    fields:
+      - 次に送るもの: UPDATE。新しい offer で知らせる
+  - id: r183-p-10
+    msg: "183"
+    from: pcscf
+    to: volte10
+    proto: SIP
+    fields:
+      - 送るとき: 発信側の AAR に答えが返ってから
+  # プリコンディション
+  - id: prack
+    msg: PRACK
+    from: volte10
+    to: pcscf
+    proto: SIP
+    fields:
+      - RAck: 183 の RSeq と、INVITE の CSeq
+  - id: prack-ok
+    msg: 200 (PRACK)
+    from: pcscf
+    to: volte10
+    proto: SIP
+  - id: update-10-p
+    msg: UPDATE
+    from: volte10
+    to: pcscf
+    proto: SIP
+    fields:
+      - "curr:qos local": "`sendrecv`。dedicated bearer を受け取ったから"
+      - 送るとき: PRACK に 200 が返ってから
+  - id: update-p-12
+    msg: UPDATE
+    from: pcscf
+    to: volte12
+    proto: SIP
+  - id: update-ok-12
+    msg: 200 (UPDATE)
+    from: volte12
+    to: pcscf
+    proto: SIP
+    fields:
+      - "curr:qos local": "`sendrecv`"
+      - "curr:qos remote": "`sendrecv`。両方の区間がそろった"
+  - id: update-ok-10
+    msg: 200 (UPDATE)
+    from: pcscf
+    to: volte10
+    proto: SIP
+  - id: pre-met
+    do: 必須のプリコンディションがそろう
+    at: volte12
+    fields:
+      - 表の行: 区間（local と remote）と向き（send と recv）の組
+      - 鳴らす条件: mandatory の行がすべて current
+  - id: r180-12-p
+    msg: "180"
+    from: volte12
+    to: pcscf
+    proto: SIP
+    fields:
+      - ここで初めて: 資源がそろったので呼び出しを始める
+  - id: r180-p-10
+    msg: "180"
+    from: pcscf
+    to: volte10
+    proto: SIP
+    fields:
+      - 発信側で見ると: UPDATE への 200 より先に届くことがある
+  - id: ok-inv-12
+    msg: 200 (INVITE)
+    from: volte12
+    to: pcscf
+    proto: SIP
+    fields:
+      - SDP: 無い。answer は 183 で届いている
+  - id: ok-inv-10
+    msg: 200 (INVITE)
+    from: pcscf
+    to: volte10
+    proto: SIP
+  - id: ack
+    msg: ACK
+    from: volte10
+    to: pcscf
+    proto: SIP
+  # 網が bearer を落とす
+  - id: epc-deact
+    do: 音声の bearer を非活性化する
+    at: epc
+    fields:
+      - 始めるもの: 網が始める EPS bearer コンテキストの非活性化
+      - きっかけ: bearer への DELETE。ラボのボタンか `curl`
+  - id: deact-10
+    msg: DEACTIVATE EPS BEARER CONTEXT REQUEST
+    from: epc
+    to: volte10
+    proto: HTTP
+    note: (イベントストリーム)
+  - id: asr
+    msg: ASR
+    from: epc
+    to: pcscf
+    proto: Rx
+    fields:
+      - Abort-Cause: BEARER_RELEASED (0)
+      - RAR でない理由: 音声の bearer がこのセッションのメディアをすべて運んでいた
+  - id: asa
+    msg: ASA
+    from: pcscf
+    to: epc
+    proto: Rx
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  - id: str
+    msg: STR
+    from: pcscf
+    to: epc
+    proto: Rx
+    note: (続いて STA)
+    fields:
+      - 終えるもの: この通話の Rx のセッション
+  - id: pcscf-bye
+    do: 保存したダイアログから BYE を作る
+    at: pcscf
+    fields:
+      - 材料: Contact、タグ、CSeq、経路
+      - 送る先: 相手の側と、サービスを受ける UE
+  - id: bye-core
+    msg: BYE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (volte10 の名前で)
+    fields:
+      - Reason: '`SIP;cause=503;text="Service Unavailable"`'
+  - id: bye-10
+    msg: BYE
+    from: pcscf
+    to: volte10
+    proto: SIP
+    fields:
+      - Reason: "`SIP;cause=503`"
+      - このプロジェクトが足したもの: 信号の経路が残る UE にも知らせる
+  - id: bye-12
+    msg: BYE
+    from: pcscf
+    to: volte12
+    proto: SIP
+    note: (S-CSCF と MMTel AS を通ったあと)
+  - id: deact-12
+    msg: DEACTIVATE EPS BEARER CONTEXT REQUEST
+    from: epc
+    to: volte12
+    proto: HTTP
+    note: (イベントストリーム)
+    fields:
+      - その前に: volte12 の側の P-CSCF が STR でセッションを終える
+```
+
 ---
 
 # VoLTE の呼の流れ
@@ -49,6 +579,48 @@ ims-practice 勉強会 第 9 回（アクセス網、IMS-AKA、Rx でのポリ�
 ---
 
 ## 登場するノード
+
+```ims-scene
+id: nodes
+nodes: [volte10, epc, volte12, pcscf, ue2, icscf, hss, scscf, mmtel]
+lead: VoLTE の端末が増やすのは左の 3 つです。アクセス網と、そこにつながる 2 台の端末です。
+steps:
+  - id: volte10
+    title: volte10（172.28.0.120）
+    focus: [volte10]
+    text: |
+      発信側です。番号は `tel:+12025550110` で、加入者 10 の USIM に K と OPc があります。
+  - id: volte12
+    title: volte12（172.28.0.121）
+    focus: [volte12]
+    text: 着信側です。番号は `tel:+12025550112` で、呼び出し時間のあとに自分で応答します。
+  - id: epc
+    title: EPC スタブと PCRF（172.28.0.80）
+    focus: [epc]
+    checkpoint: true
+    text: |
+      役割 `epc` の 1 つのノードです。端末には HTTP の 8080 番で、P-CSCF には Rx の 3868 番で答えます。
+      本物の網では PDN GW と PCRF が別のノードで、あいだに Gx があります。
+  - id: pcscf
+    title: P-CSCF（172.28.0.40）
+    focus: [pcscf]
+    text: |
+      SIP の 5060 番と、IMS-AKA の端末のための保護サーバーポート 5064 番で待ちます。
+      PCRF に対する Rx のクライアントでもあります。
+  - id: core
+    title: I-CSCF、S-CSCF、HSS（172.28.0.20、30、10）
+    focus: [icscf, scscf, hss]
+    checkpoint: true
+    text: |
+      S-CSCF が IMS-AKA で認証を求め、HSS が認証ベクトルを作ります。
+      REGISTER は 1 回目も 2 回目も I-CSCF を通ります。
+  - id: others
+    title: ue2 と MMTel AS（172.28.0.101、75）
+    focus: [ue2, mmtel]
+    text: |
+      ue2 は attach しないソフトフォンで、PCMU だけを offer します。
+      MMTel AS は付加サービスの回と同じで、VoLTE の通話もすべてここを通ります。
+```
 
 | ノード | アドレス | VoLTE の通話での役割 |
 | --- | --- | --- |
@@ -105,6 +677,53 @@ ims-practice 勉強会 第 9 回（アクセス網、IMS-AKA、Rx でのポリ�
 ---
 
 ## attach と P-CSCF の発見
+
+```ims-scene
+id: attach
+view: ladder
+nodes: [volte10, epc, pcscf]
+lead: 端末は P-CSCF のアドレスをアクセス網から受け取ります。設定には書いてありません。
+steps:
+  - id: cell
+    title: セルの情報を読む
+    show: [at-si]
+    text: |
+      報知する無線が無いので、スタブはシステム情報を HTTP のリソースにしています。
+      端末はこの値を P-Access-Network-Info に書きます。
+  - id: stream
+    title: attach の前にイベントストリームを開く
+    show: [at-stream]
+    checkpoint: true
+    text: |
+      網が自分から送るものは開いたままのこの応答に少しずつ届きます。
+      attach より先に開くので、attach した直後に網が送るものも受け取れます。
+  - id: request
+    title: ATTACH REQUEST で IMS の APN につなぐ
+    show: [at-req]
+    text: EMM の ATTACH REQUEST が、ESM の PDN CONNECTIVITY REQUEST を運びます。PCO で P-CSCF のアドレスを求めます。
+  - id: accept
+    title: ATTACH ACCEPT がアドレスと bearer を渡す
+    show: [at-accept]
+    checkpoint: true
+    text: |
+      default bearer は QCI 5 で、IMS の信号のためのものです。
+      P-CSCF のアドレスは PCO の識別子 000CH のコンテナに入っています。
+  - id: complete
+    title: ATTACH COMPLETE で attach が終わる
+    show: [at-complete]
+    text: PDN 接続ができました。トンネルは無く、端末のパケットはそのまま相手に届きます。
+  - id: decide
+    title: 端末が P-CSCF を決める
+    show: [ue-pcscf]
+    text: |
+      一覧の先頭のアドレスだけを使います。PCO にポートは無いので、標準の 5060 番に送ります。
+  - id: register
+    title: 最初の REGISTER がそのアドレスへ
+    show: [reg1-ue-p]
+    detail: []
+    checkpoint: true
+    text: ここから登録が始まります。中身は次のシーンで 1 区間ずつ読みます。
+```
 
 ```ladder
 volte10, EPC スタブ
@@ -208,7 +827,75 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 ---
 
-## IMS-AKA の最初の REGISTER と 401
+## IMS-AKA の最初の REGISTER と 401（1 から 6）
+
+```ims-scene
+id: challenge
+nodes: [volte10, pcscf, icscf, scscf, hss]
+lead: HSS が渡すのはパスワードではなく、1 回だけ使う認証ベクトルです。
+steps:
+  - id: send
+    title: 保護されていない REGISTER
+    only: [reg1-ue-p]
+    checkpoint: true
+    text: |
+      端末が 5060 番に送る REGISTER は、この 1 通だけです。
+      Authorization の nonce と response は空で、誰を認証するかだけを伝えます。
+  - id: keep
+    title: P-CSCF が Security-Client を預かる
+    show: [pcscf-keep]
+    zoom: [volte10, pcscf]
+    text: |
+      sec-agree の Security-Client を見て、IMS-AKA を選びます。
+      外して保存し、まだ何にも保護されていないことを `integrity-protected` で伝えます。
+  - id: forward
+    title: I-CSCF を通って S-CSCF へ
+    show: [reg1-p-i, reg1-i-s]
+    active: reg1-i-s
+    text: |
+      I-CSCF は UAR と UAA で担当の S-CSCF を尋ねます。登録の回と同じなので、図では省いています。
+  - id: mar
+    title: S-CSCF が認証ベクトルを求める（MAR）
+    only: [reg1-i-s, mar]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: |
+      方式を `Unknown` のままにせず、IMS-AKA を名指しします。
+      そう決められるのは、P-CSCF が付けた `integrity-protected="no"` を見たからです。
+  - id: vector
+    title: HSS がベクトルを計算する
+    show: [hss-vector]
+    zoom: [icscf, hss, scscf]
+    text: SQN_HE を 1 つ進め、新しい RAND を選び、USIM と同じ鍵から 5 つの値を作ります。
+  - id: maa
+    title: HSS が問いと答えを返す（MAA）
+    show: [maa]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: |
+      RAND と AUTN は端末への問い、XRES は答え合わせの元、CK と IK はアソシエーションの鍵です。
+      パスワードはどこにもありません。
+  - id: nonce
+    title: S-CSCF が問いを組み立てる
+    show: [scscf-challenge]
+    zoom: [icscf, hss, scscf]
+    text: RAND と AUTN をそのまま base64 にして nonce にします。鍵は P-CSCF 向けの別のパラメータに入れます。
+  - id: back
+    title: 401 が P-CSCF まで戻る
+    only: [r401-s-i, r401-i-p]
+    active: r401-i-p
+    text: 401 は失敗ではなく、決まった手順の一部です。各ノードは自分の Via を取り除きます。
+  - id: strip
+    title: P-CSCF が鍵を外し、自分の申し出を足す
+    show: [pcscf-sa]
+    checkpoint: true
+    text: |
+      `ik` と `ck` はここで消えます。端末は同じ鍵を自分の K と RAND から計算できるので、送る必要がありません。
+  - id: ue
+    title: 401 が端末に届く
+    show: [r401-p-ue]
+    text: 行きも帰りも 5060 番です。保護ポートを使うのはこのあとの REGISTER からです。
+```
 
 | # | 区間 | 見どころ |
 | --- | --- | --- |
@@ -223,7 +910,73 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 ---
 
-## IMS-AKA で網を確かめて答える
+## IMS-AKA で網を確かめて答える（7 から 12）
+
+```ims-scene
+id: answer
+nodes: [volte10, epc, pcscf, icscf, scscf, hss]
+lead: 端末も網を確かめます。SIP Digest には無かった向きの認証です。
+steps:
+  - id: verify
+    title: 端末が AUTN を確かめる
+    only: [r401-p-ue, ue-verify]
+    active: ue-verify
+    zoom: [volte10, pcscf]
+    checkpoint: true
+    text: |
+      MAC が合えば、網が同じ K を知っていると分かります。
+      SQN が新しいことも確かめ、そのうえで RES、CK、IK を計算します。
+  - id: respond
+    title: アソシエーションを通る 2 回目の REGISTER
+    show: [reg2-ue-p]
+    zoom: [volte10, pcscf]
+    checkpoint: true
+    text: |
+      送り先が保護サーバーポートに変わります。response は RES をパスワードにした Digest です。
+      Security-Verify は途中の誰かが強い申し出を消していないかを確かめるためのものです。
+  - id: check
+    title: P-CSCF が取り決めを確かめる
+    show: [pcscf-verify]
+    zoom: [volte10, pcscf]
+    text: 届いたポートと Security-Verify が合っていたので、保護されたものとして扱います。
+  - id: forward
+    title: また I-CSCF を通って S-CSCF へ
+    show: [reg2-p-i, reg2-i-s]
+    active: reg2-i-s
+    text: 2 回目の UAR と UAA も登録の回と同じです。図では省いています。
+  - id: res
+    title: S-CSCF が RES を確かめる
+    only: [reg2-i-s, scscf-verify]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: 取っておいた XRES で同じ Digest を計算し、届いた response と比べます。
+  - id: sar
+    title: HSS に登録を知らせる（SAR と SAA）
+    show: [sar, saa]
+    active: sar
+    zoom: [icscf, hss, scscf]
+    text: ここから先は登録の回と同じです。SAA のプロファイルに、一緒に登録される識別子と iFC が入っています。
+  - id: ok
+    title: 200 OK が端末まで戻る
+    only: [ok-s-i, ok-i-p, ok-p-ue]
+    active: ok-p-ue
+    checkpoint: true
+    text: |
+      200 OK は保護ポートの組を通って戻り、アソシエーションはこれで確立します。
+      このあと端末はすべての要求を 5064 番に送ります。
+  - id: aar
+    title: P-CSCF が信号の経路を見張る
+    show: [aar-sig]
+    detail: []
+    text: |
+      登録できた端末について、信号の bearer を失ったら知らせるよう PCRF に頼みます。
+      中身は後半の Rx の節で読みます。
+  - id: aaa
+    title: PCRF が IP-CAN セッションと結び付ける
+    show: [aaa-sig]
+    detail: []
+    text: 200 OK とこの AAR はどちらが先に P-CSCF を出ることもあります。
+```
 
 | # | 区間 | 見どころ |
 | --- | --- | --- |
@@ -305,6 +1058,42 @@ P-CSCF はポリシーと課金の制御の AF（application function）です�
 
 ## 信号の経路の AAR（#786）
 
+```ims-scene
+id: signalling-path
+nodes: [volte10, epc, pcscf, ue2]
+lead: 登録した端末ごとに、Rx のセッションが 1 つできます。attach していない端末にはできません。
+steps:
+  - id: aar
+    title: 登録の直後の AAR
+    only: [aar-sig]
+    checkpoint: true
+    text: |
+      Media-Component-Description は 1 つで、番号はどちらも 0 です。
+      メディアではなく信号の流れだと、`Flow-Usage` が言っています。
+  - id: aaa
+    title: PCRF がアドレスで端末を見つける
+    show: [aaa-sig]
+    checkpoint: true
+    text: Framed-IP-Address で IP-CAN セッションと結び付け、bearer を失ったら知らせると答えます。
+  - id: softphone
+    title: attach していないソフトフォンが登録する
+    only: [reg-ue2]
+    text: ue2 は EPC スタブを通りません。登録そのものはこれまでの回と同じように成功します。
+  - id: notfound
+    title: PCRF は IP-CAN セッションを見つけられない
+    show: [aar-ue2, aaa-ue2]
+    active: aaa-ue2
+    detail: [aar-ue2, aaa-ue2]
+    checkpoint: true
+    text: 同じ AAR を送っても、このアドレスの PDN 接続がありません。
+  - id: nopolicy
+    title: P-CSCF はその端末をポリシー制御なしで扱う
+    show: [pcscf-nopolicy]
+    text: |
+      そのため、ソフトフォンの登録のたびに、この組がキャプチャに出ます。
+      前の回までのキャプチャにもあります。
+```
+
 | AVP | 値 |
 | --- | --- |
 | Media-Component-Number、Flow-Number | 0、0 |
@@ -322,6 +1111,69 @@ P-CSCF はポリシーと課金の制御の AF（application function）です�
 ---
 
 ## 通話のメディアの AAR
+
+```ims-scene
+id: media
+view: ladder
+nodes: [volte10, volte12, pcscf, epc]
+lead: 音声の通り道は SDP の answer を見た P-CSCF が頼んで作られます。
+steps:
+  - id: answer
+    title: 183 が answer を運ぶ
+    only: [inv-p-12, r183-12-p]
+    active: r183-12-p
+    detail: [r183-12-p]
+    checkpoint: true
+    text: |
+      INVITE は通話の回と同じ経路で届きます。図は両側の S-CSCF と MMTel AS を省いています。
+      183 の answer で、どのコーデックをどのポートで使うかが決まります。
+  - id: aar
+    title: 着信側の P-CSCF が資源を求める（AAR）
+    show: [aar-12]
+    checkpoint: true
+    text: |
+      どの 2 つのアドレスの間にどれだけの帯域が要るかを SDP から組み立てて渡します。
+      offer と answer の m= の行は `Codec-Data` にそのまま入ります。
+  - id: grant
+    title: PCRF が音声を許可する
+    show: [pcrf-grant]
+    text: 許可するのは音声だけで、種類は QCI 1 です。帯域は P-CSCF が求めた値から決まります。
+  - id: aaa
+    title: AAA は bearer より先に返る
+    show: [aaa-12]
+    checkpoint: true
+    text: 規則を入れる前か、入れるのと並行して答えます（TS 29.214 4.4.1）。
+  - id: bearer
+    title: スタブが dedicated bearer を作る
+    show: [bearer-12]
+    checkpoint: true
+    text: |
+      イベントストリームに届きます。TFT の 4 つのフィルタは端末と中継ノードの間の RTP と RTCP です。
+      default bearer は残り、音声の bearer がもう 1 本増えます。
+  - id: reserved
+    title: 端末が資源を確保したとみなす
+    show: [ue12-reserved]
+    text: 着信側はここでプリコンディションの自分の区間を満たします。呼び出しはまだ始めません。
+  - id: caller
+    title: 同じ answer が発信側でも AAR になる
+    show: [aar-10, aaa-10]
+    active: aar-10
+    detail: [aar-10]
+    checkpoint: true
+    text: |
+      183 は同じ P-CSCF をもう一度、こんどは発信側として通ります。
+      1 回の通話で、メディアの Rx のセッションが 2 つできます。信号の経路のセッションとは別です。
+  - id: caller-bearer
+    title: 発信側にも音声の bearer ができる
+    show: [bearer-10, ue10-reserved]
+    active: ue10-reserved
+    checkpoint: true
+    text: フィルタの相手のアドレスはもう一方の端末ではなく中継ノードです。
+  - id: forward
+    title: そのあとで 183 が発信側に届く
+    show: [r183-p-10]
+    text: P-CSCF は AAR に答えが返るまで 183 を渡しません。資源が無ければ、通話をここで終わらせます。
+```
 
 両側の P-CSCF は、SDP の answer がそろうと AAR を送ります。着信側は volte12 からの 183、発信側は volte10 に向かう 183 がきっかけです。
 
@@ -371,6 +1223,77 @@ data: {"eps_bearer_identity":6,"linked_eps_bearer_identity":5,
 ---
 
 ## プリコンディション（資源がそろうまで鳴らさない）
+
+```ims-scene
+id: precondition
+view: ladder
+nodes: [volte10, pcscf, volte12]
+lead: 着信側が鳴り始めるのは、両方の区間の資源がそろってからです。
+steps:
+  - id: invite
+    title: INVITE が offer を運ぶ
+    only: [inv-10-p, inv-p-12]
+    active: inv-10-p
+    detail: [inv-10-p]
+    checkpoint: true
+    text: |
+      `curr:qos local` が `none` です。発信側はまだ音声の bearer を持っていません。
+      このしくみは Supported で申し出るだけで、Require には入れません。
+  - id: answer
+    title: 183 が answer と知らせの求めを返す
+    show: [r183-12-p]
+    checkpoint: true
+    text: |
+      着信側は発信側の区間も mandatory に上げ、資源がそろったら知らせてほしいと求めます。
+      自分の資源はまだ `none` です。
+  - id: resources
+    title: 両側の資源がそろってから 183 が進む
+    show: [r183-p-10]
+    text: |
+      このあいだに、前のシーンの 2 つの AAR と 2 本の bearer が入ります。
+      発信側に 183 が届くのはそのあとです。
+  - id: prack
+    title: PRACK で 183 を確かめる
+    show: [prack, prack-ok]
+    active: prack-ok
+    detail: [prack]
+    text: 183 は信頼性のある暫定応答なので、確認が要ります。UPDATE はこの 200 を待ちます。
+  - id: update
+    title: UPDATE が自分の区間を伝える
+    show: [update-10-p, update-p-12]
+    active: update-10-p
+    detail: [update-10-p]
+    checkpoint: true
+    text: |
+      発信側は dedicated bearer を受け取ったので、`curr:qos local` が `sendrecv` になります。
+      状態の更新に使うのは UPDATE です。
+  - id: both
+    title: 200 で両方の区間がそろう
+    show: [update-ok-12]
+    checkpoint: true
+    text: 着信側から見た local と remote が、どちらも `sendrecv` になりました。
+  - id: alert
+    title: ここで初めて呼び出しが始まる
+    show: [pre-met, r180-12-p]
+    active: r180-12-p
+    detail: [pre-met, r180-12-p]
+    checkpoint: true
+    text: 必須の行がすべて current になったので、着信側は 180 を返します。
+  - id: caller
+    title: 発信側では 2 つの応答が行き違う
+    show: [update-ok-10, r180-p-10]
+    active: r180-p-10
+    checkpoint: true
+    text: |
+      P-CSCF は新しい answer の AAR のあいだ 200 を止めるので、180 が先に届くことがあります。
+      フレームの番号で順番を確かめます。
+  - id: answered
+    title: 応答と ACK で通話が確定する
+    show: [ok-inv-12, ok-inv-10, ack]
+    active: ack
+    detail: [ok-inv-12]
+    text: 200 (INVITE) に SDP はありません。answer は信頼性のある 183 で届いています。
+```
 
 ```ladder
 volte10, P-CSCF, PCRF, volte12
@@ -502,6 +1425,63 @@ Adaptive Multi-Rate
 ---
 
 ## 網が bearer を落とす
+
+```ims-scene
+id: release
+view: ladder
+nodes: [volte10, volte12, pcscf, scscf, epc]
+lead: 端末が切らなくても、資源を取り上げた網が通話を終わらせます。
+steps:
+  - id: deactivate
+    title: 網が音声の bearer を落とす
+    only: [epc-deact]
+    checkpoint: true
+    text: |
+      無線が切れたときと同じ、網が始める非活性化です。
+      始めるのはラボのボタンか、上の `curl` です。図は網の中だけを描いています。
+  - id: tell
+    title: 端末に非活性化を知らせる
+    show: [deact-10]
+    text: イベントストリームに届きます。volte10 は自分では BYE を送りません。
+  - id: asr
+    title: PCRF が Rx のセッションを中止する（ASR）
+    show: [asr, asa]
+    active: asr
+    detail: [asr]
+    checkpoint: true
+    text: |
+      失ったフローを RAR で知らせるのではなく、セッションごと終わらせます。
+      P-CSCF は ASA で答えます。
+  - id: str
+    title: P-CSCF も STR でセッションを終える
+    show: [str]
+    text: 普通の BYE で終わる通話でも、両側の P-CSCF がこの STR を送ります。
+  - id: build
+    title: 保存したダイアログから BYE を作る
+    show: [pcscf-bye]
+    checkpoint: true
+    text: 端末が送るはずだった BYE を P-CSCF が代わりに組み立てます。
+  - id: remote
+    title: 相手の側へ、サービスを受ける端末の名前で
+    show: [bye-core]
+    checkpoint: true
+    text: Reason で理由が分かります。`cause=503` は、サービスが使えなくなったことを表します。
+  - id: ue
+    title: サービスを受ける端末にも BYE
+    show: [bye-10]
+    checkpoint: true
+    text: |
+      この BYE は、このプロジェクトが足したものです。
+      音声の bearer だけを失った端末は信号の経路を持ったままなので、知らせないと通話に残り続けます。
+  - id: far
+    title: BYE が着信側に届く
+    show: [bye-12]
+    text: 相手側へは S-CSCF と MMTel AS を通ってから届きます。Reason は同じです。
+  - id: release12
+    title: 着信側の bearer も解放される
+    show: [deact-12]
+    text: volte12 の通話が終わると、その側の Rx のセッションも終わり、スタブが bearer を解放します。
+```
 
 ```sh
 curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/001010000000010/bearers/6
@@ -640,6 +1620,43 @@ docker compose run --rm volte10 call -epc http://172.28.0.80:8080 \
 ---
 
 ## コードで確かめる
+
+```ims-scene
+id: code
+nodes: [volte10, epc, volte12, pcscf, scscf, hss]
+lead: この回で増えたものは、ノードごとに読む場所が分かれています。
+steps:
+  - id: epc
+    title: アクセス網のスタブと PCRF
+    focus: [epc]
+    text: "`internal/epc` の `http.go`、`api.go`、`network.go`、`pcrf.go`"
+  - id: access
+    title: 端末から見たアクセス網
+    focus: [volte10, volte12]
+    text: "`internal/ue/access.go`、`access_epc.go`"
+  - id: vector
+    title: MILENAGE と認証ベクトル
+    focus: [hss]
+    checkpoint: true
+    text: "`internal/milenage`、`internal/aka`"
+  - id: aka
+    title: IMS-AKA の問いと sec-agree
+    focus: [scscf, pcscf, volte10]
+    text: "`internal/scscf/aka.go`、`internal/pcscf/secagree.go`、`internal/ue/aka.go`"
+  - id: policy
+    title: ポリシー制御と Rx
+    focus: [pcscf, epc]
+    checkpoint: true
+    text: "`internal/policy`、`internal/rx`、`internal/pcscf/policy.go`"
+  - id: release
+    title: 網による解放
+    focus: [pcscf]
+    text: "`internal/pcscf/release.go`、`dialog.go`"
+  - id: media
+    title: プリコンディション、AMR、RTCP
+    focus: [volte10, volte12]
+    text: "`internal/precondition`、`internal/amr`、`internal/rtcp`"
+```
 
 | 見たもの | 開く場所 |
 | --- | --- |

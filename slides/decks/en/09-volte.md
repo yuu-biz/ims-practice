@@ -2,6 +2,536 @@
 title: The VoLTE call flow
 footer: ims-practice study session 9. VoLTE
 lang: en
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: volte10, label: volte10, role: the caller's phone, at: [0, 0]}
+  - {id: epc, label: EPC + PCRF, role: the access network stub, at: [1, 2]}
+  - {id: volte12, label: volte12, role: the callee's phone, at: [0, 2]}
+  - {id: pcscf, label: P-CSCF, role: its first hop, at: [1, 1]}
+  - {id: ue2, label: ue2, role: a softphone, at: [2, 2]}
+  - {id: icscf, label: I-CSCF, role: entry of the home network, at: [2, 0]}
+  - {id: hss, label: HSS, role: makes the vectors, at: [3, 0]}
+  - {id: scscf, label: S-CSCF, role: authenticates and registers, at: [3, 1]}
+  - {id: mmtel, label: MMTel AS, role: the AS of every call, at: [4, 1]}
+events:
+  # The attach, and finding the P-CSCF
+  - id: at-si
+    msg: GET /system-information
+    from: volte10
+    to: epc
+    proto: HTTP
+    fields:
+      - cell: MCC 001, MNC 01, TAC 1, ECI 257
+  - id: at-stream
+    msg: GET /ues/<IMSI>/events
+    from: volte10
+    to: epc
+    proto: HTTP
+    fields:
+      - path: "`/ues/001010000000010/events`"
+      - what arrives: the messages the network sends by itself
+  - id: at-req
+    msg: ATTACH REQUEST
+    from: volte10
+    to: epc
+    proto: HTTP
+    note: (POST .../attach-request)
+    fields:
+      - ESM container: PDN CONNECTIVITY REQUEST
+      - access_point_name: "`ims`"
+      - PCO: asks for the P-CSCF addresses
+  - id: at-accept
+    msg: ATTACH ACCEPT
+    from: epc
+    to: volte10
+    proto: HTTP
+    note: (200)
+    fields:
+      - eps_bearer_identity: 5, the default bearer for signalling
+      - eps_qos: QCI 5, the class of IMS signalling
+      - pdn_address: 172.28.0.120, the subscriber's static address
+      - PCO: 172.28.0.40 in the container 000CH
+  - id: at-complete
+    msg: ATTACH COMPLETE
+    from: volte10
+    to: epc
+    proto: HTTP
+    fields:
+      - ESM container: ACTIVATE DEFAULT EPS BEARER CONTEXT ACCEPT
+  - id: ue-pcscf
+    do: decides on the P-CSCF address
+    at: volte10
+    fields:
+      - what it checks: that the PDN address is the address it reaches the P-CSCF from
+      - what it uses: the first address of the list, and port 5060
+  # IMS AKA, the first REGISTER (steps 1 to 6)
+  - id: reg1-ue-p
+    msg: REGISTER
+    from: volte10
+    to: pcscf
+    proto: SIP
+    note: (the first)
+    fields:
+      - where to: from the UE's 5060 to the P-CSCF's 5060
+      - Security-Client: its offer of associations
+      - Require: "`sec-agree`, in Proxy-Require too"
+      - Authorization: "`algorithm=AKAv1-MD5`; the nonce and the response are empty"
+  - id: pcscf-keep
+    do: keeps the Security-Client
+    at: pcscf
+    fields:
+      - the scheme it picks: IMS AKA, because sec-agree is there
+      - what it keeps: the Security-Client, taken out
+      - added to Authorization: '`integrity-protected="no"`'
+  - id: reg1-p-i
+    msg: REGISTER
+    from: pcscf
+    to: icscf
+    proto: SIP
+    note: (the first)
+  - id: reg1-i-s
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (the first)
+  - id: mar
+    msg: MAR
+    from: scscf
+    to: hss
+    proto: Cx
+    fields:
+      - what it saw: '`integrity-protected="no"`: an initial IMS AKA registration'
+      - SIP-Auth-Data-Item: "one item of the scheme `Digest-AKAv1-MD5`"
+  - id: hss-vector
+    do: makes an authentication vector
+    at: hss
+    fields:
+      - what it steps: SQN_HE
+      - what it computes: XRES, CK, IK and AUTN, from a RAND with MILENAGE
+  - id: maa
+    msg: MAA
+    from: hss
+    to: scscf
+    proto: Cx
+    fields:
+      - SIP-Authenticate: RAND and AUTN, 32 octets together
+      - SIP-Authorization: XRES
+      - Confidentiality-Key: CK
+      - Integrity-Key: IK
+  - id: scscf-challenge
+    do: builds the challenge
+    at: scscf
+    fields:
+      - nonce: RAND and AUTN in base64
+      - for the P-CSCF: "the parameters `ik` and `ck`"
+      - what it keeps: RAND and XRES
+  - id: r401-s-i
+    msg: "401"
+    from: scscf
+    to: icscf
+    proto: SIP
+    fields:
+      - WWW-Authenticate: "the nonce, `algorithm=AKAv1-MD5`, `ik`, `ck`"
+  - id: r401-i-p
+    msg: "401"
+    from: icscf
+    to: pcscf
+    proto: SIP
+  - id: pcscf-sa
+    do: takes the keys out and adds its own offer
+    at: pcscf
+    fields:
+      - what it takes out: "`ik` and `ck`: the keys never travel to the UE"
+      - what it adds: the Security-Server; its protected server port is 5064
+  - id: r401-p-ue
+    msg: "401"
+    from: pcscf
+    to: volte10
+    proto: SIP
+    fields:
+      - where it arrives: the UE's port 5060
+  # IMS AKA, the second REGISTER (steps 7 to 12)
+  - id: ue-verify
+    do: checks the network
+    at: volte10
+    fields:
+      - what it compares: the MAC in AUTN and the MAC the USIM computed
+      - the other check: that the SQN is fresh
+      - what it computes: RES, CK, IK
+  - id: reg2-ue-p
+    msg: REGISTER
+    from: volte10
+    to: pcscf
+    proto: SIP
+    note: (the second)
+    fields:
+      - where to: from the UE's 5062 to the P-CSCF's 5064
+      - Security-Verify: a copy of the P-CSCF's Security-Server
+      - Authorization: the response, with RES as the password
+  - id: pcscf-verify
+    do: checks the agreement
+    at: pcscf
+    fields:
+      - where it arrived: the protected server port 5064
+      - Security-Verify: the same as the Security-Server it sent
+      - added to Authorization: '`integrity-protected="yes"`'
+  - id: reg2-p-i
+    msg: REGISTER
+    from: pcscf
+    to: icscf
+    proto: SIP
+    note: (the second)
+  - id: reg2-i-s
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (the second)
+  - id: scscf-verify
+    do: checks the RES
+    at: scscf
+    fields:
+      - the computation: the Digest with XRES as the password
+      - when they match: an SAR tells the HSS of the registration
+  - id: sar
+    msg: SAR
+    from: scscf
+    to: hss
+    proto: Cx
+  - id: saa
+    msg: SAA
+    from: hss
+    to: scscf
+    proto: Cx
+  - id: ok-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+  - id: ok-i-p
+    msg: 200 OK
+    from: icscf
+    to: pcscf
+    proto: SIP
+  - id: ok-p-ue
+    msg: 200 OK
+    from: pcscf
+    to: volte10
+    proto: SIP
+    fields:
+      - where to: from the P-CSCF's 5064 to the UE's 5062
+      - from now on: the UE sends every request to port 5064
+      - P-Associated-URI: the identities that are not barred, the default first
+  # The signalling path over Rx
+  - id: aar-sig
+    msg: AAR
+    from: pcscf
+    to: epc
+    proto: Rx
+    note: (the signalling path)
+    fields:
+      - Flow-Usage: AF_SIGNALLING
+      - Media-Component-Number: 0, and Flow-Number 0 too
+      - Specific-Action: "2 and 4: loss and release of a bearer"
+      - Framed-IP-Address: 172.28.0.120
+  - id: aaa-sig
+    msg: AAA
+    from: epc
+    to: pcscf
+    proto: Rx
+    note: (the signalling path)
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+      - what the PCRF did: bound the session to the IP-CAN session of that address
+  - id: reg-ue2
+    msg: REGISTER
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (a softphone)
+    fields:
+      - authentication: SIP Digest and a password
+      - access network: it did not attach
+  - id: aar-ue2
+    msg: AAR
+    from: pcscf
+    to: epc
+    proto: Rx
+    note: (the signalling path of ue2)
+    fields:
+      - Framed-IP-Address: 172.28.0.101
+  - id: aaa-ue2
+    msg: AAA
+    from: epc
+    to: pcscf
+    proto: Rx
+    note: (the signalling path of ue2)
+    fields:
+      - Experimental-Result-Code: IP-CAN_SESSION_NOT_AVAILABLE (5065)
+  - id: pcscf-nopolicy
+    do: serves the UE without policy control
+    at: pcscf
+    fields:
+      - for this UE: it sends no AAR for a call either
+  # The media of a call, and the dedicated bearer
+  - id: inv-10-p
+    msg: INVITE
+    from: volte10
+    to: pcscf
+    proto: SIP
+    fields:
+      - Request-URI: "`tel:+12025550112`"
+      - Supported: "`100rel, timer, 199, precondition`, not Require"
+      - SDP: the offer; AMR-WB first, PCMU last
+      - "curr:qos local": "`none`: no resources reserved yet"
+      - "des:qos": "local `mandatory`, remote `optional`"
+  - id: inv-p-12
+    msg: INVITE
+    from: pcscf
+    to: volte12
+    proto: SIP
+    note: (after both S-CSCFs and the MMTel AS)
+  - id: r183-12-p
+    msg: "183"
+    from: volte12
+    to: pcscf
+    proto: SIP
+    fields:
+      - Require: "`100rel`, `precondition`"
+      - SDP: "the answer: `m=audio 60734 RTP/AVP 96 100` and `b=AS:41`"
+      - "conf:qos": "`remote sendrecv`: tell me when the caller has its resources"
+      - "des:qos": raises the caller's segment to mandatory too
+  - id: aar-12
+    msg: AAR
+    from: pcscf
+    to: epc
+    proto: Rx
+    note: (the callee's media)
+    fields:
+      - AF-Application-Identifier: "`urn:urn-7:3gpp-service.ims.icsi.mmtel`"
+      - Media-Sub-Component: "flows 1 and 2: RTP and RTCP"
+      - Flow-Description: "`permit in 17 from 172.28.0.121 to 172.28.0.50 40004`"
+      - Max-Requested-Bandwidth-UL: "80000, from `b=AS`, in bit/s"
+      - Rx-Request-Type: INITIAL_REQUEST
+  - id: pcrf-grant
+    do: authorises the audio
+    at: epc
+    fields:
+      - QCI: 1, the guaranteed bit rate class of conversational voice
+      - the rates: from the bandwidth the P-CSCF asked for, in kbit/s
+  - id: aaa-12
+    msg: AAA
+    from: epc
+    to: pcscf
+    proto: Rx
+    note: (the callee's media)
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  - id: bearer-12
+    msg: ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST
+    from: epc
+    to: volte12
+    proto: HTTP
+    fields:
+      - eps_bearer_identity: 6, linked to the default bearer 5
+      - eps_qos: "QCI 1; 80 up, 41 down, in kbit/s"
+      - tft: "RTP and RTCP between the UE and the relay, each way: four filters"
+  - id: ue12-reserved
+    do: takes its resources as reserved
+    at: volte12
+    fields:
+      - its answer: "`activate-dedicated-eps-bearer-context-accept`"
+      - preconditions: its own segment becomes sendrecv
+  - id: aar-10
+    msg: AAR
+    from: pcscf
+    to: epc
+    proto: Rx
+    note: (the caller's media)
+    fields:
+      - what triggers it: the 183 on its way to volte10, with the same answer
+      - Framed-IP-Address: 172.28.0.120
+  - id: aaa-10
+    msg: AAA
+    from: epc
+    to: pcscf
+    proto: Rx
+    note: (the caller's media)
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  - id: bearer-10
+    msg: ACTIVATE DEDICATED EPS BEARER CONTEXT REQUEST
+    from: epc
+    to: volte10
+    proto: HTTP
+    fields:
+      - tft: the far address is the relay, 172.28.0.50
+  - id: ue10-reserved
+    do: takes its resources as reserved
+    at: volte10
+    fields:
+      - what it sends next: an UPDATE, a new offer that says so
+  - id: r183-p-10
+    msg: "183"
+    from: pcscf
+    to: volte10
+    proto: SIP
+    fields:
+      - when it goes: once the caller's AAR has its answer
+  # Preconditions
+  - id: prack
+    msg: PRACK
+    from: volte10
+    to: pcscf
+    proto: SIP
+    fields:
+      - RAck: the RSeq of the 183 and the CSeq of the INVITE
+  - id: prack-ok
+    msg: 200 (PRACK)
+    from: pcscf
+    to: volte10
+    proto: SIP
+  - id: update-10-p
+    msg: UPDATE
+    from: volte10
+    to: pcscf
+    proto: SIP
+    fields:
+      - "curr:qos local": "`sendrecv`: the dedicated bearer is there"
+      - when it goes: once the PRACK has its 200
+  - id: update-p-12
+    msg: UPDATE
+    from: pcscf
+    to: volte12
+    proto: SIP
+  - id: update-ok-12
+    msg: 200 (UPDATE)
+    from: volte12
+    to: pcscf
+    proto: SIP
+    fields:
+      - "curr:qos local": "`sendrecv`"
+      - "curr:qos remote": "`sendrecv`: both segments are there"
+  - id: update-ok-10
+    msg: 200 (UPDATE)
+    from: pcscf
+    to: volte10
+    proto: SIP
+  - id: pre-met
+    do: every mandatory precondition is met
+    at: volte12
+    fields:
+      - a row of the table: a segment (local or remote) and a direction (send or recv)
+      - when it may alert: every mandatory row is current
+  - id: r180-12-p
+    msg: "180"
+    from: volte12
+    to: pcscf
+    proto: SIP
+    fields:
+      - only now: the resources are there, so it starts to alert
+  - id: r180-p-10
+    msg: "180"
+    from: pcscf
+    to: volte10
+    proto: SIP
+    fields:
+      - at the caller: it may arrive before the 200 to the UPDATE
+  - id: ok-inv-12
+    msg: 200 (INVITE)
+    from: volte12
+    to: pcscf
+    proto: SIP
+    fields:
+      - SDP: "none; the answer came in the 183"
+  - id: ok-inv-10
+    msg: 200 (INVITE)
+    from: pcscf
+    to: volte10
+    proto: SIP
+  - id: ack
+    msg: ACK
+    from: volte10
+    to: pcscf
+    proto: SIP
+  # The network takes the bearer
+  - id: epc-deact
+    do: deactivates the voice bearer
+    at: epc
+    fields:
+      - the procedure: a deactivation of an EPS bearer context by the network
+      - what starts it: a DELETE on the bearer, from the Lab's button or `curl`
+  - id: deact-10
+    msg: DEACTIVATE EPS BEARER CONTEXT REQUEST
+    from: epc
+    to: volte10
+    proto: HTTP
+    note: (on the event stream)
+  - id: asr
+    msg: ASR
+    from: epc
+    to: pcscf
+    proto: Rx
+    fields:
+      - Abort-Cause: BEARER_RELEASED (0)
+      - why not an RAR: the voice bearer carried all the media of this session
+  - id: asa
+    msg: ASA
+    from: pcscf
+    to: epc
+    proto: Rx
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  - id: str
+    msg: STR
+    from: pcscf
+    to: epc
+    proto: Rx
+    note: (then the STA)
+    fields:
+      - what it ends: the Rx session of this call
+  - id: pcscf-bye
+    do: builds the BYEs from the dialog it kept
+    at: pcscf
+    fields:
+      - what from: the Contact, the tags, the CSeq, the route
+      - where to: the other party, and the served UE
+  - id: bye-core
+    msg: BYE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (in volte10's name)
+    fields:
+      - Reason: '`SIP;cause=503;text="Service Unavailable"`'
+  - id: bye-10
+    msg: BYE
+    from: pcscf
+    to: volte10
+    proto: SIP
+    fields:
+      - Reason: "`SIP;cause=503`"
+      - this project's addition: it tells a UE that still has its signalling
+  - id: bye-12
+    msg: BYE
+    from: pcscf
+    to: volte12
+    proto: SIP
+    note: (after the S-CSCF and the MMTel AS)
+  - id: deact-12
+    msg: DEACTIVATE EPS BEARER CONTEXT REQUEST
+    from: epc
+    to: volte12
+    proto: HTTP
+    note: (on the event stream)
+    fields:
+      - before it: the P-CSCF of volte12's side ends its session with an STR
+```
+
 ---
 
 # The VoLTE call flow
@@ -50,6 +580,48 @@ To begin: when you call from a mobile phone, what does the network prepare befor
 
 ## The nodes
 
+```ims-scene
+id: nodes
+nodes: [volte10, epc, volte12, pcscf, ue2, icscf, hss, scscf, mmtel]
+lead: "What a VoLTE phone adds are the three on the left: the access network, and the two phones on it."
+steps:
+  - id: volte10
+    title: volte10 (172.28.0.120)
+    focus: [volte10]
+    text: |
+      The caller. Its number is `tel:+12025550110`, and the USIM of subscriber 10 holds K and OPc.
+  - id: volte12
+    title: volte12 (172.28.0.121)
+    focus: [volte12]
+    text: The callee. Its number is `tel:+12025550112`, and it answers by itself after its ring time.
+  - id: epc
+    title: The EPC stub and the PCRF (172.28.0.80)
+    focus: [epc]
+    checkpoint: true
+    text: |
+      One node, of the role `epc`. It answers the phones on HTTP 8080 and the P-CSCF on Rx 3868.
+      In a real network the PDN GW and the PCRF are separate nodes, with Gx between them.
+  - id: pcscf
+    title: The P-CSCF (172.28.0.40)
+    focus: [pcscf]
+    text: |
+      It listens on SIP port 5060 and, for the phones that use IMS AKA, on the protected server port 5064.
+      It is also the Rx client towards the PCRF.
+  - id: core
+    title: The I-CSCF, the S-CSCF and the HSS (172.28.0.20, 30, 10)
+    focus: [icscf, scscf, hss]
+    checkpoint: true
+    text: |
+      The S-CSCF asks for authentication with IMS AKA, and the HSS makes the vector.
+      Both the first and the second REGISTER go through the I-CSCF.
+  - id: others
+    title: ue2 and the MMTel AS (172.28.0.101, 75)
+    focus: [ue2, mmtel]
+    text: |
+      ue2 is a softphone that does not attach, and it offers PCMU only.
+      The MMTel AS is the one of the session on supplementary services, and every VoLTE call goes through it.
+```
+
 | Node | Address | What it does in a VoLTE call |
 | --- | --- | --- |
 | volte10 | 172.28.0.120 | The caller, `tel:+12025550110`. Subscriber 10. |
@@ -67,7 +639,7 @@ To begin: when you call from a mobile phone, what does the network prepare befor
 
 ---
 
-## A stub: what the EPC stub keeps, and what it leaves out
+## What the EPC stub keeps, and what it leaves out
 
 ```text
  UE ==(HTTP + JSON: ATTACH REQUEST, ...)==> EPC stub: PDN GW and PCRF (epc role)
@@ -105,6 +677,53 @@ The display filter of this session:
 ---
 
 ## Attach, and finding the P-CSCF
+
+```ims-scene
+id: attach
+view: ladder
+nodes: [volte10, epc, pcscf]
+lead: The phone is given the P-CSCF address by the access network. It is in no configuration file.
+steps:
+  - id: cell
+    title: It reads the information of the cell
+    show: [at-si]
+    text: |
+      With no radio to broadcast it, the stub made the system information an HTTP resource.
+      The phone writes these values into P-Access-Network-Info.
+  - id: stream
+    title: The event stream opens before the attach
+    show: [at-stream]
+    checkpoint: true
+    text: |
+      What the network sends by itself arrives bit by bit in this response, which stays open.
+      It opens first, so that what the network sends right after the attach arrives too.
+  - id: request
+    title: The ATTACH REQUEST connects to the IMS APN
+    show: [at-req]
+    text: The EMM ATTACH REQUEST carries the ESM PDN CONNECTIVITY REQUEST. The PCO asks for the P-CSCF address.
+  - id: accept
+    title: The ATTACH ACCEPT gives an address and a bearer
+    show: [at-accept]
+    checkpoint: true
+    text: |
+      The default bearer is QCI 5, the one for IMS signalling.
+      The P-CSCF address is in the PCO, in the container with the identifier 000CH.
+  - id: complete
+    title: The ATTACH COMPLETE ends the attach
+    show: [at-complete]
+    text: "The PDN connection is up. Nothing is tunnelled: the phone's packets go straight to their peer."
+  - id: decide
+    title: The phone decides on the P-CSCF
+    show: [ue-pcscf]
+    text: |
+      It uses the first address of the list only. The PCO has no port, so it sends to the standard 5060.
+  - id: register
+    title: The first REGISTER goes to that address
+    show: [reg1-ue-p]
+    detail: []
+    checkpoint: true
+    text: The registration starts here. The next scene reads it one hop at a time.
+```
 
 ```ladder
 volte10, EPC stub
@@ -208,7 +827,75 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 ---
 
-## IMS AKA, part 1: the first REGISTER and the 401
+## The first REGISTER of IMS AKA, and the 401 (1 to 6)
+
+```ims-scene
+id: challenge
+nodes: [volte10, pcscf, icscf, scscf, hss]
+lead: What the HSS hands over is no password, but an authentication vector for one use.
+steps:
+  - id: send
+    title: The REGISTER that nothing protects
+    only: [reg1-ue-p]
+    checkpoint: true
+    text: |
+      This is the only REGISTER that the phone sends to port 5060.
+      The nonce and the response of Authorization are empty: it says only who is to be authenticated.
+  - id: keep
+    title: The P-CSCF keeps the Security-Client
+    show: [pcscf-keep]
+    zoom: [volte10, pcscf]
+    text: |
+      It sees the Security-Client of sec-agree and picks IMS AKA.
+      It takes the header out, keeps it, and says with `integrity-protected` that nothing protects this one yet.
+  - id: forward
+    title: Through the I-CSCF to the S-CSCF
+    show: [reg1-p-i, reg1-i-s]
+    active: reg1-i-s
+    text: |
+      The I-CSCF asks with a UAR and a UAA which S-CSCF serves the user. That is the session on registration, so the diagram leaves it out.
+  - id: mar
+    title: The S-CSCF asks for a vector (MAR)
+    only: [reg1-i-s, mar]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: |
+      It does not leave the scheme `Unknown`: it names IMS AKA.
+      It can, because it saw the `integrity-protected="no"` that the P-CSCF added.
+  - id: vector
+    title: The HSS computes the vector
+    show: [hss-vector]
+    zoom: [icscf, hss, scscf]
+    text: It steps SQN_HE once, picks a new RAND, and makes five values from the same keys as the USIM.
+  - id: maa
+    title: The HSS returns the challenge and the answer (MAA)
+    show: [maa]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: |
+      RAND and AUTN are the challenge for the phone, XRES is what the answer is checked against, CK and IK are the keys of the associations.
+      There is no password anywhere.
+  - id: nonce
+    title: The S-CSCF builds the challenge
+    show: [scscf-challenge]
+    zoom: [icscf, hss, scscf]
+    text: RAND and AUTN go into the nonce in base64, as they are. The keys go into separate parameters, for the P-CSCF.
+  - id: back
+    title: The 401 comes back to the P-CSCF
+    only: [r401-s-i, r401-i-p]
+    active: r401-i-p
+    text: The 401 is no failure but a step of the procedure. Each node takes its own Via out.
+  - id: strip
+    title: The P-CSCF takes the keys out and adds its own offer
+    show: [pcscf-sa]
+    checkpoint: true
+    text: |
+      `ik` and `ck` end here. The phone computes the same keys from its K and the RAND, so they need not travel.
+  - id: ue
+    title: The 401 reaches the phone
+    show: [r401-p-ue]
+    text: Both ways run over port 5060. The protected ports come with the next REGISTER.
+```
 
 | # | Hop | What to look at |
 | --- | --- | --- |
@@ -223,7 +910,73 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 ---
 
-## IMS AKA, part 2: check the network, and answer
+## Checking the network and answering with IMS AKA (7 to 12)
+
+```ims-scene
+id: answer
+nodes: [volte10, epc, pcscf, icscf, scscf, hss]
+lead: The phone checks the network too. SIP Digest did not have that direction.
+steps:
+  - id: verify
+    title: The phone checks the AUTN
+    only: [r401-p-ue, ue-verify]
+    active: ue-verify
+    zoom: [volte10, pcscf]
+    checkpoint: true
+    text: |
+      A matching MAC shows that the network knows the same K.
+      It also checks that the SQN is fresh, and only then computes RES, CK and IK.
+  - id: respond
+    title: The second REGISTER goes over the associations
+    show: [reg2-ue-p]
+    zoom: [volte10, pcscf]
+    checkpoint: true
+    text: |
+      The ports change to the protected ones. The response is a Digest with RES as the password.
+      Security-Verify is there so that the P-CSCF can check that nobody removed a stronger offer.
+  - id: check
+    title: The P-CSCF checks the agreement
+    show: [pcscf-verify]
+    zoom: [volte10, pcscf]
+    text: The port it arrived on and the Security-Verify agree, so it takes the request as protected.
+  - id: forward
+    title: Through the I-CSCF to the S-CSCF again
+    show: [reg2-p-i, reg2-i-s]
+    active: reg2-i-s
+    text: The second UAR and UAA are those of the session on registration too. The diagram leaves them out.
+  - id: res
+    title: The S-CSCF checks the RES
+    only: [reg2-i-s, scscf-verify]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: It computes the same Digest with the XRES it kept, and compares it with the response that came.
+  - id: sar
+    title: It tells the HSS of the registration (SAR and SAA)
+    show: [sar, saa]
+    active: sar
+    zoom: [icscf, hss, scscf]
+    text: "From here on it is the session on registration: the profile in the SAA holds the implicitly registered identities and the iFCs."
+  - id: ok
+    title: The 200 OK comes back to the phone
+    only: [ok-s-i, ok-i-p, ok-p-ue]
+    active: ok-p-ue
+    checkpoint: true
+    text: |
+      The 200 OK comes back over the pair of protected ports, and the associations are established.
+      From now on the phone sends every request to port 5064.
+  - id: aar
+    title: The P-CSCF watches the signalling path
+    show: [aar-sig]
+    detail: []
+    text: |
+      For a phone that is registered, it asks the PCRF to tell it when the signalling bearer is lost.
+      The Rx part of this session reads what is inside.
+  - id: aaa
+    title: The PCRF binds it to the IP-CAN session
+    show: [aaa-sig]
+    detail: []
+    text: The 200 OK and this AAR leave the P-CSCF in either order.
+```
 
 | # | Hop | What to look at |
 | --- | --- | --- |
@@ -303,7 +1056,43 @@ The P-CSCF is the application function (AF) of policy and charging control; the 
 
 ---
 
-## Rx, part 1: the signalling path (#786)
+## The AAR of the signalling path (#786)
+
+```ims-scene
+id: signalling-path
+nodes: [volte10, epc, pcscf, ue2]
+lead: Each registered phone gets one Rx session. A phone that did not attach gets none.
+steps:
+  - id: aar
+    title: The AAR right after the registration
+    only: [aar-sig]
+    checkpoint: true
+    text: |
+      There is one Media-Component-Description, and both of its numbers are 0.
+      `Flow-Usage` says that this is the signalling, not the media.
+  - id: aaa
+    title: The PCRF finds the phone by its address
+    show: [aaa-sig]
+    checkpoint: true
+    text: It binds the session to the IP-CAN session of the Framed-IP-Address and promises to report a lost bearer.
+  - id: softphone
+    title: A softphone that did not attach registers
+    only: [reg-ue2]
+    text: ue2 never goes through the EPC stub. The registration itself succeeds, as in the earlier sessions.
+  - id: notfound
+    title: The PCRF finds no IP-CAN session
+    show: [aar-ue2, aaa-ue2]
+    active: aaa-ue2
+    detail: [aar-ue2, aaa-ue2]
+    checkpoint: true
+    text: The same AAR goes out, but there is no PDN connection for that address.
+  - id: nopolicy
+    title: The P-CSCF serves that phone without policy control
+    show: [pcscf-nopolicy]
+    text: |
+      So every registration of a softphone shows this pair in the capture.
+      The captures of the earlier sessions have it too.
+```
 
 | AVP | Value |
 | --- | --- |
@@ -321,7 +1110,70 @@ The filters are `diameter.Flow-Usage == 2` and `diameter.Experimental-Result-Cod
 
 ---
 
-## Rx, part 2: the AAR for the media of a call
+## The AAR for the media of a call
+
+```ims-scene
+id: media
+view: ladder
+nodes: [volte10, volte12, pcscf, epc]
+lead: The path for the voice is set up because the P-CSCF, having seen the SDP answer, asks for it.
+steps:
+  - id: answer
+    title: The 183 carries the answer
+    only: [inv-p-12, r183-12-p]
+    active: r183-12-p
+    detail: [r183-12-p]
+    checkpoint: true
+    text: |
+      The INVITE arrives along the path of the session on calls. The diagram leaves out both S-CSCFs and the MMTel AS.
+      The answer in the 183 settles which codec goes to which port.
+  - id: aar
+    title: The callee's P-CSCF asks for the resources (AAR)
+    show: [aar-12]
+    checkpoint: true
+    text: |
+      It builds from the SDP which two addresses need how much bandwidth, and hands that over.
+      The m= lines of the offer and the answer go into `Codec-Data` as they are.
+  - id: grant
+    title: The PCRF authorises the audio
+    show: [pcrf-grant]
+    text: It authorises the audio only, in class QCI 1. The rates come from what the P-CSCF asked for.
+  - id: aaa
+    title: The AAA comes before the bearer
+    show: [aaa-12]
+    checkpoint: true
+    text: It answers before, or in parallel with, the provisioning of the rules (TS 29.214 4.4.1).
+  - id: bearer
+    title: The stub sets up the dedicated bearer
+    show: [bearer-12]
+    checkpoint: true
+    text: |
+      It arrives on the event stream. The four filters of the TFT are the RTP and the RTCP between the phone and the relay.
+      The default bearer stays: one more bearer, for the voice, comes up beside it.
+  - id: reserved
+    title: The phone takes its resources as reserved
+    show: [ue12-reserved]
+    text: Here the callee meets the precondition of its own segment. It does not alert yet.
+  - id: caller
+    title: The same answer becomes an AAR at the caller too
+    show: [aar-10, aaa-10]
+    active: aar-10
+    detail: [aar-10]
+    checkpoint: true
+    text: |
+      The 183 passes the same P-CSCF a second time, now as the caller's side.
+      One call opens two Rx sessions for media, apart from those of the signalling paths.
+  - id: caller-bearer
+    title: The caller gets a voice bearer as well
+    show: [bearer-10, ue10-reserved]
+    active: ue10-reserved
+    checkpoint: true
+    text: The far address of the filters is the relay, not the other phone.
+  - id: forward
+    title: Only then does the 183 reach the caller
+    show: [r183-p-10]
+    text: The P-CSCF holds the 183 until the AAR has its answer. Without resources it ends the call here.
+```
 
 The P-CSCF of each side sends an AAR once it has the SDP answer: the callee's side on the 183 from volte12, the caller's side on the 183 on its way to volte10.
 
@@ -339,7 +1191,7 @@ The P-CSCF of each side sends an AAR once it has the SDP answer: the callee's si
 
 ---
 
-## Rx, part 2: reading the AAR
+## Reading the AAR for the media of a call
 
 - The filter is `diameter.Codec-Data`. Open the AAR and walk through the Media-Component-Description: number 1 is the first m= line.
 - One Flow-Description is `permit in 17 from 172.28.0.121 to 172.28.0.50 40004`. The other end of the media is the relay, not the other UE.
@@ -349,7 +1201,7 @@ The P-CSCF of each side sends an AAR once it has the SDP answer: the callee's si
 
 ---
 
-## The dedicated bearer: a path for the voice
+## The dedicated bearer that carries the voice
 
 Once the PCRF authorises the audio, the stub sends it on the event stream:
 
@@ -370,7 +1222,78 @@ data: {"eps_bearer_identity":6,"linked_eps_bearer_identity":5,
 
 ---
 
-## Preconditions: no ringing until the resources are there
+## Preconditions (no ringing until the resources are there)
+
+```ims-scene
+id: precondition
+view: ladder
+nodes: [volte10, pcscf, volte12]
+lead: The callee starts to ring once the resources of both segments are there.
+steps:
+  - id: invite
+    title: The INVITE carries the offer
+    only: [inv-10-p, inv-p-12]
+    active: inv-10-p
+    detail: [inv-10-p]
+    checkpoint: true
+    text: |
+      `curr:qos local` is `none`: the caller has no voice bearer yet.
+      The mechanism is offered in Supported only, never in Require.
+  - id: answer
+    title: The 183 returns the answer and asks to be told
+    show: [r183-12-p]
+    checkpoint: true
+    text: |
+      The callee raises the caller's segment to mandatory and asks to be told once those resources are there.
+      Its own are still `none`.
+  - id: resources
+    title: The 183 moves on once both sides have resources
+    show: [r183-p-10]
+    text: |
+      In between come the two AARs and the two bearers of the previous scene.
+      Only after them does the 183 reach the caller.
+  - id: prack
+    title: The PRACK acknowledges the 183
+    show: [prack, prack-ok]
+    active: prack-ok
+    detail: [prack]
+    text: The 183 is a reliable provisional response, so it needs an acknowledgement. The UPDATE waits for this 200.
+  - id: update
+    title: The UPDATE tells of its own segment
+    show: [update-10-p, update-p-12]
+    active: update-10-p
+    detail: [update-10-p]
+    checkpoint: true
+    text: |
+      The caller has its dedicated bearer, so its `curr:qos local` becomes `sendrecv`.
+      The status is updated with an UPDATE.
+  - id: both
+    title: The 200 completes both segments
+    show: [update-ok-12]
+    checkpoint: true
+    text: Local and remote, as the callee sees them, are both `sendrecv` now.
+  - id: alert
+    title: Only now does the ringing start
+    show: [pre-met, r180-12-p]
+    active: r180-12-p
+    detail: [pre-met, r180-12-p]
+    checkpoint: true
+    text: Every mandatory row is current, so the callee sends the 180.
+  - id: caller
+    title: At the caller the two responses cross
+    show: [update-ok-10, r180-p-10]
+    active: r180-p-10
+    checkpoint: true
+    text: |
+      The P-CSCF holds the 200 for the AAR of the new answer, so the 180 may arrive first.
+      The frame numbers tell you the order.
+  - id: answered
+    title: The answer and the ACK confirm the call
+    show: [ok-inv-12, ok-inv-10, ack]
+    active: ack
+    detail: [ok-inv-12]
+    text: The 200 (INVITE) has no SDP. The answer came in the reliable 183.
+```
 
 ```ladder
 volte10, P-CSCF, PCRF, volte12
@@ -432,7 +1355,7 @@ func (t *Table) Met() bool {
 
 ---
 
-## Codecs: the offer and the answer
+## The offer and the answer of the codecs
 
 ```text
 m=audio 53946 RTP/AVP 96 97 98 99 0 100 101
@@ -503,6 +1426,63 @@ The filters are `sip.Session-Expires` and `sip.Reason`.
 
 ## The network takes the bearer
 
+```ims-scene
+id: release
+view: ladder
+nodes: [volte10, volte12, pcscf, scscf, epc]
+lead: "No phone hangs up: the network that took the resources away ends the call."
+steps:
+  - id: deactivate
+    title: The network takes the voice bearer down
+    only: [epc-deact]
+    checkpoint: true
+    text: |
+      It is the deactivation by the network, the same as when the radio is lost.
+      It starts from the Lab's button or the `curl` below. The diagram draws the network only.
+  - id: tell
+    title: It tells the phone of the deactivation
+    show: [deact-10]
+    text: It arrives on the event stream. volte10 sends no BYE of its own.
+  - id: asr
+    title: The PCRF aborts the Rx session (ASR)
+    show: [asr, asa]
+    active: asr
+    detail: [asr]
+    checkpoint: true
+    text: |
+      Rather than report the lost flow with an RAR, it ends the whole session.
+      The P-CSCF answers with an ASA.
+  - id: str
+    title: The P-CSCF ends its session too, with an STR
+    show: [str]
+    text: A call that ends with an ordinary BYE has this STR from each side's P-CSCF as well.
+  - id: build
+    title: It builds the BYEs from the dialog it kept
+    show: [pcscf-bye]
+    checkpoint: true
+    text: The P-CSCF puts together the BYE that a phone was to have sent.
+  - id: remote
+    title: To the other party, in the served user's name
+    show: [bye-core]
+    checkpoint: true
+    text: The Reason gives the cause. `cause=503` says that the service became unavailable.
+  - id: ue
+    title: A BYE for the served phone too
+    show: [bye-10]
+    checkpoint: true
+    text: |
+      This BYE is this project's addition.
+      A phone that lost only its voice bearer still has its signalling, and without the BYE it would stay in the call.
+  - id: far
+    title: The BYE reaches the callee
+    show: [bye-12]
+    text: To the other side it goes through the S-CSCF and the MMTel AS. The Reason is the same.
+  - id: release12
+    title: The callee's bearer is released too
+    show: [deact-12]
+    text: Once volte12's call is over, the Rx session of that side ends and the stub releases its bearer.
+```
+
 ```sh
 curl -X DELETE http://localhost:8080/api/epc/network-initiated/ues/001010000000010/bearers/6
 ```
@@ -523,7 +1503,7 @@ volte12 <- EPC and PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 
 ---
 
-## The network takes the bearer: why it looks like this
+## How it looks when the bearer is lost
 
 - The voice bearer carried all the media, so the PCRF ends the Rx session with an ASR, not an RAR. volte10 sends no BYE of its own.
 - The P-CSCF builds the BYEs from the dialog it keeps behind its `Store`. The BYE to the other side goes in the served user's name.
@@ -547,7 +1527,7 @@ volte12 <- EPC and PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 
 ---
 
-## What is not built, and why
+## What is not built
 
 - The Contact of the REGISTER has no ICSI, no +sip.instance and no audio tag. The Contact of the INVITE and of its responses has the ICSI and audio.
 - Following the CMR needs a UE that can encode; this UE sends frames encoded beforehand.
@@ -640,6 +1620,43 @@ docker compose run --rm volte10 call -epc http://172.28.0.80:8080 \
 ---
 
 ## Check it in the code
+
+```ims-scene
+id: code
+nodes: [volte10, epc, volte12, pcscf, scscf, hss]
+lead: What this session added is read in a different place for each node.
+steps:
+  - id: epc
+    title: The access network stub and the PCRF
+    focus: [epc]
+    text: "`http.go`, `api.go`, `network.go` and `pcrf.go` in `internal/epc`"
+  - id: access
+    title: The access network as a phone sees it
+    focus: [volte10, volte12]
+    text: "`internal/ue/access.go`, `access_epc.go`"
+  - id: vector
+    title: MILENAGE and the authentication vector
+    focus: [hss]
+    checkpoint: true
+    text: "`internal/milenage`, `internal/aka`"
+  - id: aka
+    title: The challenge of IMS AKA, and sec-agree
+    focus: [scscf, pcscf, volte10]
+    text: "`internal/scscf/aka.go`, `internal/pcscf/secagree.go`, `internal/ue/aka.go`"
+  - id: policy
+    title: Policy control and Rx
+    focus: [pcscf, epc]
+    checkpoint: true
+    text: "`internal/policy`, `internal/rx`, `internal/pcscf/policy.go`"
+  - id: release
+    title: The release by the network
+    focus: [pcscf]
+    text: "`internal/pcscf/release.go`, `dialog.go`"
+  - id: media
+    title: Preconditions, AMR and RTCP
+    focus: [volte10, volte12]
+    text: "`internal/precondition`, `internal/amr`, `internal/rtcp`"
+```
 
 | What you saw | Where to look |
 | --- | --- |
