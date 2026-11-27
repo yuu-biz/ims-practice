@@ -128,6 +128,8 @@ SAA では、これが User-Data の AVP に TS 29.228 Annex E のスキーマ�
 
 AS が応答しないか、408 や 5xx を返したときは、条件の DefaultHandling に従います。SESSION_CONTINUED なら登録はそのまま残り、SESSION_TERMINATED なら利用者の登録を解除します（TS 24.229 5.4.1.7）。
 
+S-CSCF は前の REGISTER の第三者 REGISTER を待たずに、次の REGISTER へ応答します。そのため、古い要求への応答がまだ無いうちに、再登録の要求へ応答が返ることがあります。SESSION_TERMINATED で登録を解除するのは、失敗した要求が今残っている登録のものだったときだけです。S-CSCF はバインディングの contact id と、そのバインディングを作った REGISTER の Call-ID と CSeq で、どの登録のものかを見分けます。古い要求が失敗しても、再登録で更新された登録はそのまま残ります。
+
 ### オリジナルダイアログ識別子
 
 MESSAGE が 2 つ目の条件に一致すると、S-CSCF はそれを Request-URI へは送りません。Route の先頭に、AS と、オリジナルダイアログ識別子（ODI）を付けた自分の URI の 2 つを入れます（TS 24.229 5.4.3.2 step 5 a、5.4.3.4）。

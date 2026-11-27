@@ -121,6 +121,8 @@ When a registration succeeds, the S-CSCF sends a REGISTER of its own to each AS 
 
 If the AS does not answer, or answers 408 or 5xx, the default handling applies: SESSION_CONTINUED leaves the registration as it is, SESSION_TERMINATED deregisters the user (TS 24.229 5.4.1.7).
 
+The S-CSCF answers the next REGISTER of the UE without waiting for the third-party REGISTER of the one before it, so the request of a re-registration can be answered while an older one is still out. SESSION_TERMINATED then deregisters the user only when the failed request was the one of the registration that stands. The S-CSCF tells which registration a request was for by the contact id of the binding and by the Call-ID and the CSeq of the REGISTER behind it, so the failure of an older request leaves a registration that a re-registration has refreshed as it is.
+
 ### The original dialog identifier
 
 When a MESSAGE matches the second criterion, the S-CSCF does not send it to the Request-URI. It puts two entries on top of Route: the AS, then its own URI with an original dialog identifier (ODI) (TS 24.229 5.4.3.2 step 5 a, 5.4.3.4):

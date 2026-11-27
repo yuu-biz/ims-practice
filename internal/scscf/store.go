@@ -132,6 +132,19 @@ func (r Registration) NonBarredIdentities() []string {
 // so a registration always has one.
 func (r Registration) DefaultIdentity() string { return r.NonBarredIdentities()[0] }
 
+// sameBinding reports whether r and other hold the same binding as the
+// same REGISTER of the UE left it: the contact id, and the Call-ID and
+// the CSeq of that REGISTER. A re-registration of the same contact
+// keeps the contact id (TS 24.229 5.4.2.1.2), so the id alone does not
+// tell one registration of the contact from the next; the Call-ID and
+// the CSeq do, because a REGISTER that updates the binding carries a
+// CSeq higher than the stored one under the same Call-ID (RFC 3261 10.3
+// step 7). The Store keeps all three, so an instance of the S-CSCF that
+// did not handle the REGISTER compares them just as well.
+func (r Registration) sameBinding(other Registration) bool {
+	return r.ContactID == other.ContactID && r.CallID == other.CallID && r.CSeq == other.CSeq
+}
+
 func barred(barredIDs []string, id string) bool {
 	return slices.ContainsFunc(barredIDs, func(b string) bool { return ims.SamePublicIdentity(b, id) })
 }
