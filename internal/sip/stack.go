@@ -105,6 +105,26 @@ type Config struct {
 	// drops any more, sends nothing back and logs it. Admit must not
 	// change req.
 	Admit func(req *Message, source Destination) bool
+	// OptionsLeftOut, when set, names the option tags of extensions
+	// that this node does not use with remote, the far end of m, though
+	// its TU knows them: a border node leaves out those that its
+	// agreement with a peer network excludes. The stack takes them out
+	// of the Supported, Require and Proxy-Require of each request that
+	// arrives from remote, before Screen and the TU see it, so that the
+	// TU does what it does with a far end that does not list them; and
+	// of each request and each response of the TU that goes to remote,
+	// with sent set, so that remote never sees this node list or
+	// require them (RFC 3261 19.2). A response that arrives is left as
+	// it came: its tags follow from those of its request, which named
+	// none of them (RFC 3262 3, RFC 4028 9).
+	//
+	// The Observer records each request that arrives as it came, and
+	// each message that goes as it went, without the tags. For a request
+	// that arrives the stack calls OptionsLeftOut in its own goroutine,
+	// as it calls Screen; for a message that goes, in the goroutine that
+	// sends it. It must return at once, must not change m, and must not
+	// call the stack.
+	OptionsLeftOut func(m *Message, remote Destination, sent bool) []string
 }
 
 // DefaultTimerC is Timer C unless Config says otherwise. RFC 3261 16.6
@@ -489,6 +509,7 @@ func (s *Stack) prepare(req *Message, branch string, destination Destination) (*
 		return nil, Destination{}, ErrStackClosed
 	default:
 	}
+	req = s.leaveOutOptions(req, destination, true)
 	out := s.withOwnVia(req, branch, destination.Transport)
 	switch size := len(out.Bytes()); {
 	case destination.Transport == UDP && size > maxUDPRequestSize:
@@ -570,7 +591,17 @@ func (st *ServerTransaction) Respond(resp *Message) error {
 	if resp.StatusCode >= 200 {
 		st.final.Store(int32(resp.StatusCode))
 	}
+	resp = st.stack.leaveOutOptions(resp, st.Source, true)
 	return st.stack.post(respond{entry: st.entry, response: resp.Clone()})
+}
+
+// leaveOutOptions is m without the option tags that
+// Config.OptionsLeftOut names for remote.
+func (s *Stack) leaveOutOptions(m *Message, remote Destination, sent bool) *Message {
+	if s.cfg.OptionsLeftOut == nil {
+		return m
+	}
+	return withoutOptions(m, s.cfg.OptionsLeftOut(m, remote, sent))
 }
 
 // FinalStatus is the status code of the last final response that the TU
@@ -791,7 +822,7 @@ func (s *Stack) handle(in stackInput) {
 	switch in := in.(type) {
 	case receivedMessage:
 		if in.msg.IsRequest() {
-			s.receiveRequest(in.msg, in.source, false)
+			s.receiveRequest(s.leaveOutOptions(in.msg, in.source, false), in.source, false)
 		} else {
 			s.receiveResponse(in.msg)
 		}
