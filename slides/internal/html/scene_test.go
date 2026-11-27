@@ -3,6 +3,7 @@ package html
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -121,5 +122,33 @@ func TestLadderBandCoversTheRoomAboveTheHeads(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `<text class="role"`) || !strings.Contains(out.String(), ">sends</text>") {
 		t.Error("the head of a has no role")
+	}
+}
+
+// TestWideLadderGoesAcross makes sure that a ladder of many lifelines
+// takes the whole width of the stage, with its text below, and that a
+// ladder of a few stays beside its text.
+func TestWideLadderGoesAcross(t *testing.T) {
+	ladder := func(n int) *layout.Diagram {
+		var nodes, ids []string
+		for i := range n {
+			id := fmt.Sprintf("n%d", i)
+			ids = append(ids, id)
+			nodes = append(nodes, fmt.Sprintf("  - {id: %s, label: N%d, at: [%d, 0]}\n", id, i, i))
+		}
+		source := "---\ntitle: T\nfooter: F\nlang: en\nformat: visual\n---\n\n```ims-model\nnodes:\n" + strings.Join(nodes, "") +
+			"events:\n  - {id: m, msg: REQ, from: n0, to: n1, proto: SIP}\n```\n\n---\n\n# T\n\n---\n\n## S\n\n" +
+			"```ims-scene\nid: l\nview: ladder\nnodes: [" + strings.Join(ids, ", ") + "]\nsteps:\n  - {id: x, title: X, show: [m], text: Y}\n```\n"
+		d, err := deck.Parse("wide.md", source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return layout.Draw(d.Model, d.Slides[1].Scene)
+	}
+	if Wide(ladder(3)) {
+		t.Error("a ladder of 3 lifelines goes across")
+	}
+	if !Wide(ladder(8)) {
+		t.Error("a ladder of 8 lifelines stays beside its text")
 	}
 }
