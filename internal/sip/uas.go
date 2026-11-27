@@ -65,6 +65,20 @@ type provisionals struct {
 	unacked     *Message
 	pracked     chan struct{}
 	prackedRSeq uint32
+	// over tells that the INVITE has its final response. A response
+	// that still waits for its PRACK then goes on waiting (RFC 3262 3),
+	// but the PRACK can no longer take part in the offer and answer of
+	// the INVITE. Only a re-INVITE needs it: a final response other than
+	// 2xx to the INVITE of an IncomingCall ends its dialog, and a 2xx
+	// waits for every PRACK.
+	over bool
+}
+
+// acknowledged takes the response that waited for the PRACK with rack
+// off the list (RFC 3262 3). c.mu is held.
+func (p *provisionals) acknowledged(rack RAck) {
+	p.unacked, p.prackedRSeq = nil, rack.RSeq
+	close(p.pracked)
 }
 
 // receiveInvite is RFC 3261 8.2 and 13.3.1 for an INVITE outside a
@@ -403,6 +417,14 @@ func (d *CallDialog) acceptPRACK(st *ServerTransaction) bool {
 		c.ua.respondOwn(st, NewResponse(req, 481, ""))
 		return false
 	}
+	if p.over {
+		// The final response ended the offer and answer of the INVITE
+		// (RFC 3261 14.1), so a session description in the PRACK is
+		// neither an answer nor an offer, and the 200 carries none.
+		p.acknowledged(rack)
+		c.ua.respondOwn(st, NewResponse(req, 200, ""))
+		return true
+	}
 	r := &InDialogRequest{Request: req, d: d, st: st, dialog: d.dialog}
 	if len(req.Body) > 0 {
 		if d.offer == OfferLocal {
@@ -415,8 +437,7 @@ func (d *CallDialog) acceptPRACK(st *ServerTransaction) bool {
 			r.Offer = true
 		}
 	}
-	p.unacked, p.prackedRSeq = nil, rack.RSeq
-	close(p.pracked)
+	p.acknowledged(rack)
 	switch {
 	case c.onRequest != nil && (len(req.Body) > 0 || p.relay):
 		c.handOver(r)
