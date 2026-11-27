@@ -775,7 +775,7 @@ docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue c
 id: overview
 view: ladder
 nodes: [ue-a1, scscf-a, ibcf-a, ibcf-b, icscf-b, hss-b, scscf-b, ue-b1]
-lead: 1 つの通話が 2 つの網と網のあいだに分かれて進みます。境界では、要求がいったん終わって作り直されます。
+lead: 1 つの通話が、2 つの網と、そのあいだのリンクに分かれて進みます。境界では、要求がいったん終わって作り直されます。
 steps:
   - id: out
     title: 網 A の中を進み、境界まで届く（1 から 3）
@@ -1363,7 +1363,7 @@ steps:
     checkpoint: true
     text: |
       どちらのプロファイルも MESSAGE を認めています。
-      網 B では、I-CSCF が Request-URI を tel URI に直し、S-CSCF に渡します。
+      網 B では、I-CSCF が Request-URI を tel URI に直し、S-CSCF に渡します。図はそのあいだの LIR と LIA を省いています。
 ```
 
 ```ladder

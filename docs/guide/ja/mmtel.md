@@ -43,7 +43,7 @@ IR.92 が網の対応を任意としている MWI と ECT（2.3.5、2.3.11）は
 
 ### 4 つのフィルタ条件
 
-`deploy/compose/hss.yaml` は、どの加入者にも SMS の 2 つの条件のほかに、AS のための 4 つの条件を与えています。
+`deploy/compose/hss.yaml` は、どの加入者にも SMS の 3 つの条件のほかに、AS のための 4 つの条件を与えています。
 
 ```yaml
 - priority: 10

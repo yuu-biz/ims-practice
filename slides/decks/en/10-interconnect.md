@@ -1363,7 +1363,7 @@ steps:
     checkpoint: true
     text: |
       Both profiles allow MESSAGE.
-      In network B the I-CSCF turns the Request-URI into a tel URI and hands the message to the S-CSCF.
+      In network B the I-CSCF turns the Request-URI into a tel URI and hands the message to the S-CSCF. The diagram leaves out its LIR and LIA.
 ```
 
 ```ladder

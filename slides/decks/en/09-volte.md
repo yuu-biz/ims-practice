@@ -1439,7 +1439,7 @@ steps:
     checkpoint: true
     text: |
       It is the deactivation by the network, the same as when the radio is lost.
-      It starts from the Lab's button or the `curl` below. The diagram draws the network only.
+      It starts from the Lab's button or the `curl` in the longer explanation. The diagram draws the network only.
   - id: tell
     title: It tells the phone of the deactivation
     show: [deact-10]
@@ -1456,7 +1456,7 @@ steps:
   - id: str
     title: The P-CSCF ends its session too, with an STR
     show: [str]
-    text: A call that ends with an ordinary BYE has this STR from each side's P-CSCF as well.
+    text: A call that ends with an ordinary BYE has an STR from each side's P-CSCF as well, with another Termination-Cause.
   - id: build
     title: It builds the BYEs from the dialog it kept
     show: [pcscf-bye]

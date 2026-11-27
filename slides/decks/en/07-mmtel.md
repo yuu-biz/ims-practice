@@ -47,7 +47,7 @@ events:
     do: matches the iFCs
     at: scscf
     fields:
-      - Priorities 0 and 1: The criteria of SMS, REGISTER and MESSAGE. No match
+      - Priorities 0 to 2: The criteria of SMS, REGISTER and MESSAGE. No match
       - Priority 10: INVITE and ORIGINATING_REGISTERED. A match
       - ServerName: "`sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060`"
       - DefaultHandling: SESSION_TERMINATED
@@ -245,7 +245,7 @@ events:
       - What it asks the HSS: Nothing. No UDR
       - realm: The home domain, the same for every user
       - algorithm: SHA-256, then MD5
-      - nonce: The same in every challenge
+      - nonce: The same in both challenges of this 401
   - id: ut-401
     msg: "401"
     from: as2
@@ -1025,7 +1025,7 @@ steps:
     show: [scscf-ifc-orig]
     focus: [scscf]
     zoom: [scscf, hss, as1]
-    text: It tries the criteria in the order of their priority. After the two of SMS, the one of priority 10 matches.
+    text: It tries the criteria in the order of their priority. After the three of SMS, the one of priority 10 matches.
   - id: send
     title: It sends to the AS of that criterion
     show: [c1-s-as1]
@@ -1049,7 +1049,7 @@ steps:
 
 - Each sends to `sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060`.
 - On the originating side the call ends when the AS does not answer, so that barring holds.
-- They come after the two criteria of SMS, priorities 0 and 1. Each matches one session case only, so they never compete. The one for TERMINATING_UNREGISTERED is there for CFNL.
+- They come after the three criteria of SMS, priorities 0 to 2. Each matches one session case only, so they never compete. The one for TERMINATING_UNREGISTERED is there for CFNL.
 
 > Guide: ["The four filter criteria"](../../../docs/guide/en/mmtel.md#the-four-filter-criteria). TS 29.228 Annex E, B.2.3. TS 24.229 5.4.3.2 step 5, 5.4.3.3 step 4.
 
@@ -1662,7 +1662,7 @@ steps:
     show: [cfnr-181, cfnr-181-ue1, cfnr-c4]
     active: cfnr-c4
     detail: [cfnr-181, cfnr-c4]
-    text: From the 181 on it goes as with CFU. Measure the time from the 180 to the CANCEL in the capture.
+    text: From the 181 on it goes as with CFU, and the diagram leaves out the same hops. Measure the time from the 180 to the CANCEL in the capture.
 ```
 
 | Case | What to see |

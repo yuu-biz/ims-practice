@@ -1241,7 +1241,7 @@ steps:
       `curr:qos local` が `none` です。発信側はまだ音声の bearer を持っていません。
       このしくみは Supported で申し出るだけで、Require には入れません。
   - id: answer
-    title: 183 が answer と知らせの求めを返す
+    title: 183 が answer を返し、知らせを求める
     show: [r183-12-p]
     checkpoint: true
     text: |
@@ -1254,7 +1254,7 @@ steps:
       このあいだに、前のシーンの 2 つの AAR が入ります。P-CSCF が待つのは AAA だけで、bearer ができるのは待ちません。
       発信側の資源がそろったことは、このあとの UPDATE で伝えます。
   - id: prack
-    title: PRACK で 183 を確かめる
+    title: PRACK で 183 の受信を確認する
     show: [prack, prack-ok]
     active: prack-ok
     detail: [prack]
@@ -1439,7 +1439,7 @@ steps:
     checkpoint: true
     text: |
       無線が切れたときと同じ、網が始める非活性化です。
-      始めるのはラボのボタンか、上の `curl` です。図は網の中だけを描いています。
+      始めるのはラボのボタンか、詳しい説明の `curl` です。図は網の中だけを描いています。
   - id: tell
     title: 端末に非活性化を知らせる
     show: [deact-10]
@@ -1456,7 +1456,7 @@ steps:
   - id: str
     title: P-CSCF も STR でセッションを終える
     show: [str]
-    text: 普通の BYE で終わる通話でも、両側の P-CSCF がこの STR を送ります。
+    text: 普通の BYE で終わる通話でも、両側の P-CSCF が STR を送ります。Termination-Cause は別の値です。
   - id: build
     title: 保存したダイアログから BYE を作る
     show: [pcscf-bye]
