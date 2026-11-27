@@ -43,8 +43,7 @@ events:
     proto: HTTP
     note: (コンテキスト 1)
     fields:
-      - ターミネーション: アクセス側（UE 1 へ）とコア側（網へ）
-      - アクセス側の送り先: UE 1 の SDP のアドレス
+      - ターミネーション: アクセス側（UE 1 へ）とコア側（網へ）。送り先はまだ無い
   - id: ctx1-ok
     msg: 200 OK
     from: agw
@@ -53,6 +52,20 @@ events:
     note: (コンテキスト 1)
     fields:
       - 返るもの: コンテキストの ID と、2 つのターミネーションのアドレス
+  - id: set1-put
+    msg: PUT .../terminations/access
+    from: pcscf
+    to: agw
+    proto: HTTP
+    note: (コンテキスト 1)
+    fields:
+      - 送り先: UE 1 の SDP のアドレス
+  - id: set1-ok
+    msg: 200 OK
+    from: agw
+    to: pcscf
+    proto: HTTP
+    note: (コンテキスト 1)
   - id: p-rewrite
     do: ヘッダを足し、SDP を書き換える
     at: pcscf
@@ -258,8 +271,7 @@ events:
     proto: HTTP
     note: (コンテキスト 2)
     fields:
-      - ターミネーション: アクセス側（UE 2 へ）とコア側（網へ）
-      - コア側の送り先: オファーのアドレス。コンテキスト 1 のコア側
+      - ターミネーション: アクセス側（UE 2 へ）とコア側（網へ）。送り先はまだ無い
   - id: ctx2-ok
     msg: 200 OK
     from: agw
@@ -268,6 +280,20 @@ events:
     note: (コンテキスト 2)
     fields:
       - 返るもの: コンテキストの ID と、2 つのターミネーションのアドレス
+  - id: set2-put
+    msg: PUT .../terminations/core
+    from: pcscf
+    to: agw
+    proto: HTTP
+    note: (コンテキスト 2)
+    fields:
+      - 送り先: オファーのアドレス。コンテキスト 1 のコア側
+  - id: set2-ok
+    msg: 200 OK
+    from: agw
+    to: pcscf
+    proto: HTTP
+    note: (コンテキスト 2)
   - id: inv-p-ue2
     msg: INVITE
     from: pcscf
@@ -481,7 +507,7 @@ events:
     at: ue2
     fields:
       - 条件: 必須のプリコンディションがすべて満たされた
-      - この構成: どちらの UE も資源があるので、183 のすぐあと
+      - この構成: どちらの UE も資源があるので、183 の PRACK が届いたらすぐ
   - id: r180-ue2-p
     msg: "180"
     from: ue2
@@ -1135,6 +1161,14 @@ steps:
     show: [ctx1-ok]
     zoom: [ue1, agw, ue2, pcscf]
     text: 中継ノードは 2 つのターミネーションのアドレスを答えます。
+  - id: set
+    title: アクセス側の送り先を教える
+    show: [set1-put, set1-ok]
+    hide: [ctx1-post, ctx1-ok]
+    active: set1-put
+    detail: [set1-put]
+    zoom: [ue1, agw, ue2, pcscf]
+    text: コンテキストを作る POST には送り先が入りません。UE 1 の SDP のアドレスは、そのあとの PUT で教えます。
   - id: rewrite
     title: P-CSCF がヘッダを足し、SDP を書き換える
     checkpoint: true
@@ -1362,9 +1396,14 @@ steps:
     active: ctx2-post
     detail: [ctx2-post, ctx2-ok]
     zoom: [ue1, agw, ue2, pcscf]
-    text: |
-      コア側の送り先はオファーに書いてあるアドレスで、コンテキスト 1 のコア側です。
-      P-CSCF はどちらの通過でも、自分の側だけを扱います。
+    text: P-CSCF はどちらの通過でも、自分の側だけを扱います。
+  - id: set
+    title: コア側の送り先を教える
+    show: [set2-put, set2-ok]
+    active: set2-put
+    detail: [set2-put]
+    zoom: [ue1, agw, ue2, pcscf]
+    text: 送り先はオファーに書いてあるアドレスで、コンテキスト 1 のコア側です。これも PUT で教えます。
   - id: deliver
     title: INVITE が UE 2 に届く
     show: [inv-p-ue2]
@@ -1390,7 +1429,7 @@ steps:
 
 ---
 
-## UE 2 が高信頼の 183 で答える（8）
+## UE 2 が信頼性のある 183 で答える（8）
 
 ```ims-scene
 id: answer
@@ -1417,13 +1456,18 @@ steps:
     text: P-CSCF は SDP を、コンテキスト 2 のコア側を指すように書き換えます。ダイアログ 3 の相手は着信側の AS です。
   - id: dialog2
     title: AS が 183 を次のダイアログに写す
-    only: [r183-as-s2, r183-s-i, r183-i-s, r183-s-as2]
+    only: [r183-as-s2, r183-s-i]
     zoom: [icscf, hss, scscf, mmtel]
     active: r183-s-i
     detail: []
-    text: |
-      応答は INVITE の Via をたどるので、I-CSCF も通ります。
-      S-CSCF を 2 回通り、発信側の AS に届きます。
+    text: 応答は INVITE の Via をたどるので、I-CSCF も通ります。
+  - id: dialog2-back
+    title: 183 が発信側の AS に届く
+    show: [r183-i-s, r183-s-as2]
+    zoom: [icscf, hss, scscf, mmtel]
+    active: r183-s-as2
+    detail: []
+    text: I-CSCF から S-CSCF に戻り、発信側の AS に届きます。S-CSCF はこれで 2 回目です。
   - id: dialog1
     title: 183 が発信側の P-CSCF に届く
     only: [r183-as-s1, r183-s-p1]
@@ -1459,7 +1503,7 @@ steps:
 
 ---
 
-## UE 1 が PRACK で 183 を確かめる（9）
+## UE 1 が PRACK で 183 を確認する（9）
 
 ```ims-scene
 id: prack
@@ -1475,12 +1519,19 @@ steps:
       ダイアログ 1 の相手の AS がすぐに 200 で答えます。
   - id: dialog2
     title: AS が次のダイアログで自分の PRACK を送る
-    only: [prack-as-s2, prack-s-as2, pok-as-s2, pok-s-as2]
+    only: [prack-as-s2, prack-s-as2]
     zoom: [icscf, hss, scscf, mmtel]
-    active: prack-as-s2
+    active: prack-s-as2
+    detail: []
+    text: ダイアログ 2 の PRACK は、発信側の AS から S-CSCF を通って着信側の AS に届きます。I-CSCF は通りません。
+  - id: dialog2-ok
+    title: 着信側の AS が PRACK に 200 で答える
+    show: [pok-as-s2, pok-s-as2]
+    zoom: [icscf, hss, scscf, mmtel]
+    active: pok-s-as2
     detail: []
     checkpoint: true
-    text: ダイアログ 2 の PRACK は S-CSCF を通って着信側の AS に届きます。I-CSCF は通りません。
+    text: 200 は同じ道を逆にたどって、発信側の AS に戻ります。
   - id: dialog3
     title: PRACK が UE 2 に届き、UE 2 が 200 で答える
     only: [prack-as-s3, prack-s-p3, prack-p-ue2, pok-ue2-p, pok-p-s3, pok-s-as3]
@@ -1507,7 +1558,7 @@ steps:
 
 ```ims-scene
 id: confirm
-lead: UE 2 が応答すると、200 OK がダイアログごとに戻り、それぞれの相手が ACK で確かめます。
+lead: UE 2 が応答すると、200 OK がダイアログごとに戻り、それぞれの相手が ACK を返します。
 steps:
   - id: ring
     title: UE 2 が鳴らし、180 を送る
@@ -1534,13 +1585,27 @@ steps:
       AS は UE 2 の 200 に、自分のダイアログですぐ ACK を返します。
       だから UE 2 への ACK が UE 1 への 200 より先に来ることがあります。
   - id: dialog2
-    title: ダイアログ 2 の 200 OK と ACK
-    checkpoint: true
-    only: [ok-as-s2, ok-s-i, ok-i-s, ok-s-as2, ack-as-s2, ack-s-as2]
+    title: ダイアログ 2 の 200 OK が I-CSCF を通る
+    only: [ok-as-s2, ok-s-i]
     zoom: [icscf, hss, scscf, mmtel]
     active: ok-s-i
     detail: []
-    text: 200 OK は Via をたどって I-CSCF を通ります。ACK はルートセットに沿うので、I-CSCF を通りません。
+    text: 200 OK は Via をたどるので、183 と同じく I-CSCF を通ります。
+  - id: dialog2-back
+    title: 200 OK が発信側の AS に届く
+    show: [ok-i-s, ok-s-as2]
+    zoom: [icscf, hss, scscf, mmtel]
+    active: ok-s-as2
+    detail: []
+    text: I-CSCF から S-CSCF に戻り、発信側の AS に届きます。
+  - id: dialog2-ack
+    title: 発信側の AS が ACK を送る
+    only: [ack-as-s2, ack-s-as2]
+    zoom: [icscf, hss, scscf, mmtel]
+    active: ack-s-as2
+    detail: []
+    checkpoint: true
+    text: ACK はルートセットに沿うので、I-CSCF を通りません。
   - id: dialog1
     title: 200 OK が UE 1 に届く
     only: [ok-as-s1, ok-s-p1, ok-p-ue1]
@@ -1561,7 +1626,7 @@ steps:
 | ACK | ルートセットに沿って進む。INVITE のトランザクションの一部ではない。 |
 
 - UE 2 は ACK が届くまで、間隔を広げながら 200 OK を送り直します。
-- 資源がまだ無い着信側は、資源がそろうまで 180 を送りません。この構成の UE はどちらも資源があるので、183 のすぐあとに 180 が続きます。
+- 資源がまだ無い着信側は、資源がそろうまで 180 を送りません。この構成の UE はどちらも資源があるので、183 の PRACK が届くとすぐに 180 を送ります。
 - AS は UE 2 の 200 に、自分のダイアログですぐ ACK を返します。だから UE 2 への ACK が、UE 1 への 200 より先に来ることがあります。
 
 > 手順書 [10](../../../docs/guide/ja/call.md#10-ue-2-が鳴らしてから応答する180-と-200-ok) と [11](../../../docs/guide/ja/call.md#11-ue-1-が確認するack)。RFC 3312 6。TS 24.229 5.1.4.1。IR.92 2.4.1。RFC 3261 13.3.1.4、13.2.1、13.2.2.4。RFC 3262 5。
@@ -1673,13 +1738,18 @@ steps:
       この削除は SIP のメッセージには出ません。中継ノードの API を呼びます。
   - id: dialog2
     title: AS が次のダイアログに自分の BYE を送る
-    only: [bye-as-s2, bye-s-as2, bok-as-s2, bok-s-as2]
+    only: [bye-as-s2, bye-s-as2]
     zoom: [icscf, hss, scscf, mmtel]
-    active: bye-as-s2
+    active: bye-s-as2
     detail: []
-    text: |
-      ダイアログ 2 の BYE と 200 は、S-CSCF を通って 2 つの AS のあいだを行き来します。
-      UE 1 への 200 と UE 2 への BYE は、どちらが先に来ることもあります。
+    text: ダイアログ 2 の BYE は、発信側の AS から S-CSCF を通って着信側の AS に届きます。UE 1 への 200 と UE 2 への BYE は、どちらが先に来ることもあります。
+  - id: dialog2-ok
+    title: 着信側の AS が BYE に 200 で答える
+    show: [bok-as-s2, bok-s-as2]
+    zoom: [icscf, hss, scscf, mmtel]
+    active: bok-s-as2
+    detail: []
+    text: 200 は同じ道を逆にたどって、発信側の AS に戻ります。
   - id: dialog3
     title: BYE が UE 2 に届く
     checkpoint: true
