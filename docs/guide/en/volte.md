@@ -533,6 +533,35 @@ The call that the Lab drives in `scripts/e2e-volte.sh`:
 
 Each re-INVITE passes the MMTel AS as it came (TS 24.610 4.5.2.1), and each new answer updates both Rx sessions.
 
+### When a reliable 183 answers the hold
+
+The re-INVITE lists `100rel` in Supported, as every request within the dialog does, so the other side may answer the hold in a reliable provisional response rather than in the 200 (RFC 3262 5). The UE acknowledges the 183 with a PRACK without a body, and takes the answer of the 183 as soon as it comes. The 200 that ends the re-INVITE then carries no SDP, and SDP in it would not count (RFC 3261 13.2.1):
+
+```text
+UE -> peer  re-INVITE      a=sendonly: on hold
+peer -> UE  183            Require: 100rel, RSeq: 1; the answer, a=recvonly
+UE -> peer  PRACK          RAck: the RSeq of the 183 and the CSeq of the re-INVITE; no body
+peer -> UE  200 (PRACK)
+peer -> UE  200 (INVITE)   no SDP: the 183 had the answer
+UE -> peer  ACK
+```
+
+The re-INVITE may still fail after such a 183. Without preconditions, the offer and answer of the 183 have already changed the session at the peer (RFC 6141 3.3), so the two sides no longer have the same view of it. The UE goes back to the session before the hold, the media of the peer and its direction included, and offers that session in a new re-INVITE, so that both sides have it again (RFC 6141 3.4):
+
+```text
+UE -> peer  re-INVITE      a=sendonly: on hold
+peer -> UE  183            Require: 100rel, RSeq: 1; the answer, a=recvonly
+UE -> peer  PRACK
+peer -> UE  200 (PRACK)
+peer -> UE  500 (INVITE)
+UE -> peer  ACK
+UE -> peer  re-INVITE      a=sendrecv: the session before the hold
+peer -> UE  200 (INVITE)   the answer, a=sendrecv
+UE -> peer  ACK
+```
+
+With preconditions, the offer and answer of the 183 only make the new parameters ready, and the peer starts to use them once it sends media with them (RFC 6141 3.3). The UE takes the error as saying that the peer used none of them, without looking at the media to tell ([What this project simplifies](call.md#what-this-project-simplifies)): it goes back to the session before the hold and sends no new re-INVITE. No node of this network answers a re-INVITE in a reliable 183, so the capture of `scripts/e2e-volte.sh` does not have these exchanges; the tests in `internal/ue/holdprack_test.go` play the peer.
+
 ## Run it
 
 `scripts/e2e-volte.sh` does everything in this guide and checks each message in the capture, in order. It leaves the capture in `captures/`, the frames of the registrations, the calls, Rx and the EPC stub's API in `e2e-out/volte-ladder.txt`, the AMR-WB recordings in `captures/volte-*.amr`, and the logs of the UEs, with what a UE on the host heard, in `e2e-out/`. It takes about two minutes.
