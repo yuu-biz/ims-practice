@@ -1059,9 +1059,11 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 // PRACK comes, and Progress returns then. After 64*T1 without a PRACK,
 // the UA rejects the re-INVITE with 500 and Progress returns
 // ErrNoPRACK. Without 100rel, the response goes unreliably, and
-// Progress returns once it is sent. Accept waits for the PRACK of a
-// reliable response with a session description; Reject does not wait,
-// and a Progress that waits for a PRACK then returns.
+// Progress returns once it is sent; ProgressUnreliably sends one that
+// does not go reliably although the re-INVITE lists 100rel. Accept
+// waits for the PRACK of a reliable response with a session
+// description; Reject does not wait, and a Progress that waits for a
+// PRACK then returns.
 //
 // The first reliable response with a session description carries the
 // answer to the offer of the re-INVITE, or the offer when the
@@ -1077,6 +1079,27 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 // once the re-INVITE has its final response, and ErrCallEnded once a
 // BYE has answered it.
 func (r *InDialogRequest) Progress(code int, body Body, headers ...HeaderField) error {
+	return r.progress(code, body, headers, r.reliable)
+}
+
+// ProgressUnreliably sends a provisional response to the re-INVITE that
+// does not go reliably, although the re-INVITE lists 100rel: the peer
+// sends no PRACK for it, and a session description in it changes
+// nothing (RFC 3261 13.2.1). RFC 3262 3 leaves it to the UAS which
+// provisional responses it sends reliably.
+//
+// A B2BUA passes a provisional response of its other leg on this way
+// when that one came without 100rel. The session description in it is
+// no answer there either, and a reliable copy would have the peer take
+// it for the answer and leave the answer that follows unread (RFC 3262
+// 5).
+func (r *InDialogRequest) ProgressUnreliably(code int, body Body, headers ...HeaderField) error {
+	return r.progress(code, body, headers, false)
+}
+
+// progress sends a provisional response to the re-INVITE, reliably or
+// not, and waits for the PRACK of a reliable one.
+func (r *InDialogRequest) progress(code int, body Body, headers []HeaderField, reliable bool) error {
 	switch {
 	case r.Request.Method != INVITE:
 		// Provisional responses other than 100 are for INVITE only (RFC
@@ -1096,12 +1119,12 @@ func (r *InDialogRequest) Progress(code int, body Body, headers ...HeaderField) 
 		c.mu.Unlock()
 		return err
 	}
-	if r.reliable {
+	if reliable {
 		resp.Add("Contact", c.contactLocked())
 	}
 	addHeaders(resp, headers)
 	body.addTo(resp)
-	if r.reliable {
+	if reliable {
 		offers, err := r.sessionSent(resp)
 		if err != nil {
 			c.mu.Unlock()
@@ -1118,7 +1141,7 @@ func (r *InDialogRequest) Progress(code int, body Body, headers ...HeaderField) 
 	err := r.st.Respond(resp)
 	pracked := r.pracked
 	c.mu.Unlock()
-	if err != nil || !r.reliable {
+	if err != nil || !reliable {
 		return err
 	}
 

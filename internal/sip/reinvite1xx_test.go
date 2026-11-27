@@ -268,6 +268,37 @@ func TestProvisionalResponsesToAReINVITEWithout100rel(t *testing.T) {
 	}
 }
 
+// RFC 3262 3 leaves it to the UAS which provisional responses to a
+// re-INVITE that lists 100rel it sends reliably. ProgressUnreliably
+// sends one that does not: it carries no Require and no RSeq, the peer
+// sends no PRACK for it, and the session description in it is no
+// answer, so the 2xx carries the answer (RFC 3261 13.2.1).
+func TestProgressUnreliablySendsAResponseThatNeedsNoPRACK(t *testing.T) {
+	results := make(chan error, 2)
+	_, p := rawCall(t, testTimers, func(r *InDialogRequest) {
+		results <- r.ProgressUnreliably(183, holdAnswer)
+		_, err := r.Accept(holdAnswer)
+		results <- err
+	})
+	reinvite := reInviteFrom(p, holdOffer, supports100rel)
+	prov := readProvisional(t, p)
+	if prov.StatusCode != 183 || prov.Requires(Option100rel) || prov.Get("RSeq") != "" {
+		t.Fatalf("got %s with Require %q and RSeq %q, want a 183 that does not go reliably",
+			startLine(prov), prov.Get("Require"), prov.Get("RSeq"))
+	}
+	if err := returned(t, results, "ProgressUnreliably"); err != nil {
+		t.Errorf("ProgressUnreliably: %v", err)
+	}
+	ok := readFinal(t, p, reinvite.Get("CSeq"))
+	if ok.StatusCode != 200 || string(ok.Body) != string(holdAnswer.Content) {
+		t.Errorf("re-INVITE got %s with %q, want 200 with the answer", startLine(ok), ok.Body)
+	}
+	ackFrom(p, reinvite)
+	if err := returned(t, results, "Accept"); err != nil {
+		t.Errorf("Accept: %v", err)
+	}
+}
+
 // RFC 3262 3: a PRACK matches a reliable provisional response by its
 // RSeq and by the CSeq of its INVITE, so a PRACK with another RSeq, or
 // one for the INVITE of the call, gets 481.
