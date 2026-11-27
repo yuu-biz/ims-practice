@@ -279,13 +279,15 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 	// Only the dialogs of INVITEs are kept, so a request of another
 	// dialog, such as a NOTIFY, finds none. A request of another dialog
 	// of a forked INVITE finds the Dialog of the dialog that its 2xx
-	// confirmed, and changes nothing of it (ofAnotherDialog).
+	// confirmed, and changes nothing of it (ofAnotherDialog) but the
+	// CSeq of its sender. That CSeq is the highest of the sender's
+	// requests in any dialog of the INVITE, so that a BYE of the P-CSCF
+	// in either dialog takes a number above all of them: the one that
+	// ends a later 2xx of the other dialog (crossedCancel) as much as one
+	// that releases the call, where a higher number is still in order
+	// (RFC 3261 12.2.2).
 	key := subsequentKey(st.Request, toUE)
-	d, known, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
-		if !d.ofAnotherDialog(st.Request, toUE) {
-			d.noteRequest(st.Request, toUE)
-		}
-	})
+	d, known, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) { d.noteRequest(st.Request, toUE) })
 	if err != nil {
 		// Without the Dialog the P-CSCF could not release the session
 		// with the right CSeq, nor end what it holds after a BYE.
