@@ -145,8 +145,12 @@ func TestWideLadderGoesAcross(t *testing.T) {
 		}
 		return layout.Draw(d.Model, d.Slides[1].Scene)
 	}
-	if Wide(ladder(3)) {
-		t.Error("a ladder of 3 lifelines goes across")
+	// Up to 6 lifelines a ladder is drawn larger beside its text, where
+	// its ten rows have the height of the stage.
+	for _, n := range []int{3, 6} {
+		if Wide(ladder(n)) {
+			t.Errorf("a ladder of %d lifelines goes across", n)
+		}
 	}
 	if !Wide(ladder(8)) {
 		t.Error("a ladder of 8 lifelines stays beside its text")

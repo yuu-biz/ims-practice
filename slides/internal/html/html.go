@@ -135,7 +135,7 @@ func nonNil(s []string) []string {
 func round2(v float64) float64 { return math.Round(v*100) / 100 }
 
 // wideLadder is the number of lifelines from which a ladder goes across.
-const wideLadder = 6
+const wideLadder = 7
 
 // Wide reports a diagram that is much wider than tall: a map of nodes in
 // a row or two, or a ladder of many lifelines. The stage then draws it
