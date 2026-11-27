@@ -27,8 +27,9 @@ type relayedSubscription struct {
 	ends []func()
 	// stopExpiry stops the timer that ends the subscription after its
 	// expiry, which each 2xx to a SUBSCRIBE and each NOTIFY of it sets
-	// anew.
+	// anew; run tells a timer that fires late that it has been replaced.
 	stopExpiry func() bool
+	run        uint64
 }
 
 // expiryGrace is how long the Call keeps a subscription past its
@@ -144,9 +145,22 @@ func (c *Call) expireSubscription(key string, sub *relayedSubscription, d time.D
 	if sub.stopExpiry != nil {
 		sub.stopExpiry()
 	}
+	sub.run++
+	run := sub.run
 	sub.stopExpiry = time.AfterFunc(d+expiryGrace, func() {
+		c.mu.Lock()
+		if c.subscriptions[key] != sub || sub.run != run {
+			// A refresh or a NOTIFY has set the expiry anew meanwhile, or
+			// the subscription has ended and another taken its Event.
+			c.mu.Unlock()
+			return
+		}
+		delete(c.subscriptions, key)
+		c.mu.Unlock()
 		c.log.Info("subscription within the dialogs expired without a NOTIFY that ends it")
-		c.endSubscription(key)
+		for _, end := range sub.ends {
+			end()
+		}
 	}).Stop
 }
 
