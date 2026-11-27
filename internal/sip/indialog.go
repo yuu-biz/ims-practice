@@ -447,7 +447,8 @@ func (d *CallDialog) Update(body Body, headers ...HeaderField) (*Message, error)
 // answered makes the changes of state that the final response to a
 // target refresh request of this UA brings (RFC 3261 12.2.1.2, 14.1;
 // RFC 3311 5.3). resp is nil when none came. offers tells that the
-// request carried an offer. c.mu is held.
+// request carried an offer that is still open: no reliable provisional
+// response has answered it (RFC 3262 5). c.mu is held.
 func (d *CallDialog) answered(resp *Message, offers bool) {
 	accepted := resp != nil && resp.StatusCode < 300
 	if accepted && d.dialog.State != DialogTerminated {
@@ -612,7 +613,16 @@ func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, erro
 // The re-INVITE lists 100rel in Supported, as every request within the
 // dialog does, so the peer may send its provisional responses reliably.
 // Each one gets its PRACK (RFC 3262 4). Without ManualPRACK the UA
-// sends it itself, without a body.
+// sends it itself, without a body, except for a response that carries
+// an offer: its PRACK has to carry the answer, which the user sends
+// with PRACK (RFC 3262 5).
+//
+// The first reliable provisional response with a session description
+// carries the answer to the offer of the re-INVITE, or the offer when
+// the re-INVITE had none, and the 2xx then carries none that counts
+// (RFC 3261 13.2.1, RFC 3262 5). OnProvisional is where the user takes
+// it. A provisional response that is not reliable changes nothing: what
+// session description it has only shows the answer before it comes.
 //
 // A final response other than 2xx leaves the session as it was. After a
 // 491 (Request Pending), the re-INVITE crossed one of the peer; the
@@ -653,6 +663,7 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 	t := d.takeTurn()
 	c.mu.Unlock()
 
+	reinvite := reInviteSent{offers: offers, manualPRACK: re.ManualPRACK}
 	var final *Message
 	ct, err := t.send(c, req)
 	if err == nil {
@@ -662,7 +673,7 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 				final = resp
 				break
 			}
-			if resp.StatusCode > 100 && d.reInviteProvisional(resp, re.ManualPRACK) && re.OnProvisional != nil {
+			if resp.StatusCode > 100 && d.reInviteProvisional(resp, &reinvite) && re.OnProvisional != nil {
 				re.OnProvisional(resp)
 			}
 		}
@@ -678,10 +689,15 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 	// RFC 3262 4: the UAC keeps the RSeq until the final response. One
 	// that comes after it is discarded, which the RFC allows.
 	delete(d.reliable, cseq.Number)
-	if accepted && !offers && len(final.Body) > 0 {
+	switch {
+	case reinvite.described && !accepted && d.offer == OfferRemote:
+		// The offer of a reliable response has no answer yet, and goes
+		// with the re-INVITE (RFC 3261 14.1).
+		d.offerEvent(OfferRejected)
+	case !reinvite.described && accepted && !offers && len(final.Body) > 0:
 		d.offerEvent(OfferReceived)
 	}
-	d.answered(final, offers)
+	d.answered(final, offers && !reinvite.described)
 	if accepted && d.dialog.State == DialogConfirmed {
 		d.acknowledge(cseq.Number)
 	}
@@ -697,12 +713,25 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 	return final, err
 }
 
-// reInviteProvisional is RFC 3262 4 for resp, a 101-199 response to a
-// re-INVITE of this UA: a reliable one gets its PRACK, from the UA
-// unless manualPRACK leaves it to the user. A retransmission, or one
-// that comes out of order, is discarded. It reports whether to pass
-// resp on to the user.
-func (d *CallDialog) reInviteProvisional(resp *Message, manualPRACK bool) bool {
+// reInviteSent is a re-INVITE of this UA, from the time it goes out to
+// its final response.
+type reInviteSent struct {
+	// offers tells that the re-INVITE carried the offer.
+	offers      bool
+	manualPRACK bool
+	// described tells that a reliable provisional response has carried
+	// the session description of the re-INVITE: the answer to its
+	// offer, or the offer when it had none (RFC 3262 5).
+	described bool
+}
+
+// reInviteProvisional is RFC 3262 4 and 5 for resp, a 101-199 response
+// to the re-INVITE r. A reliable one gets its PRACK, from the UA unless
+// r leaves it to the user, and the first one with a session description
+// carries the answer or the offer. A retransmission, or one that comes
+// out of order, is discarded. It reports whether to pass resp on to the
+// user.
+func (d *CallDialog) reInviteProvisional(resp *Message, r *reInviteSent) bool {
 	c := d.c
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -712,7 +741,16 @@ func (d *CallDialog) reInviteProvisional(resp *Message, manualPRACK bool) bool {
 	if d.usable() != nil || !d.reliableInOrder(resp) {
 		return false
 	}
-	if !manualPRACK {
+	if len(resp.Body) > 0 && !r.described {
+		r.described = true
+		if r.offers {
+			d.offerEvent(AnswerReceived)
+		} else {
+			d.offerEvent(OfferReceived)
+		}
+	}
+	// A response with an offer waits for the user's answer.
+	if !r.manualPRACK && d.offer != OfferRemote {
 		d.autoPRACK(resp)
 	}
 	return true

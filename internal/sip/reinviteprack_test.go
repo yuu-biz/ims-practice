@@ -47,9 +47,9 @@ func readPRACK(t *testing.T, p *rawCallee, rack, cseq string) *Message {
 	return prack
 }
 
-// acceptReInvite answers the re-INVITE with 200 and body, and reads the
-// ACK.
-func acceptReInvite(t *testing.T, p *rawCallee, reinvite *Message, body Body) {
+// acceptReInvite answers the re-INVITE with 200 and body, and returns
+// the ACK.
+func acceptReInvite(t *testing.T, p *rawCallee, reinvite *Message, body Body) *Message {
 	t.Helper()
 	cseq, _ := ParseCSeq(reinvite.Get("CSeq"))
 	p.respond(reinvite, 200, body, HeaderField{Name: "Contact", Value: "<" + p.target + ">"})
@@ -57,6 +57,7 @@ func acceptReInvite(t *testing.T, p *rawCallee, reinvite *Message, body Body) {
 	if want := (CSeq{Number: cseq.Number, Method: ACK}).String(); ack.Method != ACK || ack.Get("CSeq") != want {
 		t.Fatalf("got %s with CSeq %q, want the ACK with %s", startLine(ack), ack.Get("CSeq"), want)
 	}
+	return ack
 }
 
 // RFC 3262 4: the re-INVITE lists 100rel in Supported, so the UAC
@@ -227,5 +228,130 @@ func TestReINVITEHandsItsProvisionalResponsesToTheUser(t *testing.T) {
 	}
 	if len(got) > 0 {
 		t.Errorf("OnProvisional got %d more responses, such as the retransmitted 183", len(got))
+	}
+}
+
+// RFC 3262 5: the answer to the offer of a re-INVITE may come in a
+// reliable 183, as with preconditions, whose UAs support PRACK and
+// UPDATE (RFC 3312 11). The offer is then answered, so the UAC may
+// offer again in an UPDATE while the re-INVITE goes on (RFC 3311 5.1),
+// and the 2xx to the re-INVITE carries no session description.
+// That 2xx leaves the session as the 183 and the UPDATE made it: the
+// offer of the UPDATE is still open when it comes.
+func TestReINVITEAnsweredInAReliable183(t *testing.T) {
+	callerUA := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	got := make(chan *Message, 2)
+	done := reInviteWith(out, ReInvitation{Body: holdOffer, OnProvisional: func(resp *Message) { got <- resp }})
+	reinvite := readDatagram(t, p.peer)
+	progress := reliable(reinvite, 183, 1, p.target)
+	holdAnswer.addTo(progress)
+	send(t, p.peer, progress, callerUA.Stack())
+	p.respond(readPRACK(t, p, "1 2 INVITE", "3 PRACK"), 200, Body{})
+	if m := handed(t, got, 1)[0]; string(m.Body) != string(holdAnswer.Content) {
+		t.Errorf("OnProvisional got %q, want the 183 with the answer", m.Body)
+	}
+
+	updated := make(chan reInviteDone, 1)
+	go func() {
+		resp, err := out.Update(offer2)
+		updated <- reInviteDone{resp, err}
+	}()
+	update := readDatagram(t, p.peer)
+	if update.Method != UPDATE || string(update.Body) != string(offer2.Content) {
+		t.Fatalf("got %s with body %q, want the UPDATE with the new offer", startLine(update), update.Body)
+	}
+	if ack := acceptReInvite(t, p, reinvite, Body{}); len(ack.Body) > 0 {
+		t.Errorf("ACK carries %q, want no body", ack.Body)
+	}
+	if r := finalOf(t, done); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("ReInviteWith returned %v, %v; want the 200", r.resp, r.err)
+	}
+	second := make(chan error, 1)
+	go func() {
+		_, err := out.Update(offer2)
+		second <- err
+	}()
+	select {
+	case err := <-second:
+		if !errors.Is(err, ErrOfferPending) {
+			t.Errorf("second Update while the UPDATE's offer is open: %v, want ErrOfferPending", err)
+		}
+	case <-time.After(time.Second):
+		t.Error("a second offer went out while the offer of the UPDATE was open")
+	}
+	p.respond(update, 200, answer2, HeaderField{Name: "Contact", Value: "<" + p.target + ">"})
+	if r := finalOf(t, updated); r.err != nil || r.resp.StatusCode != 200 {
+		t.Errorf("Update returned %v, %v; want the 200", r.resp, r.err)
+	}
+}
+
+// RFC 3262 5: a re-INVITE without an offer may get the offer in its
+// first reliable response. Its PRACK carries the answer, which only the
+// user has; the 2xx and the ACK then carry none.
+func TestReINVITEWithoutAnOfferGetsItInAReliable183(t *testing.T) {
+	callerUA := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	got := make(chan *Message, 2)
+	done := reInviteWith(out, ReInvitation{OnProvisional: func(resp *Message) { got <- resp }})
+	reinvite := readDatagram(t, p.peer)
+	if len(reinvite.Body) > 0 {
+		t.Fatalf("re-INVITE carries %q, want no offer", reinvite.Body)
+	}
+	progress := reliable(reinvite, 183, 1, p.target)
+	offer2.addTo(progress)
+	send(t, p.peer, progress, callerUA.Stack())
+	expectSilence(t, p.peer, 3*slowTimers.T1, "no PRACK without the answer")
+
+	m := handed(t, got, 1)[0]
+	if _, err := out.PRACK(m, Body{}); !errors.Is(err, ErrNoAnswer) {
+		t.Errorf("PRACK without a body: %v, want ErrNoAnswer", err)
+	}
+	pracked := prackOf(out, m, answer2)
+	prack := readPRACK(t, p, "1 2 INVITE", "3 PRACK")
+	if string(prack.Body) != string(answer2.Content) {
+		t.Errorf("PRACK carries %q, want the answer", prack.Body)
+	}
+	p.respond(prack, 200, Body{})
+	if r := <-pracked; r.err != nil || r.final.StatusCode != 200 {
+		t.Fatalf("PRACK returned %v, %v; want the 200", r.final, r.err)
+	}
+	if ack := acceptReInvite(t, p, reinvite, Body{}); len(ack.Body) > 0 {
+		t.Errorf("ACK carries %q, want no body", ack.Body)
+	}
+	if r := finalOf(t, done); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("ReInviteWith returned %v, %v; want the 200", r.resp, r.err)
+	}
+}
+
+// RFC 3261 14.1: when the re-INVITE fails before the user has answered
+// the offer of its reliable 183, that offer goes with it, and the UA
+// may offer itself.
+func TestFailedReINVITEDropsTheOfferOfItsReliable183(t *testing.T) {
+	callerUA := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	done := reInviteWith(out, ReInvitation{OnProvisional: func(*Message) {}})
+	reinvite := readDatagram(t, p.peer)
+	progress := reliable(reinvite, 183, 1, p.target)
+	offer2.addTo(progress)
+	send(t, p.peer, progress, callerUA.Stack())
+	p.respond(reinvite, 500, Body{})
+	if r := finalOf(t, done); r.resp == nil || r.resp.StatusCode != 500 {
+		t.Fatalf("ReInviteWith returned %v, %v; want the 500", r.resp, r.err)
+	}
+	updated := make(chan error, 1)
+	go func() {
+		_, err := out.Update(offer2)
+		updated <- err
+	}()
+	for {
+		// The ACK of the 500 may come first (RFC 3261 17.1.1.3).
+		if m := readDatagram(t, p.peer); m.Method == UPDATE {
+			p.respond(m, 200, answer2, HeaderField{Name: "Contact", Value: "<" + p.target + ">"})
+			break
+		}
+	}
+	if err := <-updated; err != nil {
+		t.Errorf("Update after the failed re-INVITE: %v", err)
 	}
 }
