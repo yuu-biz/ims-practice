@@ -3,7 +3,6 @@ package b2bua_test
 import (
 	"net/netip"
 	"slices"
-	"sync"
 	"testing"
 	"time"
 
@@ -36,26 +35,15 @@ type rawCallee struct {
 	// rseq counts the reliable provisional responses that the callee
 	// sends within one INVITE (RFC 3262 3).
 	rseq int
-	// arrived are the requests within the dialog that reached the
-	// callee, ACKs among them, as "CSeq method" in the order they came.
-	mu      sync.Mutex
-	arrived []string
+	// arrived are the requests that reached the callee, ACKs among
+	// them, as its transport received them: the stack hands each to the
+	// test in a goroutine of its own, which may run out of their order.
+	arrived *wire
 }
 
-// record notes that req reached the callee.
-func (rc *rawCallee) record(req *sip.Message) {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-	rc.arrived = append(rc.arrived, req.Get("CSeq"))
-}
-
-// requests are the requests within the dialog that reached the callee,
-// in the order they came.
-func (rc *rawCallee) requests() []string {
-	rc.mu.Lock()
-	defer rc.mu.Unlock()
-	return slices.Clone(rc.arrived)
-}
+// requests are the requests that reached the callee, as "CSeq method"
+// in the order they came (wire.requests).
+func (rc *rawCallee) requests() []string { return rc.arrived.requests() }
 
 // handleRequests has the test answer the requests that the callee
 // receives within its dialog, and returns where they come. The test
@@ -67,12 +55,12 @@ func (rc *rawCallee) handleRequests() <-chan *sip.ServerTransaction {
 
 func newRawCallee(t *testing.T, tm sip.Timers) *rawCallee {
 	t.Helper()
-	tl, err := sip.Listen("127.0.0.1:0", discard)
+	rc := &rawCallee{t: t, dialog: make(chan sip.Dialog, 1), arrived: newWire()}
+	tl, err := sip.ListenObserved("127.0.0.1:0", discard, rc.arrived.observe)
 	if err != nil {
 		t.Fatal(err)
 	}
-	rc := &rawCallee{t: t, dialog: make(chan sip.Dialog, 1)}
-	stack, err := sip.NewStack(tl, sip.Config{SentBy: tl.LocalAddr().String(), Timers: tm, OnRequest: rc.onRequest, OnACK: rc.record}, discard)
+	stack, err := sip.NewStack(tl, sip.Config{SentBy: tl.LocalAddr().String(), Timers: tm, OnRequest: rc.onRequest, OnACK: func(*sip.Message) {}}, discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +73,6 @@ func (rc *rawCallee) uri() string { return "sip:callee@" + rc.stack.LocalAddr().
 
 func (rc *rawCallee) onRequest(st *sip.ServerTransaction) {
 	if st.Request.Method != sip.INVITE || ims.IsInDialog(st.Request) {
-		rc.record(st.Request)
 		if rc.handle != nil {
 			rc.handle <- st
 			return
