@@ -100,6 +100,21 @@ class ReadsTheFilters(unittest.TestCase):
             guide_filters.filters(self.guide(rows))
 
 
+# A CI that names the guides that changed, and runs the job of a scenario
+# when its guide is among them.
+CI = """jobs:
+  changes:
+    steps:
+      - run: |
+          guides=$(echo "$files" | grep -E '^docs/guide/en/(sms|mmtel)\\.md$')
+  e2e-sms:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || contains(needs.changes.outputs.guides, ' sms ')
+    steps:
+      - run: scripts/e2e-sms.sh
+"""
+
+
 class ChecksTheGuides(unittest.TestCase):
     """--check over a small tree of guides, scripts and a CI."""
 
@@ -116,7 +131,7 @@ class ChecksTheGuides(unittest.TestCase):
         self.write("docs/guide/en/sms.md", "| Filter | What |\n| --- | --- |\n" + table)
         self.write("docs/guide/ja/sms.md", "| フィルタ | 見つかるもの |\n| --- | --- |\n" + table)
         self.write("scripts/e2e-sms.sh", "guide_filters docs/guide/en/sms.md\n")
-        self.write("ci.yml", "grep -E '^docs/guide/en/(sms|mmtel)\\.md$'\n")
+        self.write("ci.yml", CI)
 
     def write(self, name, text):
         path = self.root / name
@@ -139,10 +154,16 @@ class ChecksTheGuides(unittest.TestCase):
         self.assertIn("no script under", out)
 
     def test_a_guide_whose_change_the_ci_skips(self):
-        self.write("ci.yml", "grep -E '^docs/guide/en/(mmtel)\\.md$'\n")
+        self.write("ci.yml", CI.replace("(sms|mmtel)", "(mmtel)"))
         status, out = self.check()
         self.assertEqual(status, 1)
         self.assertIn("the CI skips the end-to-end scripts when only this guide changes", out)
+
+    def test_a_job_that_does_not_run_when_its_guide_changes(self):
+        self.write("ci.yml", CI.replace(" || contains(needs.changes.outputs.guides, ' sms ')", ""))
+        status, out = self.check()
+        self.assertEqual(status, 1)
+        self.assertIn("the CI job e2e-sms runs a script that reads this guide", out)
 
     def test_an_expectation_that_differs_between_the_languages(self):
         self.write("docs/guide/ja/sms.md", "| フィルタ | 見つかるもの |\n| --- | --- |\n| `sip` | SIP。何も見つからないのが正しい。 |\n")
