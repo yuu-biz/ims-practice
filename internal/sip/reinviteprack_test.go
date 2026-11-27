@@ -1,6 +1,7 @@
 package sip
 
 import (
+	"errors"
 	"testing"
 	"time"
 )
@@ -115,5 +116,31 @@ func TestEachReINVITEHasRSeqNumbersOfItsOwn(t *testing.T) {
 		if r := finalOf(t, done); r.err != nil || r.resp.StatusCode != 200 {
 			t.Fatalf("re-INVITE %d returned %v, %v; want the 200", i+1, r.resp, r.err)
 		}
+	}
+}
+
+// RFC 3261 12.2.1.2: a 481 to the PRACK of a reliable response to a
+// re-INVITE tells that the peer has lost the confirmed dialog, so the
+// UA ends it with a BYE, as for any other request within it.
+func TestPRACKOfAReINVITEThatGets481EndsTheCall(t *testing.T) {
+	callerUA := newUA(t, testTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	done := reInvite(out, holdOffer)
+	reinvite := readDatagram(t, p.peer)
+	send(t, p.peer, reliable(reinvite, 183, 1, p.target), callerUA.Stack())
+	p.respond(readPRACK(t, p, "1 2 INVITE", "3 PRACK"), 481, Body{})
+	bye := readDatagram(t, p.peer)
+	if bye.Method != BYE || bye.Get("CSeq") != "4 BYE" {
+		t.Fatalf("got %s with CSeq %q, want a BYE after the 481", startLine(bye), bye.Get("CSeq"))
+	}
+	p.respond(bye, 200, Body{})
+	// RFC 3261 15.1.2: the peer answers its pending re-INVITE with 487.
+	p.respond(reinvite, 487, Body{})
+	if r := finalOf(t, done); r.resp == nil || r.resp.StatusCode != 487 {
+		t.Errorf("ReInvite returned %v, %v; want the 487", r.resp, r.err)
+	}
+	waitDone(t, out.Done(), "caller")
+	if !errors.Is(out.Err(), ErrDialogLost) {
+		t.Errorf("call ended with %v, want ErrDialogLost", out.Err())
 	}
 }

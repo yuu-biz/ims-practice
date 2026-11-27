@@ -495,33 +495,21 @@ func (d *CallDialog) newPRACK(resp *Message, body Body, headers []HeaderField) *
 // autoPRACK sends the PRACK for resp without a body, and does not wait
 // for its answer. c.mu is held. The PRACK takes its turn here, before
 // the user of the call sees resp, so that a request that the user sends
-// on seeing resp goes after it.
-//
-// SIMPLIFIED: RFC 3261 12.2.1.2. A 481 or 408 to the PRACK, or no
-// answer at all, SHOULD end the dialog. Here it is only logged; the
-// final response to the INVITE still ends the call.
+// on seeing resp goes after it. A PRACK that shows that the peer has
+// lost the dialog ends it, as any other request within the dialog does
+// (roundTrip).
 func (d *CallDialog) autoPRACK(resp *Message) {
 	c := d.c
 	prack := d.newPRACK(resp, Body{}, c.ua.own(PRACK, false, nil))
 	t := d.takeTurn()
 	sent := c.ua.spawn(func() {
-		defer t.end()
-		ct, err := t.send(c, prack)
-		if err != nil {
-			c.ua.log.Warn("PRACK not sent", "error", err.Error())
-			return
-		}
-		var final *Message
-		for resp := range ct.Responses() {
-			t.took(resp)
-			final = resp
-		}
-		if final == nil || final.StatusCode >= 300 {
+		final, err := d.roundTrip(prack, t)
+		if err != nil || final.StatusCode >= 300 {
 			status := 0
 			if final != nil {
 				status = final.StatusCode
 			}
-			c.ua.log.Warn("PRACK failed", "call_id", prack.Get("Call-ID"), "status", status, "error", fmt.Sprint(ct.Err()))
+			c.ua.log.Warn("PRACK failed", "call_id", prack.Get("Call-ID"), "status", status, "error", fmt.Sprint(err))
 		}
 	})
 	if !sent {
