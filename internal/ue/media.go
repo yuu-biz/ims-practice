@@ -77,14 +77,18 @@ type Media struct {
 	flow   Flow
 	format amr.Format // of an AMR or AMR-WB stream
 
-	// What goes out: the payloads of the speech, one per 20 ms, nil for a
-	// frame-block with nothing to send (NO_DATA), and the next of them.
+	// What goes out: the speech, one packet per 20 ms, and the next of it.
+	// PCMU is kept as payloads. AMR and AMR-WB are kept as frames, and each
+	// is packed at its tick in the format and payload type of the stream
+	// then, so that a new offer and answer that changes octet-align applies
+	// to the frames that have not gone out yet.
 	started bool
 	stopped chan struct{}
 	// senders counts the goroutines that send, so that Stop waits for
 	// them.
 	senders  sync.WaitGroup
 	speech   [][]byte
+	frames   []amr.Frame
 	next     int
 	played   chan struct{} // closed when the speech has all gone out
 	seq      uint16
@@ -351,19 +355,15 @@ func (m *Media) Start(speech Speech) error {
 			frames = speech.AMRWB
 		}
 		for _, f := range frames {
-			if f.Type == amr.NoData {
-				m.speech = append(m.speech, nil)
-				continue
-			}
-			b, err := m.format.Marshal(amr.Payload{CMR: amr.NoModeRequest, Frames: []amr.Frame{f}})
-			if err != nil {
+			// A frame that cannot be packed is refused now, not at its tick.
+			if _, err := m.packFrame(f); err != nil {
 				return err
 			}
-			m.speech = append(m.speech, b)
 		}
+		m.frames = frames
 	}
 	m.started, m.tsAt = true, time.Now()
-	if len(m.speech) == 0 {
+	if m.speechLen() == 0 {
 		close(m.played)
 	}
 	m.senders.Add(2)
@@ -371,6 +371,18 @@ func (m *Media) Start(speech Speech) error {
 	go m.sendRTCP()
 	return nil
 }
+
+// packFrame is the payload of one frame in the format of the stream, or
+// nil for NO_DATA, which sends nothing. m.mu is held.
+func (m *Media) packFrame(f amr.Frame) ([]byte, error) {
+	if f.Type == amr.NoData {
+		return nil, nil
+	}
+	return m.format.Marshal(amr.Payload{CMR: amr.NoModeRequest, Frames: []amr.Frame{f}})
+}
+
+// speechLen is how many packet times the speech takes. m.mu is held.
+func (m *Media) speechLen() int { return len(m.speech) + len(m.frames) }
 
 // Played is closed once the speech has all gone out.
 func (m *Media) Played() <-chan struct{} { return m.played }
@@ -481,10 +493,17 @@ func (m *Media) tick() (rtp.Packet, bool) {
 		m.talking = false
 		r := reports[0]
 		p.Marker, p.PayloadType, p.Payload = r.Marker, uint8(s.Events.PayloadType), r.Payload.Marshal()
-	case m.next < len(m.speech):
-		payload := m.speech[m.next]
+	case m.next < m.speechLen():
+		var payload []byte
+		if isAMR(s.Codec) {
+			// Cannot fail: Start packed every frame in the format of the
+			// same codec, and octet-align does not change what a frame needs.
+			payload, _ = m.packFrame(m.frames[m.next])
+		} else {
+			payload = m.speech[m.next]
+		}
 		m.next++
-		if m.next == len(m.speech) {
+		if m.next == m.speechLen() {
 			close(m.played)
 		}
 		if payload == nil {
