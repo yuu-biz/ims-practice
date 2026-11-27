@@ -361,6 +361,43 @@ func TestReleaseDecidesToWaitForTheACKInOneStep(t *testing.T) {
 	relay.waitHeld(t, 0, time.Second)
 }
 
+// TestPolicySessionOfAnAnswerThatCrossesAReleaseIsReleased: the early
+// dialog has no SDP answer yet, and so no policy session, when another
+// instance of the P-CSCF releases it. The release comes after the
+// instance that forwards the INVITE has read the dialog for the 200 and
+// before it has written the dialog again, so the answer of the 200 opens
+// a policy session that the released dialog does not hold, and that the
+// other instance did not free. The call ends as for any dialog found
+// released, and that session goes too. The P-CSCF has no media relay
+// here: a relay would refuse the answer for the context that the
+// release took away, and the PCRF would not get the answer.
+func TestPolicySessionOfAnAnswerThatCrossesAReleaseIsReleased(t *testing.T) {
+	pcrf := &fakePolicy{}
+	var store *interleavingStore
+	h := newCallHarness(t, harnessConfig{
+		association: func(a *Association) { a.SignallingSession = "signalling" },
+		configure:   func(p *PCSCF) { p.SetPolicyControl(pcrf) },
+		wrap: func(m *MemoryStore) Store {
+			store = &interleavingStore{MemoryStore: m}
+			return store
+		},
+	})
+	out, in := h.call()
+	if err := in.Progress(180, sip.Body{}); err != nil {
+		t.Fatal(err)
+	}
+	d, ok := out.Dialog()
+	key := keyOf(t, d, ok)
+
+	other, _ := h.instance()
+	release := func(key DialogKey) { other.release(key, ResourcesLost, false, other.log) }
+	store.then.Store(&release)
+	accept(in, answerTo(t, in.Request, coreMedia))
+	answered(t, out, 500)
+	pcrf.waitReleased(t, "session-1")
+	h.waitNoDialog(key)
+}
+
 // wantCancelReason checks the Reason of TS 24.229 5.2.8.1.1 in the
 // CANCEL of the P-CSCF: 503, as the access network gave no cause.
 func wantCancelReason(t *testing.T, cancel *sip.Message) {

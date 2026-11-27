@@ -426,6 +426,19 @@ func TestCancelledAndRejectedCallsReleaseThePolicySession(t *testing.T) {
 	in.Reject(486)
 	answered(t, out, 486)
 	pcrf.waitReleased(t, "session-1", "session-2")
+
+	// The dialog may come with a response that has no answer, and its
+	// session with a later one.
+	out, in = h.call()
+	if err := in.Progress(180, sip.Body{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := in.Progress(183, answerTo(t, in.Request, coreMedia)); err != nil {
+		t.Fatal(err)
+	}
+	in.Reject(486)
+	answered(t, out, 486)
+	pcrf.waitReleased(t, "session-1", "session-2", "session-3")
 	relay.waitHeld(t, 0, time.Second)
 }
 
