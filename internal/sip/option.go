@@ -59,7 +59,11 @@ func withoutOptions(m *Message, drop []string) *Message {
 	out := m
 	for _, name := range []string{"Supported", "Require", "Proxy-Require"} {
 		tags := m.GetAll(name)
-		kept := slices.DeleteFunc(slices.Clone(tags), func(tag string) bool { return slices.Contains(drop, tag) })
+		// Option tags are tokens, which compare without regard to case
+		// (RFC 3261 7.3.1).
+		kept := slices.DeleteFunc(slices.Clone(tags), func(tag string) bool {
+			return slices.ContainsFunc(drop, func(d string) bool { return strings.EqualFold(d, tag) })
+		})
 		if len(kept) == len(tags) {
 			continue
 		}
