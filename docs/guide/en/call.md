@@ -510,7 +510,7 @@ What happens to the call depends on what the relay answered.
  |<--------------|                |                 |
 ```
 
-- **A final response other than 2xx leaves the session as it was before the request.** RFC 3261 14.1 says so for a re-INVITE, and RFC 3311 5.3 for an UPDATE. Only a 481, a 408 or no answer at all ends the dialog (RFC 3261 12.2.1.2), so the P-CSCF answers with none of them. The media goes on as the last offer and answer set it up, through the relay, and the PCRF keeps what it authorised.
+- **A final response other than 2xx leaves the session as it was before the request.** RFC 3261 14.1 says so for a re-INVITE, and RFC 3311 5.3 for an UPDATE. Only a 481, a 408 or no answer at all ends the dialog (RFC 3261 12.2.1.2), so the P-CSCF answers with none of them. The relay has changed nothing, so the media goes on as the last offer and answer set it up, through the relay, and the PCRF keeps what it authorised.
 - **A re-INVITE gets the same 500.** UE 1 acknowledges it with an ACK that goes no further than the P-CSCF, as for any final response other than 2xx (RFC 3261 17.1.1.3). A UE that wanted to put the call on hold stays in the call as it was.
 - **UE 1 may send the offer again later** (RFC 3261 21.5.1).
 - **An offer from the network** takes the `Modify` of the core termination. The 500 then goes back to the network, and UE 1 gets nothing.
@@ -546,6 +546,36 @@ What happens to the call depends on what the relay answered.
 TS 24.229 releases a dialog for an offer only when the offer comes in a response (5.2.8.1.2): 6.2 has the P-CSCF pass a 200 with such an offer on, since nobody can turn a 200 down, and release the session once the ACK has come. An answer in a response cannot be turned down either, which is why the P-CSCF releases the call when the relay does not take an answer in a response. An answer in a request is different: 6.2 has the P-CSCF answer 488 to the request that carries the answer to an offer from a provisional response. Here that request is a PRACK, which ends the call as above.
 
 The tests of `internal/pcscf` run these flows in one process, with a relay that fails the `Modify` of the SDP: `TestRefusedOfferWithinTheDialogIsRejected`, `TestRefusedOfferOfAnUPDATEInTheEarlyDialogKeepsTheCall`, `TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt`, `TestMalformedOfferWithinTheDialogGets400`, `TestINVITEWhoseSDPTheP_CSCFCannotReadGoesNoFurther`, `TestUPDATEWhoseSDPTheP_CSCFCannotReadGoesNoFurther` and `TestRefusedSDPOfAPRACKEndsTheCall`.
+
+## When the far end turns an offer down
+
+The relay may take the offer of a request within the dialog, and a node further on may still turn the offer down. UE 2 answers 488 (Not Acceptable Here) to an offer that it cannot take, and the P-CSCF of UE 2 answers 500 to one that its own relay does not take, as above. The request then gets a final response other than 2xx, and the session stays as it was before the request (RFC 3261 14.1, RFC 3311 5.3): UE 1 goes on taking its media where the last offer and answer said. The P-CSCF told the access termination where the offer said before it passed the offer on. So it has the termination send where the last offer and answer said again, with another `Modify`, before it passes the response to UE 1:
+
+```text
+ UE 1          P-CSCF          media relay      network
+ | re-INVITE with a new SDP offer |                 |
+ |-------------->|                |                 |
+ |               | PUT .../terminations/access      |  Modify: where UE 1 would receive
+ |               |--------------->|                 |
+ |               | re-INVITE                        |
+ |               |--------------------------------->|
+ |               |                     488 (INVITE) |  UE 2 turns the offer down
+ |               |<---------------------------------|
+ |               | PUT .../terminations/access      |  Modify: where UE 1 received before
+ |               |--------------->|                 |
+ |  488 (INVITE) |                |                 |
+ |<--------------|                |                 |
+```
+
+- **The `Modify` goes before the response.** UE 1 may send a new offer right after the 488, and that offer then finds the relay as it was.
+- **Any final response other than 2xx does the same**, and so does no answer at all, for which UE 1 gets 504 (Server Time-out). That holds for an UPDATE, for a re-INVITE such as the one of a hold, and for a PRACK with a new offer.
+- **An offer from the network** has the core termination go back, and the 488 of UE 1 goes to the network.
+- **Each termination goes back to the last offer and answer that were done:** those of the INVITE, or those of a later request within the dialog that got its 2xx. The P-CSCF keeps them with the dialog, in the store that its instances share, so the request may pass another instance than the requests before it.
+- **When the offer does not move the media**, as with a hold that keeps the port, the termination already sends where it did, and the P-CSCF sends no second `Modify`. The offer reaches the P-CSCF of UE 2 with the address of the relay of UE 1, which no offer of UE 1 changes, so only the P-CSCF of UE 1 puts its relay back.
+- **When the answer came in a reliable 183** to the re-INVITE, and the re-INVITE then fails, that offer and answer are done. RFC 6141 3.3 asks a UAS that has carried such changes out to answer the re-INVITE with a 2xx, and a UAC that gets an error response all the same sends a new offer, so that both parties have the same view of the session (RFC 6141 3.4). The P-CSCF leaves the relay as that answer set it, and the new offer goes through the relay like any other.
+- **When the relay does not take the change back**, the access termination keeps sending where UE 1 no longer receives. The P-CSCF then releases the call, as when the relay does not take an answer: once the 488 has gone, each party gets a BYE with `Reason: SIP;cause=503`. In an early dialog, UE 1 gets 500 for its INVITE, and the INVITE towards the network is cancelled.
+
+The tests `TestRejectedOfferPutsTheRelayBack`, `TestRejectedOfferGoesBackToTheLastOfferAndAnswer` and `TestRejectedOfferEndsTheCallWhenTheRelayDoesNotGoBack` of `internal/pcscf` run these flows in one process.
 
 ## What this project simplifies
 
