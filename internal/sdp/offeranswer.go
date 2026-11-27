@@ -71,6 +71,24 @@ func Answer(offer Session, sessionID string, addr netip.AddrPort) (Session, erro
 	return answer, nil
 }
 
+// Reject answers offer by declining every stream (RFC 3264 6): one
+// media description for each offered one, in the same order, with the
+// same media type, transport protocol and formats and port 0. A UA that
+// ends the dialog instead of taking the offer of a 2xx sends it in its
+// ACK (RFC 3261 13.2.2.4). addr is the address of the o= and c= lines;
+// no media goes there.
+func Reject(offer Session, sessionID string, addr netip.Addr) Session {
+	answer := Session{
+		Origin:     Origin{Username: "-", SessionID: sessionID, Version: 1, Address: addr},
+		Name:       "-",
+		Connection: addr,
+	}
+	for _, m := range offer.Media {
+		answer.Media = append(answer.Media, Media{Type: m.Type, Proto: m.Proto, Formats: m.Formats})
+	}
+	return answer
+}
+
 // AnswerDirection is RFC 3264 6.1: sendonly is answered recvonly and
 // the other way round, inactive stays inactive, and sendrecv is
 // answered sendrecv.

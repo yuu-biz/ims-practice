@@ -27,6 +27,30 @@ const softphoneOffer = "v=0\r\n" +
 	"m=video 51372 RTP/AVP 99\r\n" +
 	"a=rtpmap:99 H264/90000\r\n"
 
+// RFC 3264 6: the answer that declines an offer has a media description
+// for each offered one, in order, with the type, protocol and formats
+// of the offer and port 0. Nothing else of the offer is in it.
+func TestRejectDeclinesEveryStreamInOrder(t *testing.T) {
+	offer, err := Parse([]byte(softphoneOffer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := Reject(offer, "42", netip.MustParseAddr("192.0.2.1"))
+	want := "v=0\r\n" +
+		"o=- 42 1 IN IP4 192.0.2.1\r\n" +
+		"s=-\r\n" +
+		"c=IN IP4 192.0.2.1\r\n" +
+		"t=0 0\r\n" +
+		"m=audio 0 RTP/AVP 96 8 0 101\r\n" +
+		"m=video 0 RTP/AVP 99\r\n"
+	if string(got.Bytes()) != want {
+		t.Errorf("Reject wrote\n%s\nwant\n%s", got.Bytes(), want)
+	}
+	if _, err := Parse(got.Bytes()); err != nil {
+		t.Errorf("the rejecting answer does not parse: %v", err)
+	}
+}
+
 func TestParse(t *testing.T) {
 	s, err := Parse([]byte(softphoneOffer))
 	if err != nil {
