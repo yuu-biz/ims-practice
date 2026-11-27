@@ -3,6 +3,7 @@ package scscf
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"reflect"
@@ -60,8 +61,11 @@ func came(d time.Duration, cond func() bool) bool {
 // and records the Server-Assignment-Type of every SAR.
 type fakeHSS struct {
 	hss *hss.HSS
-	mu  sync.Mutex
-	sar []cx.ServerAssignmentType
+	// subscribers is the store of hss, where a test reads what the HSS
+	// holds of a user.
+	subscribers *hss.MemoryStore
+	mu          sync.Mutex
+	sar         []cx.ServerAssignmentType
 	// routing holds, per Cx request that arrived, the command and the
 	// Destination-Host it named.
 	routing []routedTo
@@ -72,6 +76,42 @@ type fakeHSS struct {
 	// hand-over; hence mu.
 	stalled     <-chan struct{}
 	stalledUser string
+	// lost, unless notLost, is how the next SAR of lostType goes
+	// missing, as on a Diameter path that fails.
+	lost     lostAt
+	lostType cx.ServerAssignmentType
+}
+
+// lostAt is where a request goes missing on the way to the HSS and back.
+type lostAt int
+
+const (
+	notLost lostAt = iota
+	// requestLost: the request never reaches the HSS.
+	requestLost
+	// answerLost: the HSS takes the request, and only its answer is lost.
+	answerLost
+)
+
+// errNoAnswer is what a Cx request that goes missing gets, as one that
+// runs out of time does.
+var errNoAnswer = errors.New("no answer from the HSS")
+
+// lose makes the next SAR of type t go missing as at says.
+func (f *fakeHSS) lose(t cx.ServerAssignmentType, at lostAt) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lost, f.lostType = at, t
+}
+
+// subscriber is what the HSS holds of the user of the harness.
+func (f *fakeHSS) subscriber(t *testing.T) hss.Subscriber {
+	t.Helper()
+	sub, ok, err := f.subscribers.Subscriber(t.Context(), impi)
+	if err != nil || !ok {
+		t.Fatalf("the HSS holds no %s (%v)", impi, err)
+	}
+	return sub
 }
 
 func (f *fakeHSS) stall(user string, until <-chan struct{}) {
@@ -89,7 +129,7 @@ func (f *fakeHSS) Request(ctx context.Context, m *diam.Message) (*diam.Message, 
 	if err != nil {
 		return nil, err
 	}
-	user := ""
+	user, lost := "", notLost
 	if r, err := cx.ParseMultimediaAuthRequest(req); err == nil && req.Header.CommandCode == cx.CommandMultimediaAuth {
 		user = r.UserName
 		f.mu.Lock()
@@ -101,7 +141,13 @@ func (f *fakeHSS) Request(ctx context.Context, m *diam.Message) (*diam.Message, 
 		f.mu.Lock()
 		f.sar = append(f.sar, r.ServerAssignmentType)
 		f.routing = append(f.routing, routedTo{"SAR", r.Header.DestinationHost})
+		if f.lost != notLost && f.lostType == r.ServerAssignmentType {
+			lost, f.lost = f.lost, notLost
+		}
 		f.mu.Unlock()
+	}
+	if lost == requestLost {
+		return nil, errNoAnswer
 	}
 	f.mu.Lock()
 	stalled := f.stalled
@@ -116,7 +162,11 @@ func (f *fakeHSS) Request(ctx context.Context, m *diam.Message) (*diam.Message, 
 			return nil, ctx.Err()
 		}
 	}
-	return f.hss.Handle(req), nil
+	answer := f.hss.Handle(req)
+	if lost == answerLost {
+		return nil, errNoAnswer
+	}
+	return answer, nil
 }
 
 func (f *fakeHSS) assignments() []cx.ServerAssignmentType {
@@ -191,7 +241,7 @@ func newHarnessWithHSS(t *testing.T, cfg Config, resolver Resolver, hssCfg hss.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fakeHSS{hss: h}
+	f := &fakeHSS{hss: h, subscribers: subscribers}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "scscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 
 	cfg.HomeDomain = domain
@@ -386,6 +436,115 @@ func TestRegistrationWithSIPDigest(t *testing.T) {
 	if got := h.hss.assignments(); !slices.Equal(got, want) {
 		t.Errorf("SARs = %v, want %v", got, want)
 	}
+}
+
+// A deregistration whose SAR gets no SAA leaves the S-CSCF unable to
+// tell whether the HSS took it. The S-CSCF keeps the registration and
+// answers 500, and the UE deregisters again, which brings the S-CSCF
+// and the HSS to the same state whichever way the SAR went missing.
+func TestDeregistrationWithoutAnSAA(t *testing.T) {
+	dereg := `Digest username="` + impi + `", realm="` + domain + `", nonce="", uri="sip:` + domain + `", response="", integrity-protected="ip-assoc-yes"`
+	register := func(t *testing.T, h *harness, callID string) {
+		t.Helper()
+		r := h.register(callID, 1, 600000, initial)
+		auth, _ := answer(t, r, password, "ip-assoc-pending")
+		if r := h.register(callID, 2, 600000, auth); r.StatusCode != 200 {
+			t.Fatalf("registration got %d, want 200", r.StatusCode)
+		}
+	}
+	registered := func(t *testing.T, h *harness) (Registration, bool) {
+		t.Helper()
+		reg, ok, err := h.store.Registration(t.Context(), impi)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return reg, ok
+	}
+	for _, tc := range []struct {
+		name string
+		lost lostAt
+		// held is the registration state that the HSS holds once the
+		// SAR has gone missing.
+		held hss.RegistrationState
+	}{
+		{"the SAR does not reach the HSS", requestLost, hss.Registered},
+		{"the HSS takes the SAR and the SAA is lost", answerLost, hss.NotRegistered},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, Config{})
+			callID := sip.NewCallID()
+			register(t, h, callID)
+			h.hss.lose(cx.UserDeregistration, tc.lost)
+			if r := h.register(callID, 3, 0, dereg); r.StatusCode != 500 {
+				t.Fatalf("deregistration without an SAA got %d, want 500", r.StatusCode)
+			}
+			if _, ok := registered(t, h); !ok {
+				t.Error("the registration is gone after a deregistration that got no SAA")
+			}
+			if got := h.hss.subscriber(t).State; got != tc.held {
+				t.Errorf("the HSS holds the user %v, want %v", got, tc.held)
+			}
+
+			if r := h.register(callID, 4, 0, dereg); r.StatusCode != 200 || !strings.HasSuffix(r.Get("Contact"), ";expires=0") {
+				t.Fatalf("the deregistration sent again got %d %q, want 200 with expires=0", r.StatusCode, r.Get("Contact"))
+			}
+			if _, ok := registered(t, h); ok {
+				t.Error("the registration stays after the deregistration sent again")
+			}
+			if sub := h.hss.subscriber(t); sub.State != hss.NotRegistered || sub.ServerName != "" {
+				t.Errorf("the HSS holds the user %v at %q, want %v at none", sub.State, sub.ServerName, hss.NotRegistered)
+			}
+			want := []cx.ServerAssignmentType{cx.AssignRegistration, cx.UserDeregistration, cx.UserDeregistration}
+			if got := h.hss.assignments(); !slices.Equal(got, want) {
+				t.Errorf("SARs = %v, want %v", got, want)
+			}
+		})
+	}
+
+	// A REGISTER that comes while the SAR is out waits for the lock of
+	// the user, and registers once the deregistration has failed. The
+	// HSS has taken the SAR, so the registration starts afresh there.
+	t.Run("a registration that comes during the deregistration", func(t *testing.T) {
+		h := newHarness(t, Config{})
+		callID := sip.NewCallID()
+		register(t, h, callID)
+		release := make(chan struct{})
+		h.hss.stall(impi, release)
+		h.hss.lose(cx.UserDeregistration, answerLost)
+		deregistered := make(chan int, 1)
+		go func() { deregistered <- h.register(callID, 3, 0, dereg).StatusCode }()
+		if !came(3*time.Second, func() bool { return len(h.hss.assignments()) == 2 }) {
+			t.Fatalf("SARs = %v, want the deregistration's to have gone out", h.hss.assignments())
+		}
+		newCallID := sip.NewCallID()
+		challenged := make(chan *sip.Message, 1)
+		go func() { challenged <- h.register(newCallID, 1, 600000, initial) }()
+		close(release)
+		select {
+		case code := <-deregistered:
+			if code != 500 {
+				t.Errorf("deregistration without an SAA got %d, want 500", code)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the deregistration got no final response within 5 s")
+		}
+		var r *sip.Message
+		select {
+		case r = <-challenged:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the new REGISTER got no final response within 5 s")
+		}
+		auth, _ := answer(t, r, password, "ip-assoc-pending")
+		if r := h.register(newCallID, 2, 600000, auth); r.StatusCode != 200 {
+			t.Fatalf("the new registration got %d, want 200", r.StatusCode)
+		}
+		if reg, ok := registered(t, h); !ok || reg.CallID != newCallID {
+			t.Errorf("the S-CSCF holds %+v (%v), want the registration of Call-ID %s", reg, ok, newCallID)
+		}
+		if sub := h.hss.subscriber(t); sub.State != hss.Registered || sub.ServerName != h.role.cfg.ServerName {
+			t.Errorf("the HSS holds the user %v at %q, want %v at %s", sub.State, sub.ServerName, hss.Registered, h.role.cfg.ServerName)
+		}
+	})
 }
 
 func TestWrongPasswordIsForbidden(t *testing.T) {

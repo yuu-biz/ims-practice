@@ -401,6 +401,8 @@ UE は Contact に `expires=0` を付けた REGISTER を送ります（TS 24.229
 - S-CSCF は 200 OK の後に、それぞれの購読へ最後の NOTIFY を送ります。registration と contact は `terminated` で、contact は `event="unregistered"` です。Subscription-State は `terminated;reason=noresource` です。この NOTIFY で、購読とそのダイアログが終わります（TS 24.229 5.4.2.1.2）。
 - IP-SM-GW にもこの NOTIFY が届きます。IP-SM-GW は `<IP-SM-GW-Number>` を空にした PUR を送り、HSS から自分の登録を消します。S-CSCF は Expires を 0 にした第三者 REGISTER も IP-SM-GW に送り、IP-SM-GW は 200 OK で答えます。
 
+SAA が返らないときや、HSS が SAR を断ったときは、HSS が利用者の登録を解除したかどうかが、S-CSCF には分かりません。SAR が HSS に届かなかったのかもしれず、SAA だけが失われたのかもしれないからです。S-CSCF は登録を残したまま 500 Server Internal Error で答え、NOTIFY も第三者 REGISTER も送りません。P-CSCF は IP の対応付けを、UE は自分の登録を残します。どちらも 200 OK を受け取っていないからです。UE がもう一度登録の解除を送ると、S-CSCF は SAR を送り直します。どちらの場合も、HSS では利用者が未登録になります。UE が送り直さなければ、登録は期限が来たときに終わります。**DIAMETER_ERROR_IDENTITY_ALREADY_REGISTERED**（5005）の SAA は、この失敗に当たりません。HSS は利用者を別の S-CSCF に置いているので（後述）、S-CSCF は自分の登録を終わらせ、200 OK で答えます。
+
 UE は、登録の解除に成功した時点で、購読は終わったものとして扱います（TS 24.229 5.1.1.6.1）。それでも、最後の NOTIFY が 1 秒以内に届けば答えます。P-CSCF は、この NOTIFY を UE へ渡します。P-CSCF は UE からの要求をもう受け付けませんが、登録の解除のサーバートランザクションが終わるまでは、IP の対応付けを残すからです。UDP では 32 秒です（5.2.5.1 の 2 番目の項目）。
 
 UE が期限までに再登録しないと、登録の期限が切れます。そのとき S-CSCF は `event="expired"` の NOTIFY を送り、続けて **TIMEOUT_DEREGISTRATION**（4）の SAR を送ります。S-CSCF は、期限の来た登録を 1 秒ごとに探します。そのため、この 2 つのメッセージは、期限そのものより 1 秒ほど遅れることがあります。その間に利用者あての要求が来ても、S-CSCF は利用者を未登録として扱い、要求を contact へは送りません。P-CSCF はこの NOTIFY を受けて、同じように UE の IP の対応付けを終わらせます。UE あての NOTIFY は、それでも届きます（TS 24.229 5.2.5.2 と NOTE 2）。UE も、登録が無くなったことを知ります。`ue register` は、そこでエラーとして終了します。`ue call` と `ue answer` はログに出すだけです。`ue serve` は、登録を頼まれるまで未登録のままです。S-CSCF が自分の判断で `event="deactivated"` として登録を終わらせたときは、UE は登録し直します。TS 24.229 5.1.1.7 の決まりです。
