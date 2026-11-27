@@ -114,6 +114,12 @@ type UAConfig struct {
 	// names one, and the transport its transport parameter names, UDP
 	// by default (RFC 3263 4.1).
 	Locate func(URI) ([]Destination, error)
+	// OptionsLeftOut is that of the Stack (Config): the option tags that
+	// the UA does not use with a far end, though it knows the
+	// extensions. They do not reach that far end in what the UA sends,
+	// and the UA does not see them in the requests that come from there,
+	// so it neither offers nor uses those extensions with it.
+	OptionsLeftOut func(m *Message, remote Destination, sent bool) []string
 }
 
 // UA is a user agent on top of a Stack of its own. It keeps the dialogs
@@ -159,12 +165,13 @@ func NewUA(transport *TransportLayer, cfg UAConfig, log *slog.Logger) (*UA, erro
 		calls: map[DialogID]*CallDialog{}, ended: map[DialogID]bool{}, open: map[*call]bool{},
 		started: make(chan struct{})}
 	stack, err := NewStack(transport, Config{
-		SentBy:    cfg.SentBy,
-		Timers:    cfg.Timers,
-		Screen:    cfg.Screen,
-		Ordered:   true,
-		OnRequest: ua.receiveRequest,
-		OnACK:     ua.receiveACK,
+		SentBy:         cfg.SentBy,
+		Timers:         cfg.Timers,
+		Screen:         cfg.Screen,
+		OptionsLeftOut: cfg.OptionsLeftOut,
+		Ordered:        true,
+		OnRequest:      ua.receiveRequest,
+		OnACK:          ua.receiveACK,
 	}, log)
 	if err != nil {
 		return nil, err

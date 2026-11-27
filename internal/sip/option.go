@@ -1,6 +1,9 @@
 package sip
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // Option tags name the extensions that a UA lists in Supported, asks
 // for in Require and refuses in Unsupported (RFC 3261 19.2).
@@ -46,4 +49,28 @@ func (m *Message) AddOption(name, option string) {
 	if !slices.Contains(m.GetAll(name), option) {
 		m.Add(name, option)
 	}
+}
+
+// withoutOptions returns m without the option tags drop in Supported,
+// Require and Proxy-Require: m itself when none of the three lists one
+// of them, and otherwise a copy, so that the message the caller holds
+// stays as it was. A header field that loses its last tag goes.
+func withoutOptions(m *Message, drop []string) *Message {
+	out := m
+	for _, name := range []string{"Supported", "Require", "Proxy-Require"} {
+		tags := m.GetAll(name)
+		kept := slices.DeleteFunc(slices.Clone(tags), func(tag string) bool { return slices.Contains(drop, tag) })
+		if len(kept) == len(tags) {
+			continue
+		}
+		if out == m {
+			out = m.Clone()
+		}
+		if len(kept) == 0 {
+			out.Remove(name)
+		} else {
+			out.Set(name, strings.Join(kept, ", "))
+		}
+	}
+	return out
 }
