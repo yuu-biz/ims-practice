@@ -427,10 +427,12 @@ func (d *CallDialog) lost(req, final *Message) {
 // Update returns ErrOfferPending or ErrOfferUnanswered, and sends
 // nothing, while another offer is open in the dialog: before the answer
 // to the offer of the INVITE has come in a reliable response, or while
-// an offer of the peer waits for its answer. It returns ErrPRACKPending
-// while a reliable provisional response of this UA with a session
-// description waits for its PRACK, which may carry a new offer of the
-// peer (RFC 3262 5). Without a body, the UPDATE leaves the session as
+// an offer of the peer waits for its answer. While a reliable
+// provisional response of this UA with a session description waits for
+// its PRACK, which may carry a new offer of the peer (RFC 3262 5), an
+// Update with an offer waits for that PRACK, or for the final response
+// of the INVITE: it would cross that offer, and a PRACK can only get a
+// 2xx (RFC 6337 4.2). Without a body, the UPDATE leaves the session as
 // it is.
 //
 // A final response other than 2xx leaves the session unchanged (5.3).
@@ -439,16 +441,21 @@ func (d *CallDialog) lost(req, final *Message) {
 func (d *CallDialog) Update(body Body, headers ...HeaderField) (*Message, error) {
 	c := d.c
 	c.mu.Lock()
+	offers := len(body.Content) > 0
+	for p := d.pendingPRACK(); offers && p != nil; p = d.pendingPRACK() {
+		pracked, finished := p.pracked, p.finished
+		c.mu.Unlock()
+		select {
+		case <-pracked:
+		case <-finished:
+		case <-c.done:
+			return nil, ErrCallEnded
+		}
+		c.mu.Lock()
+	}
 	if err := d.usable(); err != nil {
 		c.mu.Unlock()
 		return nil, err
-	}
-	offers := len(body.Content) > 0
-	if offers && d.prackPending() {
-		// RFC 6337 4.2: an offer that went now could cross one in that
-		// PRACK, which can only get 200.
-		c.mu.Unlock()
-		return nil, ErrPRACKPending
 	}
 	if offers {
 		if err := d.offerEvent(OfferSent); err != nil {
@@ -470,21 +477,17 @@ func (d *CallDialog) Update(body Body, headers ...HeaderField) (*Message, error)
 	return resp, err
 }
 
-// ErrPRACKPending is what Update returns for an offer while a reliable
-// provisional response of this UA with a session description waits for
-// its PRACK. The user may offer once the PRACK has come.
-var ErrPRACKPending = errors.New("sip: a reliable provisional response with a session description waits for its PRACK")
-
-// prackPending tells that a reliable provisional response of this UA
-// with a session description waits for its PRACK, before the final
-// response of its INVITE. c.mu is held.
-func (d *CallDialog) prackPending() bool {
+// pendingPRACK is the UAS side of the INVITE of the peer whose reliable
+// provisional response with a session description waits for its PRACK,
+// before the final response of the INVITE; nil when none does. c.mu is
+// held.
+func (d *CallDialog) pendingPRACK() *provisionals {
 	for _, p := range d.peerInvites {
 		if !p.over && p.unacked != nil && HasSessionDescription(p.unacked) {
-			return true
+			return p
 		}
 	}
-	return false
+	return nil
 }
 
 // answered makes the changes of state that the final response to a
