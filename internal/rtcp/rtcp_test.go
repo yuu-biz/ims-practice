@@ -157,6 +157,69 @@ func TestReceiverWrapAndJitter(t *testing.T) {
 	}
 }
 
+// feed sends packets 20 ms apart with timestamps that follow the
+// sequence numbers, so that only the sequence numbers matter.
+func feed(r *Receiver, seqs ...uint16) {
+	start := time.Unix(1000, 0)
+	for i, seq := range seqs {
+		r.Packet(seq, uint32(160*i), start.Add(time.Duration(i)*20*time.Millisecond))
+	}
+}
+
+// TestReceiverBackwardsJump covers RFC 3550 A.1: a jump of more than
+// MAX_DROPOUT is not counted as received or lost at once. Only a second
+// packet in sequence (bad_seq) shows that the source restarted. The
+// cumulative loss must not overflow when the highest number moves back.
+func TestReceiverBackwardsJump(t *testing.T) {
+	r := Receiver{SSRC: 9, ClockRate: 8000}
+	feed(&r, 50000, 40000)
+	now := time.Unix(1000, 0).Add(time.Second)
+	b, _ := r.Block(now)
+	if b.HighestSequence != 50000 || b.CumulativeLost != 0 || b.FractionLost != 0 {
+		t.Errorf("after one stray packet: %+v; want highest 50000, nothing lost", b)
+	}
+	// The next number in sequence confirms the restart.
+	r.Packet(40001, 160*2, now)
+	r.Packet(40002, 160*3, now.Add(20*time.Millisecond))
+	b, _ = r.Block(now.Add(time.Second))
+	if b.HighestSequence != 40002 || b.CumulativeLost != 0 || b.FractionLost != 0 {
+		t.Errorf("after the restart: %+v; want highest 40002, nothing lost", b)
+	}
+}
+
+// TestReceiverForwardJump: a jump forward by more than MAX_DROPOUT is
+// handled the same way, and two jumps that are not in sequence never
+// restart the statistics.
+func TestReceiverForwardJump(t *testing.T) {
+	r := Receiver{ClockRate: 8000}
+	feed(&r, 100, 101, 5000, 9000, 20000, 102)
+	b, _ := r.Block(time.Unix(1001, 0))
+	if b.HighestSequence != 102 || b.CumulativeLost != 0 {
+		t.Errorf("stray packets: %+v; want highest 102, nothing lost", b)
+	}
+	feed(&r, 5000, 5001)
+	b, _ = r.Block(time.Unix(1002, 0))
+	if b.HighestSequence != 5001 || b.CumulativeLost != 0 {
+		t.Errorf("after the restart: %+v; want highest 5001, nothing lost", b)
+	}
+}
+
+// TestReceiverReorderAndDuplicate: packets that arrive a little late
+// or twice are inside MAX_MISORDER, so they count as received without
+// moving the highest number, and a duplicate makes the loss negative.
+func TestReceiverReorderAndDuplicate(t *testing.T) {
+	r := Receiver{ClockRate: 8000}
+	feed(&r, 100, 102, 101, 103)
+	if b, _ := r.Block(time.Unix(1001, 0)); b.HighestSequence != 103 || b.CumulativeLost != 0 {
+		t.Errorf("reordered: %+v; want highest 103, nothing lost", b)
+	}
+	feed(&r, 103, 90) // a duplicate, and a packet from before the first
+	b, _ := r.Block(time.Unix(1002, 0))
+	if b.HighestSequence != 103 || b.CumulativeLost != -2 || b.FractionLost != 0 {
+		t.Errorf("duplicates: %+v; want highest 103, lost -2", b)
+	}
+}
+
 func TestLastSR(t *testing.T) {
 	r := Receiver{ClockRate: 8000}
 	at := time.Unix(2000, 0)
