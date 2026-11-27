@@ -49,6 +49,14 @@ services:
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
       GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
       GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # At every start, Grafana downloads a list of plugins of its own
+      # from grafana.com, the data sources of the image among them, and
+      # installs the newer ones over those it already carries. The
+      # dashboard here needs none of that: it reads the Prometheus data
+      # source that the image brings. The downloads also cross the ims
+      # network, which puts hundreds of megabytes of them in the capture
+      # and can make the capture lose packets of the IMS itself.
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
     volumes:
       - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
