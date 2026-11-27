@@ -279,32 +279,24 @@ func (s *Session) hold(held bool) error {
 		return nil
 	}
 	s.held = held
-	before, offered, dialog, preconditions := s.localDir, s.offered, s.dialog, s.precond != nil
+	before, dialog, preconditions := s.state(), s.dialog, s.precond != nil
 	s.mu.Unlock()
 	defer s.changed()
 	for attempt := 0; ; attempt++ {
-		resp, answer, err := s.offerAnew(dialog)
-		if err == nil && resp.StatusCode == 491 && attempt == 0 {
+		resp, early, err := s.offerAnew(dialog)
+		if resp != nil && resp.StatusCode == 491 && !early && attempt == 0 {
 			// RFC 3261 14.1: the re-INVITE crossed one of the peer.
 			time.Sleep(sip.GlareDelay(s.caller))
 			continue
 		}
-		if err == nil && resp.StatusCode >= 300 {
-			err = fmt.Errorf("re-INVITE answered %d %s", resp.StatusCode, resp.Reason)
-		}
-		if err == nil {
-			if answer == nil {
-				answer = resp
-			}
-			err = s.receiveAnswer(answer)
-		}
 		if err != nil {
 			// RFC 3264 8: a refused offer leaves the session as it was.
 			s.mu.Lock()
-			s.held, s.localDir, s.offered = !held, before, offered
+			s.held = !held
+			s.restore(before)
 			s.updateFlow()
 			s.mu.Unlock()
-			if resp != nil && resp.StatusCode >= 300 && answer != nil && answer.StatusCode < 200 && !preconditions {
+			if early && resp != nil && resp.StatusCode >= 300 && !preconditions {
 				s.resynchronize(dialog)
 			}
 			return err
@@ -315,22 +307,65 @@ func (s *Session) hold(held bool) error {
 }
 
 // offerAnew sends the session as it now stands in a re-INVITE within
-// dialog, and returns the final response and the response with the
-// answer: the first reliable provisional response with SDP, after which
-// the 2xx carries none (RFC 3261 13.2.1, RFC 3262 5), and nil when no
-// such response came.
-func (s *Session) offerAnew(dialog sessionDialog) (resp, answer *sip.Message, err error) {
+// dialog, and takes the answer. The first reliable provisional response
+// with SDP carries it, and the 2xx then carries none (RFC 3261 13.2.1,
+// RFC 3262 5). The UE takes that answer as soon as it comes, as the SIP
+// stack does, so that an offer of the peer after it, in an UPDATE,
+// changes the session after it too. Without such a response the 2xx
+// carries the answer. offerAnew returns the final response, whether a
+// provisional response carried the answer (early), and why the offer
+// failed: a final response other than 2xx, or an answer that the UE
+// cannot take.
+func (s *Session) offerAnew(dialog sessionDialog) (resp *sip.Message, early bool, err error) {
 	body, err := s.reoffer()
 	if err != nil {
-		return nil, nil, err
+		return nil, false, err
 	}
+	var earlyErr error
 	resp, err = dialog.ReInviteWith(sip.ReInvitation{Body: body, Headers: s.requestHeaders,
 		OnProvisional: func(p *sip.Message) {
-			if answer == nil && p.Requires(sip.Option100rel) && sip.HasSessionDescription(p) {
-				answer = p
+			if !early && p.Requires(sip.Option100rel) && sip.HasSessionDescription(p) {
+				early, earlyErr = true, s.receiveAnswer(p)
 			}
 		}})
-	return resp, answer, err
+	switch {
+	case err != nil:
+	case resp.StatusCode >= 300:
+		err = fmt.Errorf("re-INVITE answered %d %s", resp.StatusCode, resp.Reason)
+	case early:
+		err = earlyErr
+	default:
+		err = s.receiveAnswer(resp)
+	}
+	return resp, early, err
+}
+
+// sessionState is what an offer of this UE and its answer change in the
+// session.
+type sessionState struct {
+	localDir, remoteDir string
+	offered             sdp.Session
+	stream              *Stream
+}
+
+// state is the session as the last offer and answer left it. s.mu is
+// held.
+func (s *Session) state() sessionState {
+	return sessionState{localDir: s.localDir, remoteDir: s.remoteDir, offered: s.offered, stream: s.stream}
+}
+
+// restore puts the session back to st, the state before an offer that
+// failed (RFC 3264 8), with the media of the peer that the answer to
+// that offer may have moved. The precondition table keeps what the
+// answer said of the resources of the peer: the failure of the offer
+// does not undo a reservation. s.mu is held.
+func (s *Session) restore(st sessionState) {
+	if st.stream != nil && st.stream != s.stream {
+		if err := s.media.SetStream(*st.stream); err != nil {
+			s.log.Warn("the media of the session before the offer not set again", "error", err.Error())
+		}
+	}
+	s.localDir, s.remoteDir, s.offered, s.stream = st.localDir, st.remoteDir, st.offered, st.stream
 }
 
 // resynchronize offers the session as it was before a re-INVITE that
@@ -348,17 +383,7 @@ func (s *Session) offerAnew(dialog sessionDialog) (resp, answer *sip.Message, er
 // it has sent media with them. The UE does not look at the media to
 // tell, and takes the error as saying that nothing was carried out.
 func (s *Session) resynchronize(dialog sessionDialog) {
-	resp, answer, err := s.offerAnew(dialog)
-	if err == nil && resp.StatusCode >= 300 {
-		err = fmt.Errorf("re-INVITE answered %d %s", resp.StatusCode, resp.Reason)
-	}
-	if err == nil {
-		if answer == nil {
-			answer = resp
-		}
-		err = s.receiveAnswer(answer)
-	}
-	if err != nil {
+	if _, _, err := s.offerAnew(dialog); err != nil {
 		s.log.Warn("the offer that brings the peer back to the session before the failed re-INVITE failed too", "error", err.Error())
 		return
 	}
