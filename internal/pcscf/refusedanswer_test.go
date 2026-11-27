@@ -165,6 +165,8 @@ type rawINVITE struct {
 	p     *PCSCF
 	store *MemoryStore
 	relay *fakeRelay
+	// pcrf is the PCRF of the P-CSCF, or nil when it has none.
+	pcrf *fakePolicy
 	// ue sends to the P-CSCF at pcscf.
 	ue, pcscf *sip.Stack
 	// ct is the INVITE as the UE sent it, and st as the far end got it.
@@ -175,9 +177,12 @@ type rawINVITE struct {
 	invites chan *sip.ServerTransaction
 	// farGot are the ACKs and the other requests that reach the far end,
 	// which answers each request but the INVITE 200, and ueGot the
-	// requests that reach the UE.
-	farGot, ueGot chan *sip.Message
-	farContact    string
+	// requests that reach the UE, which answers each with ueAnswers, or
+	// not at all while it is 0.
+	farGot, ueGot         chan *sip.Message
+	ueAnswers             atomic.Int32
+	far                   *sip.Stack
+	farContact, ueContact string
 	// failLocate makes the next lookup of a next hop fail, as when DNS
 	// does not answer for a moment.
 	failLocate atomic.Bool
@@ -185,7 +190,15 @@ type rawINVITE struct {
 
 func newRawINVITE(t *testing.T) *rawINVITE {
 	t.Helper()
-	c := &rawINVITE{relay: newFakeRelay(), store: NewMemoryStore(),
+	return newRawINVITEWith(t, nil)
+}
+
+// newRawINVITEWith is newRawINVITE with pcrf as the PCRF of the P-CSCF,
+// unless it is nil. The UE then has a policy session for its signalling,
+// so the media of its call are authorised.
+func newRawINVITEWith(t *testing.T, pcrf *fakePolicy) *rawINVITE {
+	t.Helper()
+	c := &rawINVITE{relay: newFakeRelay(), store: NewMemoryStore(), pcrf: pcrf,
 		farGot: make(chan *sip.Message, 4), ueGot: make(chan *sip.Message, 4)}
 	invites := make(chan *sip.ServerTransaction, 2)
 	c.invites = invites
@@ -199,8 +212,13 @@ func newRawINVITE(t *testing.T) *rawINVITE {
 			c.farGot <- st.Request
 			st.Respond(sip.NewResponse(st.Request, 200, ""))
 		}})
-	c.farContact = "sip:callee@" + far.LocalAddr().String()
-	ue := newStack(t, func(st *sip.ServerTransaction) { c.ueGot <- st.Request })
+	c.far, c.farContact = far, "sip:callee@"+far.LocalAddr().String()
+	ue := newStack(t, func(st *sip.ServerTransaction) {
+		c.ueGot <- st.Request
+		if code := c.ueAnswers.Load(); code != 0 {
+			st.Respond(sip.NewResponse(st.Request, int(code), ""))
+		}
+	})
 	locate := locatorFunc(func(string) []sip.Destination {
 		if c.failLocate.CompareAndSwap(true, false) {
 			return nil
@@ -208,18 +226,23 @@ func newRawINVITE(t *testing.T) *rawINVITE {
 		return []sip.Destination{{Transport: sip.UDP, Addr: far.LocalAddr()}}
 	})
 	c.p = newPCSCF(t, Config{Host: "pcscf." + domain, Port: 5060, VisitedNetworkID: domain}, locate, c.store, only(c.relay), quiet())
-	ueContact := "sip:001010000000001@" + ue.LocalAddr().String()
-	c.store.PutAssociation(context.Background(), Association{
-		Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, SentBy: ue.LocalAddr().String(), Contact: ueContact,
+	c.ueContact = "sip:001010000000001@" + ue.LocalAddr().String()
+	a := Association{
+		Source: sip.Destination{Transport: sip.UDP, Addr: ue.LocalAddr()}, SentBy: ue.LocalAddr().String(), Contact: c.ueContact,
 		PrivateIdentity: impi, PublicIdentities: []string{impu}, ServiceRoute: []string{"<sip:orig@scscf." + domain + ":5060;lr>"},
 		Expires: time.Now().Add(time.Hour),
-	})
+	}
+	if pcrf != nil {
+		c.p.SetPolicyControl(pcrf)
+		a.SignallingSession = "signalling"
+	}
+	c.store.PutAssociation(context.Background(), a)
 	pcscf := newPCSCFStack(t, c.p)
 	c.p.SetStack(pcscf)
 	c.ue, c.pcscf = ue, pcscf
 
 	inv := invite("sip:001010000000002@"+domain, "<sip:pcscf."+domain+":5060;lr>")
-	inv.Set("Contact", "<"+ueContact+">")
+	inv.Set("Contact", "<"+c.ueContact+">")
 	var err error
 	if c.ct, err = ue.SendRequest(inv, sip.Destination{Transport: sip.UDP, Addr: pcscf.LocalAddr()}); err != nil {
 		t.Fatal(err)
