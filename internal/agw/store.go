@@ -26,6 +26,10 @@ type SavedTermination struct {
 	// Latch is NAPTOff for a termination that sends to Remote whatever
 	// source its packets come from, and empty for one that latches.
 	Latch Latch `json:",omitempty"`
+	// ReceivePT and SendPT are the payload types of PCMU in what the
+	// termination receives and sends (relayTermination).
+	ReceivePT uint8 `json:",omitempty"`
+	SendPT    uint8 `json:",omitempty"`
 }
 
 // ContextStore keeps the contexts of one relay. The relay's name is in

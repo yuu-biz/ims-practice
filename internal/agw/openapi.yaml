@@ -240,6 +240,12 @@ components:
         remote:
           description: Where the termination sends RTP, from the SDP of the party it faces; RTCP goes to the port above.
           $ref: '#/components/schemas/Address'
+        local_media:
+          description: On Add, the stream that the termination receives, as the Local descriptor gives it besides the address. The termination receives PCMU under the payload type it gives PCMU.
+          $ref: '#/components/schemas/Media'
+        remote_media:
+          description: The stream that the termination sends to remote, as the Remote descriptor gives it besides the address. The termination sends PCMU under the payload type it gives PCMU.
+          $ref: '#/components/schemas/Media'
         latch:
           description: The latching of H.248.37 (06/2008) 6.6. An Add without one gives latch; a Modify without one keeps it.
           type: string
@@ -248,6 +254,37 @@ components:
           $ref: '#/components/schemas/Signals'
         events:
           $ref: '#/components/schemas/Events'
+      additionalProperties: true
+    Media:
+      description: What the SDP of a Local or a Remote descriptor says of an audio stream besides its address (TS 29.334 5.15). Without one, PCMU has its static payload type 0.
+      type: object
+      properties:
+        codecs:
+          description: The payload formats of the m= line, most preferred first.
+          type: array
+          items:
+            type: object
+            required: [payload_type, name, clock_rate]
+            properties:
+              payload_type:
+                type: integer
+                minimum: 0
+                maximum: 127
+              name:
+                description: The encoding name of a=rtpmap, such as PCMU.
+                type: string
+              clock_rate:
+                type: integer
+              channels:
+                type: integer
+              fmtp:
+                description: The value of a=fmtp after the payload type.
+                type: string
+            additionalProperties: true
+        bandwidth:
+          description: The b=AS value in kbit/s.
+          type: integer
+          minimum: 0
       additionalProperties: true
     Termination:
       description: One end of a context, a pair of local UDP ports for RTP and RTCP (RFC 3550 11).

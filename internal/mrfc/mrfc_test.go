@@ -269,6 +269,48 @@ func TestAnnouncementAfterAnswer(t *testing.T) {
 	}
 }
 
+// dynamicPCMU is PCMU under a dynamic payload type, as a party may map
+// it (RFC 3551 3).
+const dynamicPCMU = 96
+
+// dynamicOffer is the SDP offer of a party at addr that has only PCMU,
+// and maps it to dynamicPCMU.
+func dynamicOffer(t *testing.T, addr netip.AddrPort) sip.Body {
+	t.Helper()
+	o, err := sdp.AudioOffer("1", addr, []sdp.Codec{{PayloadType: dynamicPCMU, Name: sdp.NamePCMU, ClockRate: 8000}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sip.Body{Type: "application/sdp", Content: o.Bytes()}
+}
+
+// TestAnnouncementWithADynamicPayloadType: a party whose offer maps
+// PCMU to a dynamic payload type gets an answer with that number, and
+// the announcement under it, since the MRFP sends with the payload
+// types of the party's SDP (RFC 3264 6.1).
+func TestAnnouncementWithADynamicPayloadType(t *testing.T) {
+	media := startMRFP(t)
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
+	as := newUA(t, "mmtel", nil)
+	caller := party(t)
+
+	out := invite(t, as, "sip:annc@"+m.host+";play=/provisioned/notice", dynamicOffer(t, addrOf(caller)))
+	ok := final(t, out)
+	if ok.StatusCode != 200 {
+		t.Fatalf("got %d, want 200", ok.StatusCode)
+	}
+	answer, err := sdp.Parse(ok.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audio := answer.AudioMedia(); audio == nil || !slicesEqual(audio.Formats, []int{dynamicPCMU}) {
+		t.Errorf("answer\n%s\nwant PCMU under payload type %d", ok.Body, dynamicPCMU)
+	}
+	want := rtptest.Frames(t, announcements["notice"])
+	sameFrames(t, rtptest.ReadPCMU(t, caller, dynamicPCMU, len(want), 10*time.Second), want)
+	waitDone(t, out.Done(), "the dialog with the MRFC")
+}
+
 // TestAnnouncementAsEarlyMedia is the gateway model of TS 24.628 Annex G
 // and TS 24.182 4.5.5.3.7: the AS holds the caller's dialog early, sends
 // it a reliable 183 with the SDP of the MRFP and P-Early-Media sendonly,
@@ -390,9 +432,9 @@ func TestLoopStoppedByBYE(t *testing.T) {
 	waitNoContexts(t, media.relay)
 }
 
-// speaker is a party that sends a tone to the MRFP termination of its
-// leg, every 20 ms, until the test ends.
-func speak(t *testing.T, c *net.UDPConn, to netip.AddrPort, hz float64) {
+// speaker is a party that sends a tone as PCMU under payload type pt
+// to the MRFP termination of its leg, every 20 ms, until the test ends.
+func speak(t *testing.T, c *net.UDPConn, to netip.AddrPort, pt uint8, hz float64) {
 	samples := rtptest.Tone(hz, 50*mixer.FrameSize)
 	stop := make(chan struct{})
 	done := make(chan struct{})
@@ -408,7 +450,7 @@ func speak(t *testing.T, c *net.UDPConn, to netip.AddrPort, hz float64) {
 			case <-ticker.C:
 			}
 			f := i % 50
-			p := rtp.Packet{PayloadType: sdp.PCMU, SequenceNumber: uint16(i), Timestamp: uint32(i * mixer.FrameSize), SSRC: uint32(hz),
+			p := rtp.Packet{PayloadType: pt, SequenceNumber: uint16(i), Timestamp: uint32(i * mixer.FrameSize), SSRC: uint32(hz),
 				Payload: g711.Encode(samples[f*mixer.FrameSize : (f+1)*mixer.FrameSize])}
 			c.WriteToUDPAddrPort(p.Marshal(), to)
 		}
@@ -450,7 +492,7 @@ func TestConferenceMixesTheOthers(t *testing.T) {
 		if ok.StatusCode != 200 {
 			t.Fatalf("party %d got %d", i, ok.StatusCode)
 		}
-		speak(t, p, mrfpAddress(t, ok), hz[i])
+		speak(t, p, mrfpAddress(t, ok), sdp.PCMU, hz[i])
 		calls, parties = append(calls, out), append(parties, p)
 	}
 	if cs := media.relay.Contexts(); len(cs) != 1 || len(cs[0].Terminations) != 3 {
@@ -489,6 +531,55 @@ func TestConferenceMixesTheOthers(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// TestConferenceWithADynamicPayloadType: one party maps PCMU to a
+// dynamic payload type and the other two use the static one. Each
+// termination of the MRFP receives with the payload type of its own SDP
+// and sends with that of its party's (RFC 3264 5.1, 6.1), so every
+// party hears the other two under the number its own offer gave.
+func TestConferenceWithADynamicPayloadType(t *testing.T) {
+	media := startMRFP(t)
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
+	as := newUA(t, "mmtel", nil)
+	hz := []float64{400, 1000, 1700}
+	pts := []uint8{dynamicPCMU, sdp.PCMU, sdp.PCMU}
+	var calls []*sip.OutgoingCall
+	var parties []*net.UDPConn
+	for i := range hz {
+		p := party(t)
+		body := offerFrom(t, addrOf(p), "sendrecv")
+		if pts[i] == dynamicPCMU {
+			body = dynamicOffer(t, addrOf(p))
+		}
+		out := invite(t, as, "sip:conf=dyn@"+m.host, body)
+		ok := final(t, out)
+		if ok.StatusCode != 200 {
+			t.Fatalf("party %d got %d", i, ok.StatusCode)
+		}
+		answer, err := sdp.Parse(ok.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if audio := answer.AudioMedia(); audio == nil || !slicesEqual(audio.Formats, []int{int(pts[i])}) {
+			t.Errorf("party %d got the answer\n%s\nwant PCMU under payload type %d", i, ok.Body, pts[i])
+		}
+		speak(t, p, mrfpAddress(t, ok), pts[i], hz[i])
+		calls, parties = append(calls, out), append(parties, p)
+	}
+	for i, party := range parties {
+		others := slices.Delete(slices.Clone(hz), i, i+1)
+		samples := rtptest.Heard(t, party, pts[i], others, 30, 10*time.Second)
+		for j, f := range hz {
+			if p := rtptest.Power(samples, f); j != i && p < 1e5 {
+				t.Errorf("party %d hears party %d at %v Hz only at %.0f", i, j, f, p)
+			}
+		}
+	}
+	for _, out := range calls {
+		out.Bye()
+	}
+	waitNoContexts(t, media.relay)
 }
 
 // TestConferenceAcrossInstances: a party of a conference that

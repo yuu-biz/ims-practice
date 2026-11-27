@@ -26,6 +26,9 @@ import (
 // A request is a TerminationRequest as JSON, such as
 // {"id": "access", "mode": "sendrecv", "remote": "192.0.2.10:4000"}, or
 // for an MRFP {"mode": "sendonly", "remote": "192.0.2.20:5004",
+// "local_media": {"codecs": [{"payload_type": 96, "name": "PCMU",
+// "clock_rate": 8000}]}, "remote_media": {"codecs": [{"payload_type":
+// 96, "name": "PCMU", "clock_rate": 8000}]},
 // "signals": {"play": {"announcement": "notice"}}, "events":
 // {"request_id": 7, "detect": ["signal_completed"], "notify":
 // "http://mrfc:8081/notify"}}.

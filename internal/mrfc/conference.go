@@ -31,7 +31,8 @@ func (m *MRFC) join(c *sip.IncomingCall, u sip.URI, conf netann.Conference, log 
 	// INVITE. The Store bounds each of its operations itself: an adapter
 	// on a store outside the process gives each one a time limit.
 	ctx := context.Background()
-	media, t, err := m.attach(ctx, conf.ID, agw.TerminationRequest{Mode: agw.Mode(direction), Remote: o.remote}, log)
+	req := o.request(direction)
+	media, t, err := m.attach(ctx, conf.ID, req, log)
 	if errors.Is(err, errStore) {
 		log.Warn("conference store failed", "error", err.Error())
 		m.refuse(c, u, &netann.Error{Status: 500, Reason: "Server Internal Error"}, log)
@@ -42,7 +43,7 @@ func (m *MRFC) join(c *sip.IncomingCall, u sip.URI, conf netann.Conference, log 
 		m.refuse(c, u, &netann.Error{Status: 503, Reason: "Service Unavailable"}, log)
 		return
 	}
-	l := newLeg(Processor{Name: media.MRFP, Control: m.byName[media.MRFP]}, media.Context, t, log)
+	l := newLeg(Processor{Name: media.MRFP, Control: m.byName[media.MRFP]}, media.Context, t, req.LocalMedia.Codecs[0], log)
 	defer func() {
 		if l.release() {
 			// The last party has left, so the MRFP has deleted the
@@ -138,7 +139,7 @@ func (m *MRFC) attach(ctx context.Context, id string, req agw.TerminationRequest
 			// The store may hold this context or not. Give it up: a
 			// party that the store sends to it later finds it gone, and
 			// the conference starts again (agw.ErrNoContext above).
-			newLeg(p, cx.ID, t, log).release()
+			newLeg(p, cx.ID, t, req.LocalMedia.Codecs[0], log).release()
 			return ConferenceMedia{}, agw.Termination{}, fmt.Errorf("%w: %w", errStore, err)
 		}
 		if created {
@@ -147,7 +148,7 @@ func (m *MRFC) attach(ctx context.Context, id string, req agw.TerminationRequest
 		}
 		// Another instance created the conference at the same time: give
 		// up this context and join that one.
-		newLeg(p, cx.ID, t, log).release()
+		newLeg(p, cx.ID, t, req.LocalMedia.Codecs[0], log).release()
 	}
 	return ConferenceMedia{}, agw.Termination{}, fmt.Errorf("mrfc: conference %q kept changing", id)
 }

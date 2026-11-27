@@ -7,7 +7,6 @@ import (
 	"math/rand/v2"
 	"net/netip"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
@@ -39,6 +38,10 @@ type leg struct {
 	context string
 	id      agw.TerminationID
 	local   netip.AddrPort
+	// receive is PCMU under the payload type that the termination
+	// receives it with: the one of the Local descriptor, which each SDP
+	// of the MRFC for the leg gives.
+	receive sdp.Codec
 	log     *slog.Logger
 
 	mu sync.Mutex
@@ -48,9 +51,9 @@ type leg struct {
 	version   uint64
 }
 
-func newLeg(p Processor, contextID string, t agw.Termination, log *slog.Logger) *leg {
+func newLeg(p Processor, contextID string, t agw.Termination, receive sdp.Codec, log *slog.Logger) *leg {
 	return &leg{
-		mrfp: p, context: contextID, id: t.ID, local: t.Local, sessionID: strconv.FormatUint(rand.Uint64N(1<<62), 10),
+		mrfp: p, context: contextID, id: t.ID, local: t.Local, receive: receive, sessionID: strconv.FormatUint(rand.Uint64N(1<<62), 10),
 		log: log.With("mrfp", p.Name, "context", contextID, "termination", string(t.ID)),
 	}
 }
@@ -63,11 +66,39 @@ func (l *leg) nextVersion() uint64 {
 }
 
 // offered is the audio of an SDP offer that the MRFP can take: where it
-// goes, and the direction the offer asks for.
+// goes, PCMU under the payload type that the offer gives it, and the
+// direction the offer asks for.
 type offered struct {
 	session   sdp.Session
 	remote    netip.AddrPort
+	codec     sdp.Codec
 	direction string
+}
+
+// request is the termination that the MRFC reserves for the offer o, or
+// for an INVITE without an offer when o is zero. The termination sends
+// PCMU under the payload type of the offer (RFC 3264 6.1), and receives
+// it under the one of the answer, which keeps the offer's (RFC 3264
+// 6.1). Without an offer, it receives under the one of the MRFC's own
+// offer, the static 0, and sends under the one of the answer, which
+// comes in the ACK (takeAnswer).
+func (o offered) request(direction string) agw.TerminationRequest {
+	if o.codec.Name == "" {
+		return agw.TerminationRequest{Mode: agw.Mode(direction), LocalMedia: agw.Media{Codecs: pcmu}}
+	}
+	media := agw.Media{Codecs: []sdp.Codec{o.codec}}
+	return agw.TerminationRequest{Mode: agw.Mode(direction), LocalMedia: media, Remote: o.remote, RemoteMedia: media}
+}
+
+// pcmuOf is PCMU in the audio stream m, under the payload type that m
+// gives it.
+func pcmuOf(m sdp.Media) (sdp.Codec, bool) {
+	for _, c := range m.Codecs() {
+		if c.Is(sdp.NamePCMU) && c.ClockRate == 8000 {
+			return c, true
+		}
+	}
+	return sdp.Codec{}, false
 }
 
 // readOffer reads the SDP offer in body (RFC 3264 5).
@@ -80,22 +111,26 @@ func readOffer(body []byte) (offered, error) {
 	if m == nil || m.Proto != "RTP/AVP" {
 		return offered{}, errNoPCMU
 	}
-	for _, c := range m.Codecs() {
-		if c.PayloadType == sdp.PCMU || strings.EqualFold(c.Name, sdp.NamePCMU) && c.ClockRate == 8000 {
-			return offered{session: s, remote: s.Address(*m), direction: s.Direction(*m)}, nil
-		}
+	c, ok := pcmuOf(*m)
+	if !ok {
+		return offered{}, errNoPCMU
 	}
-	return offered{}, errNoPCMU
+	return offered{session: s, remote: s.Address(*m), codec: c, direction: s.Direction(*m)}, nil
 }
 
 // answer is the SDP answer of the termination to o, with direction
-// (RFC 3264 6.1).
+// (RFC 3264 6.1). It gives PCMU the payload type that the termination
+// receives it with. That is the one of the first offer, and a later
+// offer of the session may map PCMU to another number as well (RFC 3264
+// 8.3.2): the answer keeps the number of the termination, under which
+// the offerer then sends (RFC 3264 5.1).
 func (l *leg) answer(o offered, direction string) (sip.Body, error) {
 	a, err := sdp.AudioAnswer(o.session, l.sessionID, l.local, pcmu)
 	if err != nil {
 		return sip.Body{}, err
 	}
 	a.Origin.Version = l.nextVersion()
+	a.AudioMedia().SetCodecs([]sdp.Codec{l.receive})
 	a.AudioMedia().SetDirection(direction)
 	return sdpBody(a), nil
 }
@@ -103,7 +138,7 @@ func (l *leg) answer(o offered, direction string) (sip.Body, error) {
 // offer is an SDP offer of the termination, for an INVITE that came
 // without one (RFC 3264 5).
 func (l *leg) offer(direction string) (sip.Body, error) {
-	o, err := sdp.AudioOffer(l.sessionID, l.local, pcmu)
+	o, err := sdp.AudioOffer(l.sessionID, l.local, []sdp.Codec{l.receive})
 	if err != nil {
 		return sip.Body{}, err
 	}
@@ -132,7 +167,8 @@ func (l *leg) modify(change agw.TerminationRequest) error {
 // takeAnswer points the termination at the SDP answer in body, which
 // came in the ACK after an INVITE without an offer: the mode of the
 // termination is the reverse of the direction that the answer gives
-// (RFC 3264 6.1).
+// (RFC 3264 6.1), and it sends PCMU under the payload type of the
+// answer (RFC 3264 5.1).
 func (l *leg) takeAnswer(body []byte) error {
 	s, err := sdp.Parse(body)
 	if err != nil {
@@ -142,7 +178,11 @@ func (l *leg) takeAnswer(body []byte) error {
 	if m == nil {
 		return errors.New("mrfc: the answer has no audio stream")
 	}
-	return l.modify(agw.TerminationRequest{Remote: s.Address(*m), Mode: agw.Mode(sdp.AnswerDirection(s.Direction(*m)))})
+	change := agw.TerminationRequest{Remote: s.Address(*m), Mode: agw.Mode(sdp.AnswerDirection(s.Direction(*m)))}
+	if c, ok := pcmuOf(*m); ok {
+		change.RemoteMedia = agw.Media{Codecs: []sdp.Codec{c}}
+	}
+	return l.modify(change)
 }
 
 // release subtracts the termination, and tells whether that deleted the
@@ -197,7 +237,8 @@ func (m *MRFC) handle(l *leg, direction func(offered string) string) func(*sip.I
 				return
 			}
 			dir := direction(o.direction)
-			if err := l.modify(agw.TerminationRequest{Remote: o.remote, Mode: agw.Mode(dir)}); err != nil {
+			change := agw.TerminationRequest{Remote: o.remote, RemoteMedia: agw.Media{Codecs: []sdp.Codec{o.codec}}, Mode: agw.Mode(dir)}
+			if err := l.modify(change); err != nil {
 				l.log.Warn("MRFP refused the new offer", "error", err.Error())
 				r.Reject(500)
 				return
