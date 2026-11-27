@@ -148,7 +148,8 @@ type harness struct {
 	// test makes fail.
 	failing *failingStore
 	ue      *sip.Stack
-	// contact is the Contact of the REGISTERs; empty means ueContact.
+	// contact is the Contact of the REGISTERs; empty means ueContact, and
+	// noContact leaves the header field out.
 	contact string
 	// contactParams follow the contact, such as ";+g.3gpp.smsip".
 	contactParams string
@@ -247,11 +248,19 @@ func (h *harness) register(callID string, cseq int, expires int, authorization s
 	if contact == "" {
 		contact = ueContact
 	}
-	if contact == "*" {
+	switch contact {
+	case "*":
 		// RFC 3261 10.2.2: the wildcard comes with Expires: 0.
 		m.Add("Contact", "*")
 		m.Add("Expires", "0")
-	} else {
+	case noContact:
+		// RFC 3261 10.2.3: a REGISTER without a Contact fetches the
+		// bindings. Its Expires means nothing, and a negative one leaves
+		// the header field out.
+		if expires >= 0 {
+			m.Add("Expires", strconv.Itoa(expires))
+		}
+	default:
 		m.Add("Contact", "<"+contact+">"+h.contactParams+";expires="+strconv.Itoa(expires))
 	}
 	m.Add("Path", "<sip:term@pcscf."+domain+":5060;lr>")
@@ -291,6 +300,9 @@ func answer(t *testing.T, resp *sip.Message, pass, integrity string) (string, si
 	c.AuthParams.Set("integrity-protected", `"`+integrity+`"`)
 	return c.String(), c
 }
+
+// noContact is the harness.contact of a REGISTER that fetches the bindings.
+const noContact = "no Contact"
 
 // initial is the first REGISTER of TS 24.229 5.1.1.2.3: empty nonce and
 // response, and no integrity-protected because the P-CSCF has no IP
@@ -699,6 +711,77 @@ func TestRegisterOutOfOrderLeavesTheBindingAlone(t *testing.T) {
 	}
 	if _, ok, _ := h.store.Registration(context.Background(), impi); ok {
 		t.Errorf("the registration is still stored after the de-registration")
+	}
+}
+
+// TestRegisterWithoutContactFetchesTheBinding: RFC 3261 10.2.3 and 10.3
+// steps 6 and 8. A REGISTER without a Contact is authenticated like any
+// other, and then answers with the bindings as they are: a registered
+// user gets the stored contact with the time it has left, and the
+// registration, its expiry and the HSS stay as they were, whatever the
+// Expires of the query says. A user who is not registered gets a 200
+// without a Contact, and no binding is made for it.
+func TestRegisterWithoutContactFetchesTheBinding(t *testing.T) {
+	h := newHarness(t, Config{})
+	ctx := context.Background()
+	callID := sip.NewCallID()
+
+	// Not registered: the query is authenticated, and makes no binding.
+	h.contact = noContact
+	r := h.register(callID, 1, -1, initial)
+	auth, _ := answer(t, r, password, "ip-assoc-pending")
+	r = h.register(callID, 2, -1, auth)
+	if r.StatusCode != 200 || r.Get("Contact") != "" {
+		t.Fatalf("query of an unregistered user got %d with Contact %q, want 200 without one", r.StatusCode, r.Get("Contact"))
+	}
+	if _, ok, err := h.store.Registration(ctx, impi); err != nil || ok {
+		t.Fatalf("the query of an unregistered user stored a registration (%v, %v)", ok, err)
+	}
+	if got := h.hss.assignments(); len(got) != 0 {
+		t.Errorf("SARs = %v: a query must send none", got)
+	}
+
+	// Registered: the query leaves the contact and its expiry alone.
+	h.contact = ""
+	r = h.register(callID, 3, 600000, initial)
+	auth, _ = answer(t, r, password, "ip-assoc-pending")
+	if r := h.register(callID, 4, 600000, auth); r.StatusCode != 200 {
+		t.Fatalf("registration got %d, want 200", r.StatusCode)
+	}
+	stored, ok, err := h.store.Registration(ctx, impi)
+	if err != nil || !ok || stored.Contact != ueContact {
+		t.Fatalf("stored registration = %+v, %v, %v; want the contact %s", stored, ok, err, ueContact)
+	}
+
+	h.contact = noContact
+	// The Expires of a query is not an interval: 5 would be below
+	// Min-Expires here, and 0 would read as a de-registration. A
+	// negative one sends no Expires, so the default interval would apply.
+	for i, expires := range []int{-1, 0, 5, 7200} {
+		r = h.register(callID, 5+2*i, expires, `Digest username="`+impi+`", realm="`+domain+`", nonce="", uri="sip:`+domain+`", response="", integrity-protected="ip-assoc-yes"`)
+		auth, _ = answer(t, r, password, "ip-assoc-yes")
+		r = h.register(callID, 6+2*i, expires, auth)
+		if r.StatusCode != 200 {
+			t.Fatalf("query with Expires %d got %d, want 200", expires, r.StatusCode)
+		}
+		na, err := sip.ParseNameAddr(r.Get("Contact"))
+		if err != nil || na.URI != ueContact {
+			t.Fatalf("query with Expires %d answered Contact %q, want the stored contact", expires, r.Get("Contact"))
+		}
+		left, _ := na.Params.Get("expires")
+		if n, err := strconv.Atoi(left); err != nil || n < 1 || n > 3600 {
+			t.Errorf("expires of the answered contact = %q, want what is left of the stored interval", left)
+		}
+		if len(r.GetAll("P-Associated-URI")) == 0 || r.Get("Service-Route") == "" || len(r.GetAll("Path")) == 0 {
+			t.Errorf("the answer lacks P-Associated-URI, Service-Route or Path: %v", r)
+		}
+	}
+	after, ok, err := h.store.Registration(ctx, impi)
+	if err != nil || !ok || after.Contact != stored.Contact || !after.Expires.Equal(stored.Expires) || after.ContactID != stored.ContactID {
+		t.Fatalf("registration after the queries = %+v, %v, %v; want %+v", after, ok, err, stored)
+	}
+	if got := h.hss.assignments(); !slices.Equal(got, []cx.ServerAssignmentType{cx.AssignRegistration}) {
+		t.Errorf("SARs = %v: a query must send none", got)
 	}
 }
 

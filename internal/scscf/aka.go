@@ -96,12 +96,16 @@ func (s *SCSCF) reregister(st *sip.ServerTransaction, privateID, publicID string
 		return
 	}
 	// Step 2: a new contact is registered only by an initial
-	// registration (NOTE 1).
-	contact, err := sip.ParseNameAddr(st.Request.Get("Contact"))
-	if err != nil || !sameURI(contact.URI, reg.Contact) {
-		log.Info("protected REGISTER for a contact not registered", "contact", st.Request.Get("Contact"))
-		s.respond(st, 403, nil)
-		return
+	// registration (NOTE 1). A REGISTER without a Contact fetches the
+	// bindings and registers no contact (RFC 3261 10.2.3), so it has
+	// none to check.
+	if st.Request.Get("Contact") != "" {
+		contact, err := sip.ParseNameAddr(st.Request.Get("Contact"))
+		if err != nil || !sameURI(contact.URI, reg.Contact) {
+			log.Info("protected REGISTER for a contact not registered", "contact", st.Request.Get("Contact"))
+			s.respond(st, 403, nil)
+			return
+		}
 	}
 	// Steps 3 and 5 to 11.
 	s.accept(st, c, Challenge{PrivateIdentity: privateID, PublicIdentity: publicID, HSSHost: reg.HSSHost, ServerName: reg.ServerName}, expires, log)

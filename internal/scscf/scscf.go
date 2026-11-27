@@ -239,8 +239,13 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 		s.respond(st, 400, nil)
 		return
 	}
+	// RFC 3261 10.2.3 and 10.3 step 6: a REGISTER without a Contact asks
+	// for the bindings and changes none, so the interval it may carry in
+	// Expires means nothing, and none of the checks of the interval below
+	// applies to it. It is still authenticated (10.3 step 2).
+	query := req.Get("Contact") == ""
 	expires := defaultExpires
-	if seconds != sip.NoExpires {
+	if seconds != sip.NoExpires && !query {
 		expires = time.Duration(seconds) * time.Second
 	}
 	log := s.log.With("private_identity", privateID, "public_identity", publicID, "call_id", req.Get("Call-ID"))
@@ -448,6 +453,10 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 		s.storeFailed(st, err, log)
 		return
 	}
+	if req.Get("Contact") == "" {
+		s.answerQuery(st, old, registered, c, ch, log)
+		return
+	}
 	contact, contactErr := sip.ParseNameAddr(req.Get("Contact"))
 	if registered && contactErr == nil && sameURI(contact.URI, old.Contact) && outOfOrder(req, old) {
 		s.refuseOutOfOrder(st, old, log)
@@ -507,7 +516,15 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 	}
 	log.Info("registered", "contact", reg.Contact, "expires", int(expires/time.Second), "assignment", assignment.String())
 
-	s.respond(st, 200, func(r *sip.Message) {
+	s.respond(st, 200, s.bindingResponse(reg, expires, c, ch))
+	s.notifyRegistration(ctx, reg, replaced, log)
+	s.notifyApplicationServers(req, reg, expires, log)
+}
+
+// bindingResponse fills the 200 (OK) to a REGISTER with the binding that
+// reg holds, with expires as the time it has left.
+func (s *SCSCF) bindingResponse(reg Registration, expires time.Duration, c sip.Credentials, ch Challenge) func(*sip.Message) {
+	return func(r *sip.Message) {
 		for _, p := range reg.Path {
 			r.Add("Path", p)
 		}
@@ -528,9 +545,35 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 			rspauth, _ := sip.DigestResponse(ha1, "", c)
 			r.Add("Authentication-Info", fmt.Sprintf(`qop=auth, rspauth="%s", cnonce="%s", nc=%s`, rspauth, c.CNonce, c.NC))
 		}
-	})
-	s.notifyRegistration(ctx, reg, replaced, log)
-	s.notifyApplicationServers(req, reg, expires, log)
+	}
+}
+
+// answerQuery answers a REGISTER without a Contact, which fetches the
+// bindings (RFC 3261 10.2.3). Step 6 of 10.3 skips the update of the
+// bindings for it, and step 8 answers with the bindings as they are, each
+// with the time it has left: the stored contact and expiry stay, and a user
+// who is not registered gets a 200 without a Contact, with no binding
+// made for it. TS 24.229 5.1.1.4.1 lets a UE fetch the bindings this way
+// after the initial registration.
+//
+// Nothing changes in the registration, so no SAR goes out: the SAR
+// tells the HSS of a change in the registration state of the user, and
+// there is none. For the same reason there are no third-party REGISTERs
+// to the application servers, and no NOTIFYs to the subscribers to the
+// registration, who learn of changes only.
+func (s *SCSCF) answerQuery(st *sip.ServerTransaction, reg Registration, registered bool, c sip.Credentials, ch Challenge, log *slog.Logger) {
+	left := time.Until(reg.Expires)
+	if !registered || left <= 0 {
+		// An expiry that the sweep has not handled yet is no binding any
+		// more (Store.RegistrationOf), and the sweep still ends it.
+		log.Info("bindings fetched, none")
+		s.respond(st, 200, nil)
+		return
+	}
+	// Whole seconds, rounded up: 0 would read as the end of the binding.
+	left = (left + time.Second - 1) / time.Second * time.Second
+	log.Info("bindings fetched", "contact", reg.Contact, "expires", int(left/time.Second))
+	s.respond(st, 200, s.bindingResponse(reg, left, c, ch))
 }
 
 // outOfOrder is RFC 3261 10.3 steps 6 and 7 for the binding that reg
