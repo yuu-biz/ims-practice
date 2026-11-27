@@ -178,6 +178,8 @@ S-CSCF は **401 Unauthorized** で答えます。**WWW-Authenticate** ヘッダ
 
 同時に、タイマー **reg-await-auth**（4 分、TS 24.229 Table 7.7.1）を始めます。
 
+reg-await-auth が切れるまでに答えが来なければ、認証は失敗です（TS 24.229 5.4.1.2.3）。S-CSCF はチャレンジを捨て、Server-Assignment-Type が `AUTHENTICATION_TIMEOUT` の SAR を HSS に送ります。それまで登録していたユーザは、登録されたままです。reg-await-auth が切れたあとにチャレンジに答えた REGISTER は、受け付けません。期限の処理より先に S-CSCF に届いても同じです。S-CSCF はまず同じ手順で、SAR を送ってチャレンジを終えます。そのうえで、待っているチャレンジの無い REGISTER として扱います。新しい MAR を送り、新しい nonce と `stale=true` を WWW-Authenticate に入れた 401 で答えます。
+
 401 は I-CSCF と P-CSCF を通って戻ります。各ノードは自分の Via を取り除きます。そのため UE に届く応答には、UE 自身の Via だけが残っています。
 
 ### 7. UE が認証の要求に答える

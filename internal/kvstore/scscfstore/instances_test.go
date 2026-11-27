@@ -125,6 +125,8 @@ type instances struct {
 	// subscriber is where it takes them.
 	notify     chan *sip.Message
 	subscriber netip.AddrPort
+	// sip is where the last instance takes SIP requests.
+	sip netip.AddrPort
 }
 
 // startInstances runs n instances on one store, each with its own
@@ -133,6 +135,15 @@ type instances struct {
 // by one of them at a time. lease is how long each of them holds a
 // claimed expiry.
 func startInstances(t *testing.T, n int, lease time.Duration) *instances {
+	t.Helper()
+	// The sweep comes round often, so that the test does not wait a
+	// second for an expiry that is due.
+	return startInstancesSweeping(t, n, lease, 20*time.Millisecond)
+}
+
+// startInstancesSweeping is startInstances with the sweeps of the
+// instances coming round every sweep.
+func startInstancesSweeping(t *testing.T, n int, lease, sweep time.Duration) *instances {
 	t.Helper()
 	in := &instances{
 		hss:    &recordingHSS{identity: diameter.Identity{OriginHost: "hss." + domain, OriginRealm: domain}},
@@ -150,15 +161,15 @@ func startInstances(t *testing.T, n int, lease time.Duration) *instances {
 			[]uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 		s, err := scscf.New(scscf.Config{
 			ServerName: "sip:" + host + ":5060", Host: host, Port: 5060, HomeDomain: domain,
-			// The sweep comes round often, so that the test does not wait
-			// a second for an expiry that is due.
-			SweepInterval: 20 * time.Millisecond, ExpiryLease: lease, UserLocks: in.locks(host),
+			SweepInterval: sweep, ExpiryLease: lease, UserLocks: in.locks(host),
 		}, in.hss, node, in.store(), toSubscriber{addr: in.subscriber}, quiet())
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(s.Close)
-		s.SetStack(listen(t, s.OnRequest))
+		stack := listen(t, s.OnRequest)
+		s.SetStack(stack)
+		in.sip = stack.LocalAddr()
 	}
 	return in
 }
