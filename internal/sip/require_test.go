@@ -280,6 +280,43 @@ func TestRequestOutsideADialogRequiringAnExtension(t *testing.T) {
 	}
 }
 
+// RFC 3261 8.2.2.3 and 12.2.2: a NOTIFY of a subscription that requires
+// an unknown extension gets 420, and changes nothing: the subscriber
+// does not see it, and a terminated state in it ends nothing.
+func TestNOTIFYOfASubscriptionRequiringAnUnknownExtension(t *testing.T) {
+	n := newTestNotifier(t)
+	r := subscribeRequest()
+	ua, got := subscriberUA(t, n, &r)
+	sub, err := ua.Subscribe(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nextNotification(t, got)
+
+	n.mu.Lock()
+	req := n.sub.NewNotify(state, time.Now())
+	n.mu.Unlock()
+	req.Set("Subscription-State", "terminated;reason="+ReasonNoResource)
+	req.Add("Require", "foo")
+	ct, err := n.stack.SendRequest(req, Destination{Transport: UDP, Addr: ua.Stack().LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp := next(t, ct); resp.StatusCode != 420 || resp.Get("Unsupported") != "foo" {
+		t.Fatalf("got %s with Unsupported %q, want 420 with foo", startLine(resp), resp.Get("Unsupported"))
+	}
+
+	n.notify()
+	if again := nextNotification(t, got); again.State.State != SubscriptionActive {
+		t.Errorf("the subscriber got a NOTIFY with state %+v, want the active one after the refused NOTIFY", again.State)
+	}
+	select {
+	case <-sub.Done():
+		t.Errorf("the subscription ended with %v", sub.Err())
+	default:
+	}
+}
+
 // RFC 3261 8.2: outside a dialog, too, a method that the UA does not
 // take gets 405 (Method Not Allowed) before its Require is looked at.
 func TestRequestOutsideADialogOfAMethodNotTakenAndAnUnknownExtension(t *testing.T) {

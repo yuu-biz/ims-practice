@@ -337,7 +337,9 @@ func (ua *UA) receiveRequest(st *ServerTransaction) {
 	<-ua.started
 	req := st.Request
 	if sub := ua.subscriber.find(req); sub != nil {
-		go sub.receiveNotify(st)
+		if !ua.refuseUnknownExtensions(st) {
+			go sub.receiveNotify(st)
+		}
 		return
 	}
 	if tagOf(req.Get("To")) != "" {
