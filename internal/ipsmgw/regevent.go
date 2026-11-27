@@ -128,13 +128,14 @@ func (g *IPSMGW) subscribeRegEvent(publicID, msisdn string, expires time.Duratio
 	// response, so that a shut down does not leave a subscription
 	// without a dialog behind (maintenance.go).
 	g.userArrived()
+	stopTimerN := g.awaitNotify(publicID, d.ID.CallID, deadline, log)
 	go func() {
 		defer g.userQuit()
 		final, err := g.send(m, g.entryPoint())
 		if err == nil && final.StatusCode < 300 {
-			g.awaitNotify(publicID, d.ID.CallID, deadline, log)
 			return
 		}
+		stopTimerN()
 		if errors.Is(err, sip.ErrStackClosed) {
 			// The stop of this instance's stack is no answer of the home
 			// network, which may have made the subscription and send its
@@ -199,12 +200,15 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 	// The refresh is a user of the IP-SM-GW until it has its final
 	// response, as the first SUBSCRIBE is.
 	g.userArrived()
+	stopTimerN := g.awaitNotify(sub.PublicIdentity, callID, deadline, log)
 	go func() {
 		defer g.userQuit()
 		final, err := g.send(m, hop)
+		if err != nil || final.StatusCode >= 300 {
+			stopTimerN()
+		}
 		switch {
 		case err == nil && final.StatusCode < 300:
-			g.awaitNotify(sub.PublicIdentity, callID, deadline, log)
 			return
 		case final == nil || !sip.EndsSubscription(final.StatusCode):
 			// RFC 6665 4.1.2.2: the subscription stays until it expires.
@@ -258,12 +262,13 @@ func (g *IPSMGW) notifyDeadline() (time.Time, error) {
 	return time.Now().Add(64 * stack.Timers().T1), nil
 }
 
-// awaitNotify runs Timer N for a SUBSCRIBE that the S-CSCF has accepted
-// with a 2xx, until deadline, the NotifyDeadline that the SUBSCRIBE
-// wrote. A SUBSCRIBE that the S-CSCF refused needs none: no NOTIFY
-// follows a final response other than 2xx (RFC 6665 4.1.2.1), and the
-// refresh that fails keeps or ends the subscription by its response
-// (4.1.2.2).
+// awaitNotify starts Timer N for a SUBSCRIBE as it goes out, until
+// deadline, the NotifyDeadline that the SUBSCRIBE wrote (RFC 6665
+// 4.1.2.4). It starts with the SUBSCRIBE and not with its 2xx: the 2xx
+// may come late, and the transaction that carries it ends later still.
+// A SUBSCRIBE that gets a final response other than 2xx, or none, stops
+// the timer (stop): no NOTIFY follows (4.1.2.1), and the refresh that
+// fails keeps or ends the subscription by its response (4.1.2.2).
 //
 // The NOTIFY may reach another instance, so it is the Store that says
 // whether one came. The wait is no user of the IP-SM-GW
@@ -277,8 +282,8 @@ func (g *IPSMGW) notifyDeadline() (time.Time, error) {
 // the timer over would need an index of the deadlines in the Store for
 // the sweep of another instance to find, and the S-CSCF follows every 200
 // to a SUBSCRIBE with a NOTIFY at once.
-func (g *IPSMGW) awaitNotify(publicID, callID string, deadline time.Time, log *slog.Logger) {
-	time.AfterFunc(time.Until(deadline), func() { g.notifyWaitOver(publicID, callID, deadline, log) })
+func (g *IPSMGW) awaitNotify(publicID, callID string, deadline time.Time, log *slog.Logger) (stop func() bool) {
+	return time.AfterFunc(time.Until(deadline), func() { g.notifyWaitOver(publicID, callID, deadline, log) }).Stop
 }
 
 // notifyWaitOver is Timer N running out. Under the lock of the user,
