@@ -160,14 +160,14 @@ func (p *Phone) Serve(ctx context.Context) error {
 		case state := <-r.lost:
 			r.unregistered()
 			p.ue.Unbind()
-			// SIMPLIFIED: TS 24.229 5.1.1.7. With the event rejected, the
-			// UE should also release the dialogs of the identities it
-			// lost; here the call goes on until one side hangs up. Only
-			// removing the subscription from the HSS rejects a
-			// registration, and the call of the UE then ends when the
-			// controller hangs up.
+			// TS 24.229 5.1.1.7: with the event rejected the UE releases
+			// the dialogs of the identities it lost and does not register
+			// again. A call that rings is declined with 603 (Decline).
 			if state.Event != reginfo.Deactivated {
 				p.log.Info("deregistered by the network", "event", string(state.Event))
+				if state.Event == reginfo.Rejected {
+					p.releaseCalls()
+				}
 				continue
 			}
 			// TS 24.229 5.1.1.7: deactivated asks for a new initial
@@ -612,14 +612,27 @@ func (p *Phone) HangUpCall(callID string, reject int) error {
 	if c == nil {
 		return ErrNoCall
 	}
+	p.release(c, info, reject)
+	return nil
+}
+
+// release ends call c, whose state is info (HangUpCall).
+func (p *Phone) release(c *lineCall, info CallInfo, reject int) {
 	if info.Direction == Incoming && info.State == CallRinging {
 		if err := c.ic.Reject(reject); !errors.Is(err, sip.ErrAnswered) {
-			return nil
+			return
 		}
 		// The 200 went out first; the call is answered.
 	}
 	p.line.hangUp(c)
-	return nil
+}
+
+// releaseCalls ends every call on the line (TS 24.229 5.1.1.7), a call
+// that rings with 603 (Decline).
+func (p *Phone) releaseCalls() {
+	for _, c := range p.line.all() {
+		p.release(c, p.line.infoOf(c), 603)
+	}
 }
 
 // Hold puts the answered call in the foreground on hold (Session.Hold).
