@@ -3,6 +3,7 @@ package ue_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"os"
 	"slices"
@@ -149,6 +150,65 @@ func TestCalleeTakesOnlyAModeSetItsSpeechKeepsTo(t *testing.T) {
 			sent := drainFrames(t, caller, codecs[0])
 			if len(sent) == 0 || !slices.Equal(frameTypes(sent), tc.frames) {
 				t.Errorf("the callee sent %d frames of types %v, want frames of %v", len(sent), frameTypes(sent), tc.frames)
+			}
+		})
+	}
+}
+
+// TestCallerSendsNoFrameTheAnswersModeSetLeavesOut is RFC 4867 8.1, 8.2
+// and 8.3.1. The UE offers AMR-WB without a mode-set, so the callee may
+// set one in its answer, and that mode-set binds the UE too. The UE's
+// recording is AMR-WB 23.85 (mode 8), which it cannot encode in another
+// mode: under mode-set=8 every frame goes, and under mode-set=0,1,2 none
+// does.
+func TestCallerSendsNoFrameTheAnswersModeSetLeavesOut(t *testing.T) {
+	codecs, err := ue.CodecsNamed(ue.VoLTECodecNames)
+	if err != nil {
+		t.Fatal(err)
+	}
+	speech := ue.ToneSpeech(400 * time.Millisecond)
+	for _, tc := range []struct {
+		modeSet []amr.FrameType
+		frames  int
+	}{
+		{[]amr.FrameType{8}, len(speech.AMRWB)},
+		{[]amr.FrameType{0, 1, 2}, 0},
+	} {
+		t.Run(fmt.Sprint(tc.modeSet), func(t *testing.T) {
+			callee := listenRTP(t)
+			answered := make(chan sdp.Codec, 1)
+			u, ua, media, uri, _ := directCaller(t, func(ic *sip.IncomingCall, _ *ue.Media) {
+				offer, err := sdp.Parse(ic.Request.Body)
+				if err != nil {
+					ic.Reject(488)
+					return
+				}
+				answer, err := sdp.AudioAnswer(offer, "1", loopback(portOf(callee)), sdp.VoLTECodecs())
+				if err != nil {
+					ic.Reject(488)
+					return
+				}
+				m := answer.AudioMedia()
+				chosen := m.Codecs()
+				chosen[0] = chosen[0].WithModeSet(tc.modeSet)
+				m.SetCodecs(chosen)
+				answered <- chosen[0]
+				ic.Accept(sip.Body{Type: "application/sdp", Content: answer.Bytes()})
+			})
+			called := make(chan error, 1)
+			go func() {
+				called <- u.Call(context.Background(), ua, directRegistration, uri, media, speech, ue.CallOptions{Codecs: codecs})
+			}()
+			// The callee sends nothing, so the call ends with ErrNoMedia
+			// once the UE has played its speech.
+			wait(t, "the call", called)
+			codec := <-answered
+			if codec.Name != sdp.NameAMRWB {
+				t.Fatalf("the answer takes %s, want AMR-WB", codec.Rtpmap())
+			}
+			sent := drainFrames(t, callee, codec)
+			if len(sent) != tc.frames || slices.ContainsFunc(sent, func(f amr.Frame) bool { return !slices.Contains(tc.modeSet, f.Type) }) {
+				t.Errorf("the UE sent %d frames of types %v, want %d of types in %v", len(sent), frameTypes(sent), tc.frames, tc.modeSet)
 			}
 		})
 	}
