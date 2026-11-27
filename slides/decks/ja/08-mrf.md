@@ -428,7 +428,7 @@ steps:
 
 フィルタは `sip.r-uri contains "annc@"` と `sip.r-uri contains "conf="` です。
 
-> 手順書 [「AS が MRF に頼む方法。RFC 4240」](../../../docs/guide/ja/mrf.md#as-が-mrf-に頼む方法rfc-4240)。RFC 4240 3、5。
+> 手順書 [「RFC 4240 で AS が MRF に頼む」](../../../docs/guide/ja/mrf.md#rfc-4240-で-as-が-mrf-に頼む)。RFC 4240 3、5。
 
 ---
 
@@ -489,7 +489,7 @@ steps:
 
 フィルタは `sip.P-Early-Media` です。
 
-> 手順書 [「AS が MRF に頼む方法。RFC 4240」](../../../docs/guide/ja/mrf.md#as-が-mrf-に頼む方法rfc-4240)
+> 手順書 [「RFC 4240 で AS が MRF に頼む」](../../../docs/guide/ja/mrf.md#rfc-4240-で-as-が-mrf-に頼む)
 
 ---
 
@@ -676,7 +676,7 @@ steps:
 
 フィルタは `sdp.media_attr == "content:g.3gpp.cat"` です（RFC 4796）。
 
-> 手順書 [「CAT。着信側の利用者が選ぶ呼び出し音」](../../../docs/guide/ja/mrf.md#cat着信側の利用者が選ぶ呼び出し音)。TS 24.182 4.5.5.3.7 b 2。
+> 手順書 [「CAT（着信側の利用者が選ぶ呼び出し音）」](../../../docs/guide/ja/mrf.md#cat着信側の利用者が選ぶ呼び出し音)。TS 24.182 4.5.5.3.7 b 2。
 
 ---
 
@@ -693,7 +693,7 @@ steps:
 - なぜ見比べるのか。呼び出し音が増やすフレームと、ほかは何も変わらないことの、両方が分かるからです。
 - スクリプトは、UE 1 が受け取った最初の 1 秒を、MRFP が PCMU に符号化した `cat1.wav` と比べます。1 バイトも違いません。
 
-> 手順書 [「CAT。着信側の利用者が選ぶ呼び出し音」](../../../docs/guide/ja/mrf.md#cat着信側の利用者が選ぶ呼び出し音)
+> 手順書 [「CAT（着信側の利用者が選ぶ呼び出し音）」](../../../docs/guide/ja/mrf.md#cat着信側の利用者が選ぶ呼び出し音)
 
 ---
 

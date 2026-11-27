@@ -108,7 +108,7 @@ Route: <sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060;lr>,<sip:scscf.ims.mnc0
 
 今度は要求が戻ってきます。AS は自分の Route を取り除き、残りの Route に沿って新しい INVITE を送るので、INVITE は ODI を持って S-CSCF に届きます（TS 24.229 5.7.5.2.1 step 1、4）。S-CSCF は ODI を見て、一致した条件の次から処理を続けます。転送のあとのように Request-URI が変わっていれば、代わりに転送元の利用者の ORIGINATING_CDIV の条件を評価します（5.4.3.3 step 3）。
 
-## プロキシではなく B2BUA。1 つの通話に 3 つのダイアログ
+## プロキシではなく B2BUA（1 つの通話に 3 つのダイアログ）
 
 MMTel AS は routeing B2BUA として動きます（TS 24.229 5.7.5）。S-CSCF から届いた INVITE に UA として答え、受けた INVITE をもとに、自分の Call-ID を付けた新しい INVITE を送ります。どのサービスも変えないものはそのまま渡し、P-Charging-Vector の icid-value も残します。取り除くのは orig-ioi だけです（5.7.5.1）。TS 24.604 4.5.2.6.0 は、To を変えずに転送する AS ならプロキシとして動いてもよいとしています。この AS はどのサービスでも B2BUA として動きます。転送した通話がほかの場所で鳴っているあいだも、発信者のダイアログを持ち続けるためです。
 
@@ -129,7 +129,7 @@ MMTel AS は routeing B2BUA として動きます（TS 24.229 5.7.5）。S-CSCF 
 
 AS が送る INVITE は、その先で分かれる（フォークする）ことがあります。着信者の何台かの UE が、それぞれ自分の early dialog で答えるときです（RFC 3261 13.2.2.4）。AS は、発信者から見れば 1 つの UAS です。UAS は、1 つの要求へのすべての応答に、同じ To の tag を付けます（8.2.6.2）。そのため、向こう側の early dialog がいくつあっても、発信者と AS の early dialog は 1 つです。発信者は、そのダイアログで最初に届いたセッション記述を answer とし、あとのものは無視します（13.2.1）。そこで AS は、最初にセッション記述を送ってきたダイアログのものを渡し、ほかのダイアログの応答はセッション記述を外して渡します。ほかのダイアログの 200 も、SDP を外して発信者に届きます。ただし、信頼できる暫定応答が answer を運んでいなければ、2xx が answer を運ばなければなりません（13.2.1）。そのときの 200 には、最初のダイアログの answer をもう一度入れます。ここまでは、最初のダイアログが続いているあいだのことです。199（RFC 6228）か転送でそのダイアログが終わったあとは、発信者の offer への answer として次に届いたセッション記述を、そのまま発信者に渡します。プリコンディションを使う UAS は、発信者が資源を確保したと分かってから利用者を呼び出すので、発信者がその answer を受け取る必要があるためです（RFC 3312）。AS は、ダイアログごとに最後のセッション記述を覚えておきます。応答と UPDATE に入っていたものと、発信者の UPDATE と PRACK への答えに入っていたものです。そして、応えたダイアログのセッション記述で、発信者のメディアをそのダイアログに向けます。CAT があれば、トーンを止める UPDATE がこれを行います（[MRF の手順書](mrf.md)）。CAT が無ければ、発信者が 200 に ACK を返したあとで、AS は応えたダイアログのセッションを発信者に offer します。発信者が Allow に UPDATE を挙げていれば UPDATE で（RFC 3311）、挙げていなければ re-INVITE で送ります（RFC 3261 14.1）。この offer の `o=` 行は、発信者が持っているセッション記述のものと同じで、版の番号（version）だけを 1 上げます（RFC 3264 8）。この offer が発信者の offer と行き違うと、発信者は 491（Request Pending）で断ります。そのときは、RFC 3261 14.1 の時間だけ待ってから送り直します。offer の無い INVITE のあとでは、応えたダイアログの 200 が、その UAS の offer を運ぶことがあります。そのときは、AS の offer への発信者の answer を、ACK に入れてその UAS に送ります（13.2.2.4）。`internal/mmtel` の試験が、この場合を見せます（`TestForkBeyondTheAS`、`TestSessionOfTheBranchThatAnswered`、`TestSessionOfTheBranchThatAnsweredAfterGlare`、`TestOfferOfTheBranchThatAnswered`、`TestToneOfAForkedCall`）。このプロジェクトのノードは、どれも INVITE をフォークしません。
 
-## Ut。XCAP でサービスを設定する
+## Ut（XCAP でサービスを設定する）
 
 ### 文書
 
@@ -143,7 +143,7 @@ http://xcap.ims.mnc001.mcc001.3gppnetwork.org/simservs.ngn.etsi.org/users/sip:+1
 
 `http://xcap.<ホームドメイン>` は、設定が無いときに UE が作る XCAP Root URI です（TS 23.003 13.9.1.2）。利用者の部分は利用者の公開ユーザー識別子（XUI）です。`hss.yaml` が用意する文書には、IR.92 が求めるサービスがすべて入っています。CDIV と CB の規則は `<rule-deactivated/>` を付けて止めた状態で、転送先を空にして入れてあります。UE は規則を足すのではなく、規則を変えてサービスを有効にします（GSMA IR.92 2.3.2 Note 3）。
 
-### 1 回の変更。CFU を有効にする
+### CFU を有効にする変更
 
 `ue xcap set cfu on tel:+12025550103` は次の要求を送ります。
 
@@ -235,7 +235,7 @@ UE 1 は `"msg":"call progress","status":181` を、続いて `"msg":"call answe
 5. **UE 2 の S-CSCF が、今度は `sescase=term` で INVITE をもう一度 AS に送り**（5.4.3.3 step 4）、AS がダイアログ C3 を送り返します。そのあとは [通話の手順書](call.md) のとおりに進みます。
 6. **200 には応答した相手が入っています。** UE 2 の P-CSCF は UE 2 の応答の P-Asserted-Identity に INVITE の P-Called-Party-ID を入れ（TS 24.229 5.2.6.4.4 step 1）、UE 1 がそれを受け取ります。これが TIP で、どの利用者も既定で持っています（TS 24.608 4.5.2.4）。
 
-## OIR。発信者が識別子を隠す
+## OIR（発信者が識別子を隠す）
 
 UE 1 は OIR の既定を非通知にしてから（`ue xcap oir restricted`。`simservs/originating-identity-presentation-restriction/default-behaviour` を PUT します）発信します。hss.yaml の OIR は一時的なモードです。既定は利用者が選び、UE は `Privacy: none` を付ければ、その通話だけ識別子を通知できます（TS 24.607 4.5.2.4）。
 
@@ -245,7 +245,7 @@ UE 1 は OIR の既定を非通知にしてから（`ue xcap oir restricted`。`
 
 UE 2 に届く INVITE は、匿名の From と `Privacy: id` を持ち、UE 1 を示すものは何も入っていません。TIR はこの逆向きで同じように働きます。UE 2 の AS が UE 2 の応答の Privacy に `id` を入れ（TS 24.608 4.5.2.9）、UE 1 の P-CSCF が応答を UE 1 に送る前に P-Asserted-Identity を取り除きます（RFC 3325 7）。
 
-## CFU。すべての着信を転送する
+## CFU（すべての着信を転送する）
 
 UE 2 は上の手順で Ut から CFU を UE 3 に設定し、登録したままにしておきます。UE 1 が UE 2 に発信します。
 
@@ -283,11 +283,11 @@ UE 1  P-CSCF S-CSCF  MMTel AS(UE 1)  I-CSCF  MMTel AS(UE 2)        UE 3
 
 AS は 1 つの通話の転送を、hss.yaml の事業者の設定どおり 5 回までにします。回数は History-Info のうち理由の付いた項目で数えます。それを超えると、`Warning: 399 ... "Too many diversions appeared"` を付けた 480 を返します（TS 24.604 4.5.2.6.1）。
 
-## CFB。着信者が話し中
+## CFB（着信者が話し中）
 
 UE 2 はダイアログ C3 の INVITE に **486 Busy Here** を返します。UE 2 の AS はそれに ACK を返し、UE 1 に 181 を送って、`cause=486` で転送します。History-Info の UE 2 の項目には、応答の Reason が `Reason=SIP%3Bcause%3D486...` として付きます（TS 24.604 4.5.2.6.2.2 b、4.5.2.6.3）。
 
-## CFNR。誰も応答しない
+## CFNR（誰も応答しない）
 
 UE 2 は CFNR を UE 3 に設定し、無応答のタイマーを 5 秒にしてから、応答せずに鳴り続けます。これはスクリプトを 1 回動かしたときのシーケンス図です。ダイアログには現れた順に C1 から C6 の番号を付けています。
 
@@ -328,7 +328,7 @@ UE 2 は CFNR を UE 3 に設定し、無応答のタイマーを 5 秒にして
 
 UE 2 が Q.850 の cause 19（利用者が応答しない）の Reason を付けた 480 を返したときも、AS は無応答の時間が終わったものとして扱います（4.5.2.6.6）。
 
-## CFNL。着信者が登録していない
+## CFNL（着信者が登録していない）
 
 UE 2 は CFNL を UE 3 に設定し、登録していません。AS に届くまでの流れは、未登録の状態のサービスを持つ着信者への通話の流れです。
 

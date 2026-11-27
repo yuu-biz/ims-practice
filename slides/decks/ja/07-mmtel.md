@@ -197,7 +197,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 - 途中で文書が変わっていれば、If-Match が合わず、AS は PUR を送らずに 412 を返します。ETag は、HSS が更新のたびに確かめる Sequence Number です。読んでから PUR までの間にほかの書き込みが入ると、HSS が DIAMETER_ERROR_TRANSPARENT_DATA_OUT_OF_SYNC で PUR を断り、AS はやはり 412 を返します。
 - フィルタは `http && ip.addr == 172.28.0.75` です。`http.www_authenticate` でチャレンジを、`http.request.method == "PUT"` で変更を探します。PUT の URI とボディの全体は手順書にあります。
 
-> 手順書 [「1 回の変更。CFU を有効にする」](../../../docs/guide/ja/mmtel.md#1-回の変更cfu-を有効にする)。RFC 7616 3.3。TS 24.623 5.2.3.2.1。RFC 4825 6、7.11。TS 29.328 7.6.1、6.1.2.1。
+> 手順書 [「CFU を有効にする変更」](../../../docs/guide/ja/mmtel.md#cfu-を有効にする変更)。RFC 7616 3.3。TS 24.623 5.2.3.2.1。RFC 4825 6、7.11。TS 29.328 7.6.1、6.1.2.1。
 
 ---
 
@@ -298,7 +298,7 @@ docker compose run --rm ue call tel:+12025550102
 - 網の中では、識別子は確かめられたまま残ります。隠すのは、信頼の範囲の外にある UE に対してだけです。OIR は一時モードなので、UE は `Privacy: none` で 1 回だけ番号を通知できます。
 - TIR は同じしくみの逆向きです。UE 2 の AS が応答の Privacy に `id` を入れ、UE 1 の P-CSCF が P-Asserted-Identity を取り除きます（TS 24.608 4.5.2.9、RFC 3325 7）。
 
-> 手順書 [「OIR。発信者が識別子を隠す」](../../../docs/guide/ja/mmtel.md#oir発信者が識別子を隠す)。TS 24.607 4.5.2.4、4.5.2.9。RFC 3323 4.1.1.3。TS 24.229 5.4.3.3 step 12、4.4.2。RFC 3325。
+> 手順書 [「OIR（発信者が識別子を隠す）」](../../../docs/guide/ja/mmtel.md#oir発信者が識別子を隠す)。TS 24.607 4.5.2.4、4.5.2.9。RFC 3323 4.1.1.3。TS 24.229 5.4.3.3 step 12、4.4.2。RFC 3325。
 
 ---
 
@@ -318,7 +318,7 @@ docker compose run --rm ue call tel:+12025550102
 
 フィルタは `sip.History-Info`、`sip.r-uri contains "cause="`、`sip.Status-Code == 181` です。
 
-> 手順書 [「CFU。すべての着信を転送する」](../../../docs/guide/ja/mmtel.md#cfuすべての着信を転送する)。TS 24.604 4.5.2.6.2、4.5.2.6.3、4.5.2.6.4、4.5.2.6.1。RFC 4458。RFC 7044 10.3。TS 24.229 5.4.3.3 step 3。
+> 手順書 [「CFU（すべての着信を転送する）」](../../../docs/guide/ja/mmtel.md#cfuすべての着信を転送する)。TS 24.604 4.5.2.6.2、4.5.2.6.3、4.5.2.6.4、4.5.2.6.1。RFC 4458。RFC 7044 10.3。TS 24.229 5.4.3.3 step 3。
 
 ---
 
@@ -355,7 +355,7 @@ docker compose run --rm ue call tel:+12025550102
 
 フィルタは `diameter.Experimental-Result-Code == 2003` と `sip.P-Served-User contains "regstate=unreg"` です。
 
-> 手順書 [「CFNL。着信者が登録していない」](../../../docs/guide/ja/mmtel.md#cfnl着信者が登録していない)。TS 29.228 6.1.4.1 step 3、6.7、6.1.2.1。TS 24.229 5.4.3.3。TS 24.604 4.5.2.6.2、4.6.7。
+> 手順書 [「CFNL（着信者が登録していない）」](../../../docs/guide/ja/mmtel.md#cfnl着信者が登録していない)。TS 29.228 6.1.4.1 step 3、6.7、6.1.2.1。TS 24.229 5.4.3.3。TS 24.604 4.5.2.6.2、4.6.7。
 
 ---
 

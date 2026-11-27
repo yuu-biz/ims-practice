@@ -41,7 +41,7 @@
 
 volte10 と volte12 は `compose.yaml` のプロファイル `volte` のサービスです。鍵は `deploy/compose/hss.yaml` にあり、`deploy/compose/epc.yaml` が加入者ごとにコンテナのアドレスを割り当てています。
 
-## アクセス網。EPC スタブ
+## アクセス網（EPC スタブ）
 
 ### スタブが省くこと
 
