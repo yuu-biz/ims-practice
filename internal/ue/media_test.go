@@ -501,3 +501,74 @@ func TestMediaEndsEventWhenTelephoneEventGoesAway(t *testing.T) {
 	a.SetFlow(ue.Flow{Send: true, Receive: true})
 	wantOnlyAudioFrom(t, peer, events, 10)
 }
+
+// TestMediaSendsOnlyEventsThePeerListed is RFC 4733 2.5.1.1: the sender
+// restricts itself to the events of the receiver's fmtp. A digit the peer
+// did not list is refused before anything is queued, so the digits before
+// it do not go out either.
+func TestMediaSendsOnlyEventsThePeerListed(t *testing.T) {
+	events := sdp.Codec{PayloadType: 101, Name: sdp.NameTelephoneEvent, ClockRate: 8000, Fmtp: "0-9"}
+	a, b := between(t, pcmu, &events)
+	digits := make(chan rune, 8)
+	b.OnDigit(func(d rune) { digits <- d })
+	if err := a.Start(ue.ToneSpeech(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	for _, refused := range []string{"#", "1#", "*"} {
+		if err := a.SendDTMF(refused); !errors.Is(err, ue.ErrEventNotAgreed) {
+			t.Errorf("SendDTMF(%q) with events 0-9: %v, want ErrEventNotAgreed", refused, err)
+		}
+	}
+	if err := a.SendDTMF("09"); err != nil {
+		t.Fatal(err)
+	}
+	var got []rune
+	for range 2 {
+		select {
+		case d := <-digits:
+			got = append(got, d)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("got %q, want 09", string(got))
+		}
+	}
+	// Nothing else follows: the refused digits were never queued.
+	select {
+	case d := <-digits:
+		t.Errorf("the digit %q went out as well", d)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if sent, _ := a.DTMF(); string(got) != "09" || sent != "09" {
+		t.Errorf("peer heard %q; a sent %q; want 09", string(got), sent)
+	}
+}
+
+// TestMediaChecksDTMFAgainstTheEventList covers a list of ranges and
+// single numbers, and the list left out, which means 0-15 (RFC 4733
+// 7.1.1). "#" is event 11 and "D" is event 15.
+func TestMediaChecksDTMFAgainstTheEventList(t *testing.T) {
+	for _, tc := range []struct {
+		fmtp         string
+		allowed, not string
+	}{
+		{"0-5,11", "05#", "6*A"},
+		{"11,0-5", "#5", "6"},
+		{"15", "D", "0#"},
+		{"", "0123456789*#ABCD", ""},
+	} {
+		events := sdp.Codec{PayloadType: 101, Name: sdp.NameTelephoneEvent, ClockRate: 8000, Fmtp: tc.fmtp}
+		a := listenMedia(t)
+		if err := a.SetStream(ue.Stream{Remote: loopback(a.Port()), Codec: pcmu, Events: &events}); err != nil {
+			t.Fatal(err)
+		}
+		for _, d := range tc.allowed {
+			if err := a.SendDTMF(string(d)); err != nil {
+				t.Errorf("fmtp %q: SendDTMF(%q): %v", tc.fmtp, d, err)
+			}
+		}
+		for _, d := range tc.not {
+			if err := a.SendDTMF(string(d)); !errors.Is(err, ue.ErrEventNotAgreed) {
+				t.Errorf("fmtp %q: SendDTMF(%q): %v, want ErrEventNotAgreed", tc.fmtp, d, err)
+			}
+		}
+	}
+}
