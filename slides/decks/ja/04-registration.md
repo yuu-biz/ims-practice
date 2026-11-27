@@ -340,13 +340,15 @@ events:
     from: scscf
     to: pcscf
     proto: SIP
+    fields:
+      - Route: P-CSCF。SUBSCRIBE の Record-Route から作られた
   - id: unotify-p-ue
     msg: NOTIFY
     from: pcscf
     to: ue
     proto: SIP
     fields:
-      - Route: P-CSCF。SUBSCRIBE の Record-Route から作られた
+      - Record-Route: P-CSCF が付ける。UE はこれで購読の経路を作る
   # 第三者 REGISTER（手順 15 から 18）
   - id: tp-register
     msg: REGISTER
@@ -638,7 +640,7 @@ steps:
       HSS は 10、I-CSCF は 20、S-CSCF は 30、P-CSCF は 40 です。
 ```
 
-- UE は SIM カードの無いソフトフォンです。識別子は IMC に入っているのと同じように設定で与えられるので（TS 24.229 5.1.1.1B.1）、登録した公開の識別子をほかのリクエストでも使います。IMSI から作った識別子と同じ形ですが、設定で与えたもので、規制されていません。VoLTE の端末は、代わりに規制された一時的な識別子で登録します。VoLTE の回で見ます。
+- UE は SIM カードの無いソフトフォンです。識別子は IMC に入っているのと同じように設定で与えられるので（TS 24.229 5.1.1.1B.1）、登録した公開の識別子をほかのリクエストでも使います。この識別子は利用者の番号の SIP URI で、規制されていません。VoLTE の端末は、代わりに規制された一時的な識別子で登録します。VoLTE の回で見ます。
 
 | ノード | アドレス | 登録での役割 |
 | --- | --- | --- |
@@ -875,20 +877,20 @@ steps:
     only: [reg1-i-s, mar]
     zoom: [icscf, hss, scscf]
     text: 方式は `Unknown` です。REGISTER に integrity-protected が無いので、選択を HSS に任せます。
-  - id: maa
-    title: HSS が SIP Digest の情報を返す（MAA）
-    show: [maa]
-    zoom: [icscf, hss, scscf]
-    text: H(A1) はユーザー名、レルム、パスワードのハッシュです。S-CSCF はこれだけで UE の答えを確かめられます。
   - id: assign
     title: HSS が担当の S-CSCF を記録する
     show: [hss-assign]
     focus: [hss]
     zoom: [icscf, hss, scscf]
-    checkpoint: true
     text: |
-      この S-CSCF を担当として覚え、認証中の印を付けます。
+      MAR を受けた HSS は、この S-CSCF を担当として覚え、認証中の印を付けます。
       まだ登録は終わっていません。この記録は 2 回目の UAR で使われます。
+  - id: maa
+    title: HSS が SIP Digest の情報を返す（MAA）
+    show: [maa]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: H(A1) はユーザー名、レルム、パスワードのハッシュです。S-CSCF はこれだけで UE の答えを確かめられます。
   - id: nonce
     title: S-CSCF が問いを作る
     show: [scscf-challenge]
@@ -1050,6 +1052,7 @@ steps:
     only: [mt-s-p, mt-p-ue]
     active: mt-p-ue
     focus: [scscf, pcscf, ue]
+    checkpoint: true
     text: |
       S-CSCF は UE あての要求を Path に沿って、その UE の P-CSCF 経由で送ります。
       着信の INVITE がこの経路を通ります。
@@ -1146,9 +1149,10 @@ steps:
     title: NOTIFY が P-CSCF を通って UE に届く
     show: [unotify-s-p, unotify-p-ue]
     active: unotify-p-ue
+    detail: [unotify-s-p, unotify-p-ue]
     text: |
-      NOTIFY の Route には P-CSCF が入っています。
-      UE は購読の経路を NOTIFY から作るので、後の SUBSCRIBE も P-CSCF を通ります。
+      S-CSCF からの NOTIFY の Route には P-CSCF が入っています。P-CSCF は NOTIFY に自分の Record-Route を付けます。
+      UE は購読の経路をこの NOTIFY から作るので、後の SUBSCRIBE も P-CSCF を通ります。
 ```
 
 | 見るもの | 見どころ |
