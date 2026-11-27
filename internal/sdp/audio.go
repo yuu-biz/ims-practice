@@ -55,7 +55,7 @@ func AudioOffer(sessionID string, addr netip.AddrPort, codecs []Codec) (Session,
 	if err := m.setASBandwidth(Ptime); err != nil {
 		return Session{}, err
 	}
-	m.setRTCPBandwidth(nil)
+	m.setRTCPBandwidth(nil, Media{})
 	m.Attributes = append(m.Attributes,
 		Attribute{Name: "ptime", Value: strconv.Itoa(Ptime)},
 		Attribute{Name: "maxptime", Value: strconv.Itoa(MaxPtime)},
@@ -96,7 +96,7 @@ func AudioAnswer(offer Session, sessionID string, addr netip.AddrPort, supported
 				if err := reply.setASBandwidth(Ptime); err != nil {
 					return Session{}, err
 				}
-				reply.setRTCPBandwidth(&m)
+				reply.setRTCPBandwidth(&offer, m)
 				reply.Attributes = append(reply.Attributes,
 					Attribute{Name: "ptime", Value: strconv.Itoa(Ptime)},
 					Attribute{Name: "maxptime", Value: strconv.Itoa(MaxPtime)},

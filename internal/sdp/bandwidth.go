@@ -106,15 +106,17 @@ func (s Session) RTCPBandwidth(m Media) (rs, rr int) {
 	return rs, rr
 }
 
-// setRTCPBandwidth writes this side's b=RS and b=RR, answering zero with
-// zero (IR.92 3.2.4).
-func (m *Media) setRTCPBandwidth(offer *Media) {
+// setRTCPBandwidth writes this side's b=RS and b=RR in the media
+// section. An answer to offered, a stream of offer, answers zero with
+// zero (IR.92 3.2.4): the zero that holds for the stream, its own line
+// or else one of the session (RFC 3556 4). An offer passes nil.
+func (m *Media) setRTCPBandwidth(offer *Session, offered Media) {
 	rs, rr := RTCPSenders, RTCPReceivers
 	if offer != nil {
-		if v, ok := offer.Bandwidth("RS"); ok && v == 0 {
+		if v, ok := offer.Bandwidth(offered, "RS"); ok && v == 0 {
 			rs = 0
 		}
-		if v, ok := offer.Bandwidth("RR"); ok && v == 0 {
+		if v, ok := offer.Bandwidth(offered, "RR"); ok && v == 0 {
 			rr = 0
 		}
 	}

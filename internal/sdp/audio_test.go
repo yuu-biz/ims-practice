@@ -156,6 +156,28 @@ func TestAnswerRTCPOff(t *testing.T) {
 	}
 }
 
+// TestAnswerRTCPOffAtSessionLevel answers a zero that holds for the
+// stream from before the first m= line with zero too (IR.92 3.2.4), and
+// a line of the stream's own over the session's (RFC 3556 4).
+func TestAnswerRTCPOffAtSessionLevel(t *testing.T) {
+	const head = "v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=-\r\nc=IN IP4 192.0.2.30\r\n"
+	for _, tc := range []struct {
+		name, session, media string
+		rs, rr               int
+	}{
+		{"both 0 at the session", "b=RS:0\r\nb=RR:0\r\n", "", 0, 0},
+		{"RR 0 at the session, RS 0 at the media", "b=RR:0\r\n", "b=RS:0\r\n", 0, 0},
+		{"the media's RR over the session's 0", "b=RS:0\r\nb=RR:0\r\n", "b=RR:2000\r\n", 0, RTCPReceivers},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, m := answer(t, head+tc.session+"t=0 0\r\nm=audio 5004 RTP/AVP 0\r\n"+tc.media+"a=sendrecv\r\n")
+			if rs, rr := (Session{}).RTCPBandwidth(m); rs != tc.rs || rr != tc.rr {
+				t.Errorf("answer RS, RR = %d, %d; want %d, %d", rs, rr, tc.rs, tc.rr)
+			}
+		})
+	}
+}
+
 func TestAnswerRefusesWhatItCannotPack(t *testing.T) {
 	offer := "v=0\r\no=- 1 1 IN IP4 192.0.2.30\r\ns=-\r\nc=IN IP4 192.0.2.30\r\nt=0 0\r\n" +
 		"m=audio 5004 RTP/AVP 96 97\r\n" +
