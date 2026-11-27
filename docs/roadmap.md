@@ -312,7 +312,7 @@
 - 各段階の手順書とシーケンス図をスライドから参照する。
 - 信号の移動、ノードの判断、値の変化を、図の段階で見せる（[design/slides.md](design/slides.md)）。HTML で段階を進め、pptx にチェックポイントごとの静止のページを残す。
 
-今あるもの。Go、パッケージ構成、網の地図、キャプチャとラボ、登録、通話、SMS、付加サービス、MRF、VoLTE、2 つの網の相互接続のデッキが英語と日本語で `slides/decks/` にあり、CI の `slides` のジョブが HTML と pptx を作ります（[slides/README.ja.md](../slides/README.ja.md)）。登録のデッキは、シーン（ノードとイベントのモデルを段階で進める図）で書いてあります。ほかのデッキは文字のページで、シーンへの書き直しが残っています。調査は [slides.md](background/slides.md) にあります。
+今あるもの。Go、パッケージ構成、網の地図、キャプチャとラボ、登録、通話、SMS、付加サービス、MRF、VoLTE、2 つの網の相互接続のデッキが英語と日本語で `slides/decks/` にあり、CI の `slides` のジョブが HTML と pptx を作ります（[slides/README.ja.md](../slides/README.ja.md)）。どのデッキも、関係、信号の移動、ノードの判断があるスライドは、シーン（ノードとイベントのモデルを段階で進める図）で書いてあります。実習の手順、表示フィルタの一覧、演習と振り返りは、文字のページのままです。調査は [slides.md](background/slides.md) にあります。
 
 **完了条件.** CI でスライドの HTML と pptx が生成され、成果物として保存される。
 
