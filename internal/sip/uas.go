@@ -268,15 +268,48 @@ var ErrAnswered = errors.New("sip: the INVITE has its final response already")
 // headers go into the response, such as P-Early-Media, the Alert-Info
 // of a waiting call, or the Require of an extension that the body uses.
 func (c *IncomingCall) Progress(code int, body Body, headers ...HeaderField) error {
+	if err := progressCode(code); err != nil {
+		return err
+	}
+	c.answering.Lock()
+	defer c.answering.Unlock()
+	return c.progress(code, body, headers, c.provisionals.reliable)
+}
+
+// ProgressUnreliably sends a provisional response from 101 to 198 that
+// does not go reliably, although the INVITE offers 100rel: the caller
+// sends no PRACK for it, and a session description in it is neither an
+// offer nor an answer (RFC 3261 13.2.1). RFC 3262 3 leaves it to the
+// UAS which provisional responses it sends reliably.
+//
+// A B2BUA passes a provisional response of its outgoing leg on this way
+// when that one came without 100rel. The session description in it is
+// no answer there either, and a reliable copy would have the caller
+// take it for the answer and leave the answer in the 2xx unread (RFC
+// 3262 5).
+//
+// When the INVITE requires 100rel, the response goes reliably all the
+// same, as Progress sends it: the UAS must send every provisional
+// response but 100 reliably then (RFC 3262 3).
+func (c *IncomingCall) ProgressUnreliably(code int, body Body, headers ...HeaderField) error {
+	if err := progressCode(code); err != nil {
+		return err
+	}
+	c.answering.Lock()
+	defer c.answering.Unlock()
+	return c.progress(code, body, headers, c.Request.Requires(Option100rel))
+}
+
+// progressCode checks that code is a provisional response that Progress
+// can send.
+func progressCode(code int) error {
 	switch {
 	case code <= 100 || code >= 200:
 		return fmt.Errorf("sip: %d is not a provisional response that Progress can send", code)
 	case code == 199:
 		return errors.New("sip: a 199 ends the early dialog; EarlyDialogTerminated sends it")
 	}
-	c.answering.Lock()
-	defer c.answering.Unlock()
-	return c.progress(code, body, headers, c.provisionals.reliable)
+	return nil
 }
 
 // progress sends a provisional response, reliably or not, and waits for

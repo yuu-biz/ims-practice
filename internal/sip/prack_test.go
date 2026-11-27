@@ -185,6 +185,49 @@ func TestProvisionalResponsesAreUnreliableWithout100rel(t *testing.T) {
 	}
 }
 
+// RFC 3262 3 leaves it to the UAS which provisional responses to an
+// INVITE that offers 100rel it sends reliably. ProgressUnreliably sends
+// one that does not: it carries no Require and no RSeq, and returns
+// without a PRACK. An INVITE that requires 100rel gets it reliably all
+// the same, since every provisional response but 100 has to go reliably
+// then.
+func TestProgressUnreliablyToAnINVITEThatOffers100rel(t *testing.T) {
+	for _, tc := range []struct {
+		header   string
+		reliable bool
+	}{
+		{"Supported", false},
+		{"Require", true},
+	} {
+		t.Run(tc.header, func(t *testing.T) {
+			progress := make(chan error, 1)
+			calleeUA := newUA(t, testTimers, callee, func(c *IncomingCall) {
+				progress <- c.ProgressUnreliably(183, answer)
+			})
+			peer := rawSocket(t)
+			invite := rawINVITE(peer)
+			invite.Add(tc.header, Option100rel)
+			send(t, peer, invite, calleeUA.Stack())
+			prov := readSkippingTrying(t, peer)
+			if got := prov.Requires(Option100rel) && prov.Get("RSeq") != ""; prov.StatusCode != 183 || got != tc.reliable {
+				t.Fatalf("got %s with Require %q and RSeq %q, want a 183 that goes reliably %t",
+					startLine(prov), prov.Get("Require"), prov.Get("RSeq"), tc.reliable)
+			}
+			if tc.reliable {
+				send(t, peer, rawPRACK(t, peer, invite, prov, 2), calleeUA.Stack())
+			}
+			select {
+			case err := <-progress:
+				if err != nil {
+					t.Errorf("ProgressUnreliably: %v", err)
+				}
+			case <-time.After(2 * time.Second):
+				t.Fatal("ProgressUnreliably did not return")
+			}
+		})
+	}
+}
+
 // reliable is a reliable provisional response from a raw callee.
 func reliable(invite *Message, code int, rseq uint32, target string) *Message {
 	resp := NewResponse(invite, code, "callee")
