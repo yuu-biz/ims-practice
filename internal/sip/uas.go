@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"strconv"
-	"strings"
 	"sync"
 )
 
@@ -68,10 +67,7 @@ type IncomingCall struct {
 // 487; the UAC of this package sends none.
 func (ua *UA) receiveInvite(st *ServerTransaction) {
 	req := st.Request
-	if unknown := ua.unsupportedExtensions(req); len(unknown) > 0 {
-		resp := NewResponse(req, 420, NewTag())
-		resp.Add("Unsupported", strings.Join(unknown, ", "))
-		ua.respondOwn(st, resp)
+	if ua.refuseUnknownExtensions(st) {
 		return
 	}
 	if _, err := contactURI(req); err != nil {
