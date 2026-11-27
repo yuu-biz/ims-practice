@@ -118,6 +118,34 @@ func (c *rawINVITE) wantCallKept(t *testing.T, call Dialog) {
 	}
 }
 
+// inFork is a request within the other dialog, from the UE, or from the
+// callee of that dialog to the UE when toUE is set.
+func (c *rawINVITE) inFork(method sip.Method, toUE bool, cseq int) *sip.Message {
+	ue, fork := c.st.Request.Get("From"), c.st.Request.Get("To")+";tag=fork"
+	m := &sip.Message{Method: method, RequestURI: "sip:fork@" + c.far.LocalAddr().String()}
+	if toUE {
+		m.RequestURI, ue, fork = c.ueContact, fork, ue
+	}
+	m.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	m.Add("Max-Forwards", "70")
+	m.Add("From", ue)
+	m.Add("To", fork)
+	m.Add("Call-ID", c.st.Request.Get("Call-ID"))
+	m.Add("CSeq", (sip.CSeq{Number: uint32(cseq), Method: method}).String())
+	return m
+}
+
+// through sends m from the stack from to the P-CSCF and returns the
+// final response that comes back.
+func (c *rawINVITE) through(t *testing.T, from *sip.Stack, m *sip.Message) *sip.Message {
+	t.Helper()
+	ct, err := from.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: c.pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return final(t, ct.Responses(), 3*time.Second)
+}
+
 // TestA2xxOfAnotherForkLeavesTheCallAsItIs: the caller has the 200 of
 // the call, and the other dialog of the forked INVITE answers 200 too,
 // with an answer that the relay would take. The one relay context and
@@ -132,4 +160,58 @@ func TestA2xxOfAnotherForkLeavesTheCallAsItIs(t *testing.T) {
 	call := c.established(t)
 	c.answerFork(t)
 	c.wantCallKept(t, call)
+}
+
+// TestRequestOfAnotherForkLeavesTheCallAsItIs: once the caller has the
+// 200 of the call, a request within the other dialog of the forked
+// INVITE finds the Dialog of the call, as both have the tag of the
+// caller. It changes nothing of the call. A BYE goes on and its answer,
+// a 481 too, ends no more than that dialog (RFC 3261 15.1.1). An offer
+// cannot go through the relay context of the call without moving its
+// media, nor go on as it came past the relay, so the P-CSCF answers it
+// 500 (RFC 3261 21.5.1).
+func TestRequestOfAnotherForkLeavesTheCallAsItIs(t *testing.T) {
+	t.Run("BYE from the UE in an early dialog", func(t *testing.T) {
+		c := newRawINVITEWith(t, &fakePolicy{})
+		ringing := c.fork(180)
+		ringing.Remove("Content-Type")
+		ringing.Body = nil
+		c.st.Respond(ringing)
+		call := c.established(t)
+
+		// A caller may end an early dialog with a BYE (RFC 3261 15).
+		if r := c.through(t, c.ue, c.inFork(sip.BYE, false, 2)); r.StatusCode != 200 {
+			t.Fatalf("the BYE got %d, want the 200 of the far end", r.StatusCode)
+		}
+		c.wantCallKept(t, call)
+	})
+	t.Run("BYE to the UE, answered 481", func(t *testing.T) {
+		c := newRawINVITEWith(t, &fakePolicy{})
+		call := c.established(t)
+		c.answerFork(t)
+
+		// The callee of the other dialog hangs up as the P-CSCF ends that
+		// dialog, and the UE has no such dialog (RFC 3261 12.2.2).
+		c.ueAnswers.Store(481)
+		if r := c.through(t, c.far, c.inFork(sip.BYE, true, 1)); r.StatusCode != 481 {
+			t.Fatalf("the BYE got %d, want the 481 of the UE", r.StatusCode)
+		}
+		c.wantCallKept(t, call)
+	})
+	t.Run("UPDATE with an offer to the UE", func(t *testing.T) {
+		c := newRawINVITEWith(t, &fakePolicy{})
+		call := c.established(t)
+		c.answerFork(t)
+
+		c.ueAnswers.Store(481)
+		update := c.inFork(sip.UPDATE, true, 1)
+		update.Add("Contact", "<sip:fork@"+c.far.LocalAddr().String()+">")
+		update.Add("Content-Type", "application/sdp")
+		update.Body = sdp.Offer("8", moved).Bytes()
+		if r := c.through(t, c.far, update); r.StatusCode != 500 {
+			t.Errorf("the UPDATE got %d, want the 500 of the P-CSCF", r.StatusCode)
+		}
+		noRequest(t, "the UE", c.ueGot)
+		c.wantCallKept(t, call)
+	})
 }
