@@ -29,7 +29,7 @@ MRF は、IMS の中で自分からメディアを作るノードです（TS 23.
 
 MRFP は、P-CSCF のメディアゲートウェイ（agw ノード）と同じ中継の実装に、音声ガイダンスと混ぜ合わせの機能を加えたものです。
 
-## AS が MRF に頼む方法。RFC 4240
+## RFC 4240 で AS が MRF に頼む
 
 AS は、MRFC への INVITE の Request-URI の user part でサービスを指定します。形は RFC 4240 が決めています。
 
@@ -109,7 +109,7 @@ UE 1 は `ue xcap set baoc on` で発信を規制し、UE 2 に発信します�
 - **603 には Reason が付きます。** 発信者にはすでに early dialog があるので、断る理由をそこで伝えます（TS 24.628 4.2.4）。
 - INVITE が高信頼の暫定応答を受け付けない発信者や、プリコンディションを必須にした発信者には、すぐに 603 を返します。MRFC はプリコンディションの属性を書かないためです。
 
-## CAT。着信側の利用者が選ぶ呼び出し音
+## CAT（着信側の利用者が選ぶ呼び出し音）
 
 利用者の CAT は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここでは OAM が、`PUT /oam/v1/subscriptions/{秘密の識別子}/customized-alerting-tone` に `{"tone": "cat1", "active": true}` を送り、それを HSS へ渡して設定します。利用者が自分で設定する標準の手段はありません（4.8）。UE 2 の着信側の AS は、着信のたびにこの設定を Sh で読みます（Service-Indication が `Customized-Alerting-Tone` の UDR）。そして、UE 2 に INVITE を送る前に MRFC に呼び出し音を頼み、UE 2 が呼び出し中のあいだ UE 1 に流します（TS 24.182 4.5.5.3.7）。
 

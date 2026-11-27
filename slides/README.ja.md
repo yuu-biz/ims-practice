@@ -288,7 +288,7 @@ events:
 
 ---
 
-## 3 と 4。I-CSCF が HSS に尋ねる（UAR と UAA）
+## I-CSCF が UAR で HSS に尋ねる（3、4）
 
 ```ims-scene
 id: select

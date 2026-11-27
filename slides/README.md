@@ -288,7 +288,7 @@ events:
 
 ---
 
-## 3 and 4. The I-CSCF asks the HSS (UAR and UAA)
+## The I-CSCF asks the HSS with a UAR (3, 4)
 
 ```ims-scene
 id: select
