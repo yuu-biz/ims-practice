@@ -149,8 +149,14 @@ type Store interface {
 	// TakeUEContext returns the context of supi and removes it.
 	TakeUEContext(supi string) (UEContext, bool)
 
-	// PutPDUSession keeps s, in place of any session of the same address.
-	PutPDUSession(s PDUSession)
+	// PutPDUSessionIfRegistered keeps s, in place of any session of the
+	// same address, only while the UE of s.IMSI is registered, and
+	// otherwise returns ErrNotRegistered and keeps nothing. The check and
+	// the keeping are one step: a deregistration of the UE that
+	// completes between them would leave a PDU session that belongs to
+	// no registration. A store outside the process does both under the
+	// key of the subscriber, with no lock on all UEs.
+	PutPDUSessionIfRegistered(s PDUSession) error
 	PDUSession(addr netip.Addr) (PDUSession, bool)
 	// UpdatePDUSession runs change on the session of addr and keeps the
 	// result, as one step. change must not do I/O; when it fails,
@@ -206,11 +212,15 @@ func (s *MemoryStore) TakeUEContext(supi string) (UEContext, bool) {
 	return decode[UEContext](b), true
 }
 
-func (s *MemoryStore) PutPDUSession(p PDUSession) {
+func (s *MemoryStore) PutPDUSessionIfRegistered(p PDUSession) error {
 	b := encode(p)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.ueContexts[p.IMSI]; !ok {
+		return ErrNotRegistered
+	}
 	s.sessions[p.Address] = b
+	return nil
 }
 
 func (s *MemoryStore) PDUSession(addr netip.Addr) (PDUSession, bool) {
