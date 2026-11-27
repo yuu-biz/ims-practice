@@ -111,6 +111,46 @@ func TestOFRSentAgainToAnotherInstance(t *testing.T) {
 	}
 }
 
+// TestOFRSentAgainWhileTheFirstHasNoAnswer: a copy of an OFR waits for
+// the answer to the first copy no longer than its sender waits for an
+// answer at all, the Answer timer. The SC cannot tell then whether the
+// first instance took the short message, and refuses the copy.
+func TestOFRSentAgainWhileTheFirstHasNoAnswer(t *testing.T) {
+	n := newNetwork(t)
+	other := n.newSC()
+	ofr := n.ofr(hello(t, bob, 7))
+	hold := make(chan struct{})
+	n.hss.holdSRRs(hold)
+
+	first := make(chan sgd.MOForwardShortMessageAnswer, 1)
+	go func() { first <- n.sc.MOForwardShortMessage(context.Background(), ofr) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for n.hss.srrCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the first instance never asked the HSS about the recipient")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	start := time.Now()
+	copied := make(chan sgd.MOForwardShortMessageAnswer, 1)
+	go func() { copied <- other.MOForwardShortMessage(context.Background(), ofr) }()
+	select {
+	case a := <-copied:
+		if waited := time.Since(start); waited < answerTimer {
+			t.Errorf("the copy was answered after %v, before the Answer timer of %v ran out", waited, answerTimer)
+		}
+		if a.SMDeliveryFailureCause == nil || a.SMDeliveryFailureCause.SMEnumeratedDeliveryFailureCause != sgd.SCCongestion {
+			t.Errorf("OFA to the copy = %+v, want SC congestion", a)
+		}
+	case <-time.After(answerTimer + 2*time.Second):
+		t.Errorf("the copy got no answer within the Answer timer of %v", answerTimer)
+	}
+	n.hss.holdSRRs(nil)
+	close(hold)
+	<-first
+	waitDeliveries(t, n.sc)
+}
+
 func TestStatusReport(t *testing.T) {
 	n := newNetwork(t)
 	submit := hello(t, bob, 42)

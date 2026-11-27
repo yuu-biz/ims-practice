@@ -96,17 +96,9 @@ func (c *SMSC) MOForwardShortMessage(ctx context.Context, req sgd.MOForwardShort
 	return a
 }
 
-// Of a copy of an OFR, answerToCopy waits at most copyWait for the
-// answer of the instance that took the first copy, and looks for it
-// every copyPoll. The first instance asks the HSS once, which its
-// Diameter node bounds by the Answer timer, and calls the Store a few
-// times, each call bounded by the timeout of the store; copyWait is
-// longer than that. A sender gives up on its OFR after its own Answer
-// timer, so a longer wait reaches no one.
-const (
-	copyWait = 10 * time.Second
-	copyPoll = 50 * time.Millisecond
-)
+// copyPoll is how often a copy of an OFR looks for the answer of the
+// instance that took the first copy.
+const copyPoll = 50 * time.Millisecond
 
 // answerToCopy answers a copy of an OFR with what the instance that took
 // the first copy answered (RFC 6733 3), waiting for it while that
@@ -118,11 +110,18 @@ const (
 // short message did not get through, and the UE sends it again,
 // although the SC holds it.
 //
+// The copy waits no longer than Config.AnswerTimer. Its sender sent it
+// within that timer, which bounds all of the sender's attempts together
+// (diameter.PeerGroup), so less than that is left to the sender by the
+// time the copy is here, and an answer after it reaches no one. The wait
+// holds a user of the SC all the while (Answering), so a longer one
+// would only hold up the shut down of this instance.
+//
 // An instance that stopped before it answered leaves no answer. The SC
 // cannot tell then whether that instance took the short message, and
 // refuses the copy with SC congestion, as it does when the Store fails.
 func (c *SMSC) answerToCopy(ctx context.Context, request string, log *slog.Logger) sgd.MOForwardShortMessageAnswer {
-	deadline := time.Now().Add(copyWait)
+	deadline := time.Now().Add(c.cfg.AnswerTimer)
 	for {
 		a, ok, err := c.store.OFA(ctx, request, c.clock.Now())
 		switch {
@@ -133,7 +132,7 @@ func (c *SMSC) answerToCopy(ctx context.Context, request string, log *slog.Logge
 			return a
 		}
 		if !time.Now().Before(deadline) {
-			log.Warn("OFR sent again: refused, the first copy has no answer", "waited", copyWait)
+			log.Warn("OFR sent again: refused, the first copy has no answer", "waited", c.cfg.AnswerTimer)
 			return refusal(sgd.SCCongestion, sms.FCSSCSystemFailure, c.clock.Now())
 		}
 		select {
