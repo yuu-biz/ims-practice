@@ -477,3 +477,17 @@ func TestReliableResponseAfterAnUPDATEOfThePeerGetsItsPRACK(t *testing.T) {
 		t.Fatalf("ReInvite returned %v, %v; want the 200", r.resp, r.err)
 	}
 }
+
+// RFC 3261 13.2.2.4: the 2xx to a re-INVITE whose offer a reliable 183
+// answered carries no offer, so the UA sends its ACK at once, also while
+// an offer of the peer's UPDATE waits for the user's answer.
+func TestReINVITEAnsweredInAReliable183IsAcknowledgedWhileAnUPDATEWaits(t *testing.T) {
+	u := reInviteThenUPDATE(t)
+	if ack := acceptReInvite(t, u.p, u.reinvite, Body{}); len(ack.Body) > 0 {
+		t.Errorf("ACK carries %q, want no body", ack.Body)
+	}
+	if r := finalOf(t, u.done); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("ReInvite returned %v, %v; want the 200", r.resp, r.err)
+	}
+	u.acceptUPDATE(t)
+}

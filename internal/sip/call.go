@@ -387,11 +387,11 @@ func (d *CallDialog) offerEvent(e OfferEvent) error {
 
 // acknowledge is RFC 3261 13.2.2.4 for a 2xx to an INVITE of this UA
 // with the CSeq number seq. The ACK goes out at once, unless the 2xx
-// carried the offer: then it waits for the answer of the user (Ack).
-// c.mu is held.
-func (d *CallDialog) acknowledge(seq uint32) {
+// carried the offer (offered): then it waits for the answer of the
+// user (Ack). c.mu is held.
+func (d *CallDialog) acknowledge(seq uint32, offered bool) {
 	ack := d.dialog.newACK(seq)
-	if d.offer == OfferRemote {
+	if offered {
 		d.pendingACK = ack
 		return
 	}
