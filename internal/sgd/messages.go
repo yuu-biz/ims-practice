@@ -16,6 +16,12 @@ import (
 // parts of the RP-DATA that the UE sent (Table 6.2.1.1/1).
 type MOForwardShortMessageRequest struct {
 	diameter.Header
+	// EndToEndID is the End-to-End Identifier of the request as it
+	// arrived, which the parse function reads from the Diameter header.
+	// With Origin-Host it tells a copy that the sender transmitted again
+	// from a new request (diameter.DuplicateKey). Message does not write
+	// it: the peer that sends the request gives it one (RFC 6733 3).
+	EndToEndID uint32
 	// SCAddress is SM-RP-DA: the E.164 number of the SC that the UE put
 	// in RP-Destination Address, as digits only, such as 12025550100.
 	SCAddress string
@@ -62,7 +68,8 @@ func ParseMOForwardShortMessageRequest(m *diam.Message) (MOForwardShortMessageRe
 	if err := required("SC-Address", sc, "SM-RP-UI", string(raw.SMRPUI)); err != nil {
 		return MOForwardShortMessageRequest{}, fmt.Errorf("OFR: %w", err)
 	}
-	return MOForwardShortMessageRequest{Header: raw.Header, SCAddress: sc, UserIdentifier: user, SMRPUI: raw.SMRPUI}, nil
+	return MOForwardShortMessageRequest{Header: raw.Header, EndToEndID: m.Header.EndToEndID, SCAddress: sc,
+		UserIdentifier: user, SMRPUI: raw.SMRPUI}, nil
 }
 
 // MOForwardShortMessageAnswer is the OFA of TS 29.338 6.3.2.4 (Table
@@ -101,6 +108,12 @@ func ParseMOForwardShortMessageAnswer(m *diam.Message) (MOForwardShortMessageAns
 // DestinationHost names the serving node, as the SRA gave it (6.3.1.2).
 type MTForwardShortMessageRequest struct {
 	diameter.Header
+	// EndToEndID is the End-to-End Identifier of the request as it
+	// arrived, which the parse function reads from the Diameter header.
+	// With Origin-Host it tells a copy that the sender transmitted again
+	// from a new request (diameter.DuplicateKey). Message does not write
+	// it: the peer that sends the request gives it one (RFC 6733 3).
+	EndToEndID uint32
 	// UserName is SM-RP-DA: the IMSI of the recipient. Towards an
 	// IP-SM-GW it is the MT Correlation ID that the IP-SM-GW gave in
 	// place of the IMSI in the SRA (TS 23.204 6.4 steps 3c and 4).
@@ -159,6 +172,7 @@ func ParseMTForwardShortMessageRequest(m *diam.Message) (MTForwardShortMessageRe
 	}
 	return MTForwardShortMessageRequest{
 		Header:            raw.Header,
+		EndToEndID:        m.Header.EndToEndID,
 		UserName:          raw.UserName,
 		SCAddress:         sc,
 		SMRPUI:            raw.SMRPUI,

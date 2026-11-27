@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )
 
@@ -107,4 +108,19 @@ type Store interface {
 	// Alert makes destination due at now, if it has a queue. It reports
 	// whether it had one.
 	Alert(ctx context.Context, destination string, now time.Time) (bool, error)
+
+	// BeginOFR records that an instance has taken the OFR that request
+	// names (diameter.DuplicateKey), and keeps the record until expires.
+	// It reports false, and changes nothing, when a record of request is
+	// there at now already: the OFR is a copy of one the SC has seen.
+	// Of several instances that begin the same request at once, one
+	// gets true.
+	BeginOFR(ctx context.Context, request string, now, expires time.Time) (bool, error)
+	// PutOFA keeps the answer to the OFR that request names in its
+	// record, until expires.
+	PutOFA(ctx context.Context, request string, a sgd.MOForwardShortMessageAnswer, expires time.Time) error
+	// OFA returns the answer to the OFR that request names, and whether
+	// the record holds one at now. It holds none while the instance that
+	// began the request has not answered it yet.
+	OFA(ctx context.Context, request string, now time.Time) (sgd.MOForwardShortMessageAnswer, bool, error)
 }

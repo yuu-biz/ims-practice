@@ -86,6 +86,10 @@ func TestMOForwardShortMessageRoundTrip(t *testing.T) {
 		h.CommandFlags != diam.RequestFlag|diam.ProxiableFlag {
 		t.Errorf("OFR header = %+v", h)
 	}
+	// The peer that sends the request gives it its End-to-End
+	// Identifier, which the receiver reads back.
+	req.Header.EndToEndID = 0x5eed
+	ofr.EndToEndID = 0x5eed
 	got, err := ParseMOForwardShortMessageRequest(req)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +132,9 @@ func TestMOForwardShortMessageUserIdentifier(t *testing.T) {
 			UserIdentifier: user,
 			SMRPUI:         mustHex(t, smsSubmit),
 		}
-		got, err := ParseMOForwardShortMessageRequest(wire(t, ofr.Message()))
+		m := ofr.Message()
+		ofr.EndToEndID = m.Header.EndToEndID
+		got, err := ParseMOForwardShortMessageRequest(wire(t, m))
 		if err != nil || !reflect.DeepEqual(got, ofr) {
 			t.Errorf("got %+v, %v\nwant %+v", got, err, ofr)
 		}
@@ -156,6 +162,8 @@ func TestMTForwardShortMessageRoundTrip(t *testing.T) {
 			h.CommandFlags != diam.RequestFlag|diam.ProxiableFlag {
 			t.Errorf("TFR header = %+v", h)
 		}
+		req.Header.EndToEndID = 0x5eed
+		tfr.EndToEndID = 0x5eed
 		got, err := ParseMTForwardShortMessageRequest(req)
 		if err != nil {
 			t.Fatal(err)

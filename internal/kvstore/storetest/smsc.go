@@ -3,10 +3,14 @@ package storetest
 import (
 	"context"
 	"errors"
+	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 	"github.com/yuu-biz/ims-practice/internal/smsc"
 )
@@ -21,6 +25,8 @@ func SMSC(t *testing.T, newPair func(t *testing.T) (smsc.Store, smsc.Store)) {
 		{"Alert", smscAlert},
 		{"ServiceCentreTimeStamp", smscServiceCentreTimeStamp},
 		{"OneLeasePerDestination", smscOneLeasePerDestination},
+		{"OFRIsBegunOnce", smscOFRBegunOnce},
+		{"OFAReachesTheCopyOfTheOFR", smscOFA},
 	})
 }
 
@@ -359,5 +365,82 @@ func smscOneLeasePerDestination(t *testing.T, a, b smsc.Store) {
 		if n != 1 {
 			t.Errorf("%s was claimed %d times", destination, n)
 		}
+	}
+}
+
+func beginOFR(t *testing.T, s smsc.Store, request string, now, expires time.Time) bool {
+	t.Helper()
+	first, err := s.BeginOFR(context.Background(), request, now, expires)
+	if err != nil {
+		t.Errorf("BeginOFR(%s): %v", request, err)
+	}
+	return first
+}
+
+func ofa(t *testing.T, s smsc.Store, request string, now time.Time) (sgd.MOForwardShortMessageAnswer, bool) {
+	t.Helper()
+	a, ok, err := s.OFA(context.Background(), request, now)
+	if err != nil {
+		t.Errorf("OFA(%s): %v", request, err)
+	}
+	return a, ok
+}
+
+// smscOFRBegunOnce: of the instances that begin one OFR at once, one
+// takes it, and the rest find it begun. The record goes when it
+// expires, and the same request is a new one after that.
+func smscOFRBegunOnce(t *testing.T, a, b smsc.Store) {
+	now := smscNow()
+	var first atomic.Int32
+	parallel(10, func(i int) {
+		s := a
+		if i%2 == 1 {
+			s = b
+		}
+		if beginOFR(t, s, "mme;1", now, now.Add(time.Hour)) {
+			first.Add(1)
+		}
+	})
+	if got := first.Load(); got != 1 {
+		t.Errorf("%d instances began the OFR, want 1", got)
+	}
+	if !beginOFR(t, b, "mme;2", now, now.Add(time.Hour)) {
+		t.Error("BeginOFR of another request found it begun")
+	}
+
+	now = time.Now()
+	if !beginOFR(t, a, "mme;3", now, now.Add(short)) {
+		t.Fatal("BeginOFR of a new request found it begun")
+	}
+	waitOut()
+	if now := time.Now(); !beginOFR(t, b, "mme;3", now, now.Add(time.Hour)) {
+		t.Error("BeginOFR after the record expired found it begun")
+	}
+}
+
+// smscOFA: the answer that the instance which took an OFR puts in its
+// record reaches the instance that the copy of the OFR came to.
+func smscOFA(t *testing.T, a, b smsc.Store) {
+	now := smscNow()
+	beginOFR(t, a, "mme;1", now, now.Add(time.Hour))
+	if got, ok := ofa(t, b, "mme;1", now); ok {
+		t.Errorf("OFA before the first instance answered = %+v", got)
+	}
+	want := sgd.MOForwardShortMessageAnswer{
+		Result:                 diameter.Experimental(sgd.DiameterErrorSMDeliveryFailure),
+		SMDeliveryFailureCause: &sgd.SMDeliveryFailureCause{SMEnumeratedDeliveryFailureCause: sgd.SCCongestion},
+		SMRPUI:                 []byte{0x01, 0xc2},
+	}
+	if err := a.PutOFA(context.Background(), "mme;1", want, now.Add(time.Hour)); err != nil {
+		t.Fatalf("PutOFA: %v", err)
+	}
+	if got, ok := ofa(t, b, "mme;1", now); !ok || !reflect.DeepEqual(got, want) {
+		t.Errorf("OFA = %+v, %v; want %+v", got, ok, want)
+	}
+	if beginOFR(t, b, "mme;1", now, now.Add(time.Hour)) {
+		t.Error("BeginOFR of an OFR that was answered took it again")
+	}
+	if got, ok := ofa(t, b, "mme;2", now); ok {
+		t.Errorf("OFA of a request no instance began = %+v", got)
 	}
 }

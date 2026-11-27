@@ -62,19 +62,91 @@ const (
 // after a lost RP-ACK may therefore arrive twice. No UE of this project
 // sets TP-RD or a replace type.
 //
-// SIMPLIFIED: RFC 6733 3 (End-to-End Identifier) and Appendix C. The SC
-// detects no duplicate OFR. A serving node whose OFR got no answer in
-// time sends it again to another instance of the SC, with the T flag
-// set, and if the first instance took it all the same, both hold the
-// short message and the recipient gets it twice. The cache of requests
-// already seen would have to be shared by every instance, as the short
-// messages are, and find the first copy also when it arrives after the
-// repeat.
+// A serving node whose OFR got no answer in time sends it again, with
+// the same Origin-Host and End-to-End Identifier and the T flag set, and
+// the copy may reach another instance of the SC than the first one did
+// (RFC 6733 3, 5.5.4). The first instance may have taken the short
+// message all the same. RFC 6733 3 has a duplicate get the answer of the
+// original and change nothing that the original set, so the instance
+// that begins an OFR first leaves a record of it in the Store, which
+// every instance shares, and puts its answer there once it has one. A
+// copy takes no short message, and is answered from the record
+// (answerToCopy). Every OFR is checked, whether it has the T flag or
+// not, since the first copy may arrive after the second (RFC 6733
+// Appendix C).
 func (c *SMSC) MOForwardShortMessage(ctx context.Context, req sgd.MOForwardShortMessageRequest) sgd.MOForwardShortMessageAnswer {
 	now := c.clock.Now()
 	log := c.log.With("session_id", req.SessionID, "sc_address", req.SCAddress,
-		"imsi", req.UserIdentifier.UserName, "msisdn", req.UserIdentifier.MSISDN)
+		"imsi", req.UserIdentifier.UserName, "msisdn", req.UserIdentifier.MSISDN,
+		"origin_host", req.OriginHost, "end_to_end", req.EndToEndID)
+	request := diameter.DuplicateKey(req.OriginHost, req.EndToEndID)
+	expires := now.Add(diameter.DuplicateWindow)
+	first, err := c.store.BeginOFR(ctx, request, now, expires)
+	if err != nil {
+		log.Warn("short message refused: the store failed", "error", err.Error())
+		return refusal(sgd.SCCongestion, sms.FCSSCSystemFailure, now)
+	}
+	if !first {
+		return c.answerToCopy(ctx, request, log)
+	}
+	a := c.takeShortMessage(ctx, req, now, log)
+	if err := c.store.PutOFA(ctx, request, a, expires); err != nil {
+		log.Warn("the answer is not kept for a copy of the OFR: the store failed", "error", err.Error())
+	}
+	return a
+}
 
+// Of a copy of an OFR, answerToCopy waits at most copyWait for the
+// answer of the instance that took the first copy, and looks for it
+// every copyPoll. The first instance asks the HSS once, which its
+// Diameter node bounds by the Answer timer, and calls the Store a few
+// times, each call bounded by the timeout of the store; copyWait is
+// longer than that. A sender gives up on its OFR after its own Answer
+// timer, so a longer wait reaches no one.
+const (
+	copyWait = 10 * time.Second
+	copyPoll = 50 * time.Millisecond
+)
+
+// answerToCopy answers a copy of an OFR with what the instance that took
+// the first copy answered (RFC 6733 3), waiting for it while that
+// instance is still at it. The copy is not answered with
+// DIAMETER_TOO_BUSY in the meantime. RFC 6733 7.1.3 allows that answer
+// only to a request that names its server, which an OFR need not do,
+// and it sends the request on to another peer, which finds the same
+// record. A serving node that runs out of peers tells the UE that the
+// short message did not get through, and the UE sends it again,
+// although the SC holds it.
+//
+// An instance that stopped before it answered leaves no answer. The SC
+// cannot tell then whether that instance took the short message, and
+// refuses the copy with SC congestion, as it does when the Store fails.
+func (c *SMSC) answerToCopy(ctx context.Context, request string, log *slog.Logger) sgd.MOForwardShortMessageAnswer {
+	deadline := time.Now().Add(copyWait)
+	for {
+		a, ok, err := c.store.OFA(ctx, request, c.clock.Now())
+		switch {
+		case err != nil:
+			log.Warn("the answer to the first copy of the OFR was not read: the store failed", "error", err.Error())
+		case ok:
+			log.Info("OFR sent again: answered as the first copy was", "result", a.Result.String())
+			return a
+		}
+		if !time.Now().Before(deadline) {
+			log.Warn("OFR sent again: refused, the first copy has no answer", "waited", copyWait)
+			return refusal(sgd.SCCongestion, sms.FCSSCSystemFailure, c.clock.Now())
+		}
+		select {
+		case <-time.After(copyPoll):
+		case <-ctx.Done():
+			return refusal(sgd.SCCongestion, sms.FCSSCSystemFailure, c.clock.Now())
+		}
+	}
+}
+
+// takeShortMessage is the OFR of TS 29.338 6.2.1.3 that the SC has not
+// seen before: it checks the short message and queues it, or refuses it.
+func (c *SMSC) takeShortMessage(ctx context.Context, req sgd.MOForwardShortMessageRequest, now time.Time, log *slog.Logger) sgd.MOForwardShortMessageAnswer {
 	// TS 29.338 6.2.1.3: the SMS-IWMSC checks that it knows the SC.
 	if req.SCAddress != c.cfg.Address {
 		log.Info("short message refused: unknown SC address")
