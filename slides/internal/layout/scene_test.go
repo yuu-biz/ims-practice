@@ -183,3 +183,37 @@ func TestReferencePointHasNoArrowhead(t *testing.T) {
 		}
 	}
 }
+
+// TestLinesThatNoStepDrawsTogetherShareALane makes sure that two
+// messages of one direction between two nodes take lanes side by side
+// only when a step draws them together, so that a scene that clears the
+// map with only does not push a later label out onto another node.
+func TestLinesThatNoStepDrawsTogetherShareALane(t *testing.T) {
+	source := "---\ntitle: T\nfooter: F\nlang: en\nformat: visual\n---\n\n```ims-model\nnodes:\n" +
+		"  - {id: a, label: A, at: [0, 0]}\n  - {id: b, label: B, at: [1, 0]}\nevents:\n" +
+		"  - {id: first, msg: ONE, from: a, to: b, proto: SIP}\n" +
+		"  - {id: second, msg: TWO, from: a, to: b, proto: SIP}\n" +
+		"  - {id: third, msg: THREE, from: a, to: b, proto: SIP}\n```\n\n---\n\n# T\n\n---\n\n## S\n\n" +
+		"```ims-scene\nid: s\nsteps:\n" +
+		"  - {id: x, title: X, only: [first], text: Y}\n" +
+		"  - {id: y, title: Y, only: [second], text: Y}\n" +
+		"  - {id: z, title: Z, show: [third], text: Y}\n```\n"
+	d, err := deck.Parse("lanes.md", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagram := Draw(d.Model, d.Slides[1].Scene)
+	y := map[string]float64{}
+	for _, e := range diagram.Events {
+		y[e.ID] = e.Y1
+	}
+	if y["first"] != y["second"] {
+		t.Errorf("first and second are never drawn together but take lanes at %v and %v", y["first"], y["second"])
+	}
+	if y["second"] == y["third"] {
+		t.Errorf("second and third are drawn together but share the lane at %v", y["second"])
+	}
+	if len(diagram.Problems) > 0 {
+		t.Error(diagram.Problems)
+	}
+}
