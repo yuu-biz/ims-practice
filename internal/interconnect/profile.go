@@ -3,6 +3,7 @@ package interconnect
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 
@@ -88,9 +89,13 @@ const (
 	OptionPass OptionTagPolicy = "pass"
 	// OptionRemove takes the tag out of Supported, Require and
 	// Proxy-Require, as if the sender did not know the extension (TS
-	// 24.229 5.10.6.2). It is for a tag whose extension lives in the
-	// header fields alone: a profile cannot remove precondition, whose
-	// SDP attributes would stay in the body (RFC 3312 4).
+	// 24.229 5.10.6.2): of a request that crosses the border either
+	// way, and of every message that the IBCF itself exchanges with the
+	// peer (RemovedOptionTags). The IBCF thus uses the extension with
+	// the peer no more than the peer uses it with the IBCF. It is for a
+	// tag whose extension lives in the header fields alone: a profile
+	// cannot remove precondition, whose SDP attributes would stay in the
+	// body (RFC 3312 4).
 	OptionRemove OptionTagPolicy = "remove"
 	// OptionReject has the IBCF, the UAS of the dialog in which the
 	// request arrives, answer a request that requires the tag with 420
@@ -286,6 +291,22 @@ func (p Profile) allowedMethods() []sip.Method {
 		}
 	}
 	return allowed
+}
+
+// RemovedOptionTags are the option tags that the agreement removes
+// (OptionRemove), in order. The IBCF's own user agent leaves them out on
+// its leg towards the peer. Otherwise its Supported would offer the peer
+// the extension, and a request of the peer that lists a tag would have
+// it use the extension with the peer, such as a reliable provisional
+// response for 100rel (RFC 3262 3).
+func (p Profile) RemovedOptionTags() []string {
+	var tags []string
+	for _, tag := range slices.Sorted(maps.Keys(p.OptionTags)) {
+		if p.OptionTags[tag] == OptionRemove {
+			tags = append(tags, tag)
+		}
+	}
+	return tags
 }
 
 // PreferredTransport is the transport to send to the peer with: the

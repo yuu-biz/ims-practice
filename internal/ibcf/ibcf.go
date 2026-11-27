@@ -191,8 +191,9 @@ func (b *IBCF) Listen(internal, external *sip.TransportLayer) error {
 
 func (b *IBCF) newUA(transport *sip.TransportLayer, s side, locate func(sip.URI) ([]sip.Destination, error)) (*sip.UA, error) {
 	var screen func(*sip.Message, sip.Destination) bool
+	var leftOut func(*sip.Message, sip.Destination, bool) []string
 	if s.direction == interconnect.Entry {
-		screen = b.Screen
+		screen, leftOut = b.Screen, b.optionsLeftOut
 	}
 	return sip.NewUA(transport, sip.UAConfig{
 		SentBy:  s.own.Host + ":" + strconv.Itoa(portOf(s.own)),
@@ -204,12 +205,13 @@ func (b *IBCF) newUA(transport *sip.TransportLayer, s side, locate func(sip.URI)
 		// side's dialog in a Replaces that it passes on
 		// (replacesOnTheOtherSide), so it supports Replaces too (RFC
 		// 3891 6.2).
-		Supported:   []string{sip.OptionPrecondition, sip.OptionReplaces},
-		OnCall:      func(in *sip.IncomingCall) { b.onCall(s, in) },
-		OnMessage:   func(st *sip.ServerTransaction) { b.onMessage(s, st) },
-		OnSubscribe: func(st *sip.ServerTransaction) { b.onSubscribe(s, st) },
-		Locate:      locate,
-		Screen:      screen,
+		Supported:      []string{sip.OptionPrecondition, sip.OptionReplaces},
+		OnCall:         func(in *sip.IncomingCall) { b.onCall(s, in) },
+		OnMessage:      func(st *sip.ServerTransaction) { b.onMessage(s, st) },
+		OnSubscribe:    func(st *sip.ServerTransaction) { b.onSubscribe(s, st) },
+		Locate:         locate,
+		Screen:         screen,
+		OptionsLeftOut: leftOut,
 	}, b.log.With("side", string(s.direction)))
 }
 
@@ -337,6 +339,32 @@ func (b *IBCF) Screen(req *sip.Message, source sip.Destination) bool {
 		"source", source.String(), "call_id", req.Get("Call-ID"))
 	b.metrics.discard(DiscardUnknownSource, req.Method)
 	return false
+}
+
+// optionsLeftOut is the sip.UAConfig.OptionsLeftOut of the external
+// UA: the option tags that the agreement with the peer at the far end
+// of m removes (interconnect.Profile.RemovedOptionTags). The border
+// takes them out of each request that crosses, but on its leg of a call
+// the UA also writes messages of its own for the peer, with its own
+// Supported, and reads the peer's requests to choose what it uses, such
+// as reliable provisional responses. With the tags left out, the leg
+// uses no extension that the agreement removes. The IBCF finds the peer
+// as it does for an initial request: by the next hop of a request that
+// leaves, and by the address of the far end for a request that comes in
+// and for a response, which goes back to where its request came from
+// (RFC 3261 18.2.2).
+func (b *IBCF) optionsLeftOut(m *sip.Message, remote sip.Destination, sent bool) []string {
+	var peer Peer
+	var ok bool
+	if sent && m.IsRequest() {
+		peer, ok = b.peerOfNextHop(m)
+	} else {
+		peer, ok = b.peers.BySource(remote.Addr.Addr())
+	}
+	if !ok {
+		return nil
+	}
+	return peer.Profile.RemovedOptionTags()
 }
 
 // refuse is a refusal with status, counted for peer.
