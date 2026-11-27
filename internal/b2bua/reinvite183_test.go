@@ -285,6 +285,54 @@ func TestAReINVITEWithout100relKeepsTheAnswerForThe2xx(t *testing.T) {
 	}
 }
 
+// TestTheCalleesReINVITEGetsAReliable183AndIsPRACKed: a re-INVITE of
+// the callee crosses the other way, and the caller answers it in a
+// reliable 183. The copy that reaches the callee is reliable too, and
+// the PRACK of the callee goes on as the PRACK of the caller's 183, so
+// that the caller's Progress returns and its 200 can go (RFC 3262 3, 4).
+func TestTheCalleesReINVITEGetsAReliable183AndIsPRACKed(t *testing.T) {
+	rc := newRawCallee(t, timers)
+	b2b := newB2BUA(t, &hooks{}, rc.uri())
+	reinvites := make(chan *sip.InDialogRequest, 1)
+	_, d := answeredCall(t, rc, b2b, func(r *sip.InDialogRequest) { reinvites <- r })
+
+	ct := rc.send(&d, sip.INVITE, reOffer,
+		sip.HeaderField{Name: "Contact", Value: "<" + rc.uri() + ">"},
+		sip.HeaderField{Name: "Supported", Value: sip.Option100rel})
+	r := within(t, "the re-INVITE of the callee at the caller", reinvites)
+	progressed := make(chan error, 1)
+	go func() { progressed <- r.Progress(183, reAnswer) }()
+	p := provisionalTo(t, ct)
+	if p.StatusCode != 183 || !p.Requires(sip.Option100rel) || string(p.Body) != string(reAnswer.Content) {
+		t.Fatalf("the callee got %d with Require %q and %q, want a reliable 183 with the answer",
+			p.StatusCode, p.Get("Require"), p.Body)
+	}
+	rack := sip.RAck{RSeq: rseqOf(t, p), CSeq: cseqOf(t, ct.Request)}
+	prack := rc.send(&d, sip.PRACK, sip.Body{}, sip.HeaderField{Name: "RAck", Value: rack.String()})
+	if err := within(t, "the PRACK of the callee at the caller", progressed); err != nil {
+		t.Fatalf("183: %v", err)
+	}
+	if resp := finalTo(prack); resp == nil || resp.StatusCode != 200 {
+		t.Fatalf("the callee's PRACK got %v, want 200", resp)
+	}
+	if _, err := r.Accept(sip.Body{}); err != nil {
+		t.Fatalf("200: %v", err)
+	}
+	if resp := finalTo(ct); resp == nil || resp.StatusCode != 200 || len(resp.Body) != 0 {
+		t.Errorf("the callee's re-INVITE got %v, want 200 without a session description after the answer of the 183", resp)
+	}
+}
+
+// rseqOf is the RSeq of a reliable provisional response.
+func rseqOf(t *testing.T, m *sip.Message) uint32 {
+	t.Helper()
+	rseq, err := sip.ParseRSeq(m.Get("RSeq"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rseq
+}
+
 // result is a response and the error of the call that sent the request.
 type result struct {
 	resp *sip.Message
