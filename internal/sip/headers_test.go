@@ -24,6 +24,11 @@ func TestParseURI(t *testing.T) {
 		{"sip:alice;day=tuesday@atlanta.com", URI{Scheme: "sip", User: "alice;day=tuesday", Host: "atlanta.com"}},
 		{"sip:bob@biloxi.com?subject=project%20x&priority=urgent", URI{Scheme: "sip", User: "bob", Host: "biloxi.com",
 			Headers: "subject=project%20x&priority=urgent"}},
+		// RFC 3261 25.1: user-unreserved allows "?", so only a "?" after
+		// the host starts the headers.
+		{"sip:alice?day=tuesday@atlanta.com", URI{Scheme: "sip", User: "alice?day=tuesday", Host: "atlanta.com"}},
+		{"sip:alice?day=tuesday@atlanta.com?subject=hello", URI{Scheme: "sip", User: "alice?day=tuesday", Host: "atlanta.com",
+			Headers: "subject=hello"}},
 	}
 	for _, tt := range tests {
 		got, err := ParseURI(tt.in)
@@ -44,6 +49,7 @@ func TestURIString(t *testing.T) {
 		"sip:[2001:db8::1]",
 		"sip:alice;day=tuesday@atlanta.com",
 		"sips:bob@biloxi.com?subject=project%20x",
+		"sip:alice?day=tuesday@atlanta.com?subject=hello",
 	} {
 		u, err := ParseURI(s)
 		if err != nil {
