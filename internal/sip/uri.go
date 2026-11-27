@@ -36,13 +36,15 @@ func ParseURI(s string) (URI, error) {
 		return URI{}, fmt.Errorf("%w: %q", ErrNotSIPURI, s)
 	}
 	u := URI{Scheme: scheme}
-	rest, u.Headers, _ = strings.Cut(rest, "?")
-	// "@" may not appear unescaped in the userinfo or the parameters,
-	// so the last one ends the userinfo.
+	// "@" may not appear unescaped in the userinfo, the parameters or
+	// the headers, so the last one ends the userinfo. The userinfo is cut
+	// off first because a user may hold "?" (user-unreserved in RFC 3261
+	// 25.1); only a "?" after the host starts the headers.
 	if at := strings.LastIndexByte(rest, '@'); at >= 0 {
 		u.User = rest[:at]
 		rest = rest[at+1:]
 	}
+	rest, u.Headers, _ = strings.Cut(rest, "?")
 	hostport, params, _ := strings.Cut(rest, ";")
 	u.Params = parseParams(params)
 	var err error
