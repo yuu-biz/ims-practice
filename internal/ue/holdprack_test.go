@@ -2,6 +2,7 @@ package ue_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/netip"
 	"strconv"
@@ -76,7 +77,19 @@ func (p *barePeer) readUntil(what string, want func(*sip.Message) bool) *sip.Mes
 // reliable 183 to the re-INVITE (RFC 3262 5). The UE acknowledges the
 // 183 with a PRACK, and the 200 that follows carries no SDP (RFC 3261
 // 13.2.1), so the hold rests on the answer of the 183.
-func TestHoldAnsweredInAReliable183(t *testing.T) {
+func TestHoldAnsweredInAReliable183(t *testing.T) { holdAnsweredInAReliable183(t, 200) }
+
+// TestHoldFailedAfterAReliable183IsUndoneWithANewOffer: the peer answers
+// the hold in a reliable 183 and then fails the re-INVITE with 500.
+// Without preconditions that offer and answer were a change that the
+// peer carried out (RFC 6141 3.3), so the UE, which goes back to the
+// session before the hold, offers that session in a new re-INVITE, and
+// both sides have the same view of it again (RFC 6141 3.4).
+func TestHoldFailedAfterAReliable183IsUndoneWithANewOffer(t *testing.T) {
+	holdAnsweredInAReliable183(t, 500)
+}
+
+func holdAnsweredInAReliable183(t *testing.T, final int) {
 	c := newCalledUE(t, ue.CallConfig{})
 	sessions := make(chan *ue.Session, 1)
 	active := make(chan struct{})
@@ -161,21 +174,51 @@ func TestHoldAnsweredInAReliable183(t *testing.T) {
 		t.Errorf("PRACK has User-Agent %q, want the UE's (IR.92 2.6)", prack.Get("User-Agent"))
 	}
 	p.send(sip.NewResponse(prack, 200, ""))
-	reinviteOK := sip.NewResponse(reinvite, 200, "")
-	reinviteOK.Add(contact.Name, contact.Value)
-	p.send(reinviteOK)
-	p.readUntil("ACK of the 200 to the re-INVITE", func(m *sip.Message) bool { return m.Method == sip.ACK })
+	reinviteFinal := sip.NewResponse(reinvite, final, "")
+	reinviteFinal.Add(contact.Name, contact.Value)
+	p.send(reinviteFinal)
+	p.readUntil("ACK of the final response to the re-INVITE", func(m *sip.Message) bool { return m.Method == sip.ACK })
+
+	if final >= 300 {
+		again := p.readUntil("new re-INVITE after the failed hold", func(m *sip.Message) bool {
+			return m.Method == sip.INVITE && m.Get("CSeq") != reinvite.Get("CSeq")
+		})
+		resync, err := sdp.Parse(again.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if dir := resync.Direction(resync.Media[0]); dir != "sendrecv" {
+			t.Errorf("the new re-INVITE offers %s, want sendrecv, the session before the hold", dir)
+		}
+		resyncAnswer, err := sdp.Answer(resync, "1", loopback(c.callerMedia.Port()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		ok := sip.NewResponse(again, 200, "")
+		ok.Add(contact.Name, contact.Value)
+		ok.Add("Content-Type", "application/sdp")
+		ok.Body = resyncAnswer.Bytes()
+		p.send(ok)
+		p.readUntil("ACK of the 200 to the new re-INVITE", func(m *sip.Message) bool { return m.Method == sip.ACK })
+	}
 
 	select {
 	case err := <-held:
-		if err != nil {
+		if final < 300 && err != nil {
 			t.Fatalf("Hold: %v", err)
 		}
+		if final >= 300 && err == nil {
+			t.Fatalf("Hold succeeded, want the error of the %d", final)
+		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("Hold did not return within 5s of the 200")
+		t.Fatal("Hold did not return within 5s of the final response")
 	}
-	if st := s.Status(); !st.Held || st.Direction != "sendonly" || st.PeerDirection != "recvonly" {
+	st := s.Status()
+	switch {
+	case final < 300 && (!st.Held || st.Direction != "sendonly" || st.PeerDirection != "recvonly"):
 		t.Errorf("after the hold the session is %+v, want held, sendonly, and recvonly at the peer", st)
+	case final >= 300 && (st.Held || st.Direction != "sendrecv"):
+		t.Errorf("after the failed hold the session is %+v, want sendrecv as before it", st)
 	}
 
 	dialog.LocalSeq = 1
@@ -183,7 +226,9 @@ func TestHoldAnsweredInAReliable183(t *testing.T) {
 	bye.Add("Max-Forwards", "70")
 	p.request(bye)
 	p.readUntil("200 to the BYE", func(m *sip.Message) bool { return m.StatusCode == 200 && m.Get("CSeq") == "2 BYE" })
-	if err := wait(t, "the answer", answered); err != nil {
+	// After a hold that failed, the session is sendrecv again, and this
+	// peer sends no RTP, which the UE reports as the call ends.
+	if err := wait(t, "the answer", answered); err != nil && !(final >= 300 && errors.Is(err, ue.ErrNoMedia)) {
 		t.Fatal(err)
 	}
 }

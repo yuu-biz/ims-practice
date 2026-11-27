@@ -279,23 +279,11 @@ func (s *Session) hold(held bool) error {
 		return nil
 	}
 	s.held = held
-	before, offered, dialog := s.localDir, s.offered, s.dialog
+	before, offered, dialog, preconditions := s.localDir, s.offered, s.dialog, s.precond != nil
 	s.mu.Unlock()
 	defer s.changed()
 	for attempt := 0; ; attempt++ {
-		body, err := s.reoffer()
-		// answer is the response with the answer: the first reliable
-		// provisional response with SDP, after which the 2xx carries
-		// none, or else the 2xx (RFC 3261 13.2.1, RFC 3262 5).
-		var resp, answer *sip.Message
-		if err == nil {
-			resp, err = dialog.ReInviteWith(sip.ReInvitation{Body: body, Headers: s.requestHeaders,
-				OnProvisional: func(p *sip.Message) {
-					if answer == nil && p.Requires(sip.Option100rel) && len(p.Body) > 0 {
-						answer = p
-					}
-				}})
-		}
+		resp, answer, err := s.offerAnew(dialog)
 		if err == nil && resp.StatusCode == 491 && attempt == 0 {
 			// RFC 3261 14.1: the re-INVITE crossed one of the peer.
 			time.Sleep(sip.GlareDelay(s.caller))
@@ -312,22 +300,69 @@ func (s *Session) hold(held bool) error {
 		}
 		if err != nil {
 			// RFC 3264 8: a refused offer leaves the session as it was.
-			//
-			// SIMPLIFIED: RFC 6141 3.4. When a reliable provisional
-			// response had the answer and the re-INVITE fails all the
-			// same, the UAC SHOULD offer the session as it was, so that
-			// both sides agree on it. The UE only goes back to it. A UAS
-			// that has carried out the change SHOULD answer with a 2xx
-			// instead (RFC 6141 3.3).
 			s.mu.Lock()
 			s.held, s.localDir, s.offered = !held, before, offered
 			s.updateFlow()
 			s.mu.Unlock()
+			if resp != nil && resp.StatusCode >= 300 && answer != nil && answer.StatusCode < 200 && !preconditions {
+				s.resynchronize(dialog)
+			}
 			return err
 		}
 		s.log.Info("call hold", "held", held)
 		return nil
 	}
+}
+
+// offerAnew sends the session as it now stands in a re-INVITE within
+// dialog, and returns the final response and the response with the
+// answer: the first reliable provisional response with SDP, after which
+// the 2xx carries none (RFC 3261 13.2.1, RFC 3262 5), and nil when no
+// such response came.
+func (s *Session) offerAnew(dialog sessionDialog) (resp, answer *sip.Message, err error) {
+	body, err := s.reoffer()
+	if err != nil {
+		return nil, nil, err
+	}
+	resp, err = dialog.ReInviteWith(sip.ReInvitation{Body: body, Headers: s.requestHeaders,
+		OnProvisional: func(p *sip.Message) {
+			if answer == nil && p.Requires(sip.Option100rel) && len(p.Body) > 0 {
+				answer = p
+			}
+		}})
+	return resp, answer, err
+}
+
+// resynchronize offers the session as it was before a re-INVITE that
+// failed after a reliable provisional response had answered it. The
+// offer and answer of that response were done, and without
+// preconditions that is a change that the peer has carried out (RFC
+// 6141 3.3), although its error says otherwise. So the UE offers the
+// session as close to that before the re-INVITE as it can, and both
+// sides have the same view of it again (RFC 6141 3.4). It does so once:
+// a new offer that fails too leaves the session as the UE has it.
+//
+// SIMPLIFIED: RFC 6141 3.3. With preconditions, the offer and answer
+// of the provisional response only make the new parameters ready, and
+// the peer that then fails the re-INVITE has used none of them, unless
+// it has sent media with them. The UE does not look at the media to
+// tell, and takes the error as saying that nothing was carried out.
+func (s *Session) resynchronize(dialog sessionDialog) {
+	resp, answer, err := s.offerAnew(dialog)
+	if err == nil && resp.StatusCode >= 300 {
+		err = fmt.Errorf("re-INVITE answered %d %s", resp.StatusCode, resp.Reason)
+	}
+	if err == nil {
+		if answer == nil {
+			answer = resp
+		}
+		err = s.receiveAnswer(answer)
+	}
+	if err != nil {
+		s.log.Warn("the offer that brings the peer back to the session before the failed re-INVITE failed too", "error", err.Error())
+		return
+	}
+	s.log.Info("the peer is back on the session before the failed re-INVITE")
 }
 
 // SendDTMF sends digits as telephone events in the audio stream (TS
