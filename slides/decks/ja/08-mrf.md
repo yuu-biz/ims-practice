@@ -915,7 +915,7 @@ docker compose --profile phones up -d --build
 3. **Answer** を押すと、`phone2` との通話を保留にして `phone3` に応答します。**Swap** で通話を切り替えます。
 4. **Merge** を押すと会議ができます。3 台のカードの **Conference** の行に、3 人の利用者が並びます。
 
-- 通話のラダー図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
+- 通話のシーケンス図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
 
 > 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
 

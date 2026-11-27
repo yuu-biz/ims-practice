@@ -1531,7 +1531,7 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70)
   - Info の列の最後に `(RP) RP-DATA (MS to Network)` のように出ます。
   - 詳細に「GSM A-I/F RP」と「GSM SMS TPDU」の木があります。
 
-> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/sms.md#キャプチャを開く)。ラダー図は手順書の [「送信と配達」](../../../docs/guide/ja/sms.md#送信と配達hello-ue-b-this-is-ue-a) にあります。
+> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/sms.md#キャプチャを開く)。シーケンス図は手順書の [「送信と配達」](../../../docs/guide/ja/sms.md#送信と配達hello-ue-b-this-is-ue-a) にあります。
 
 ---
 
@@ -2512,9 +2512,9 @@ docker compose --profile phones up -d --build
 1. `phone1` のカードの SMS のフォームに本文を書き、**status report** に印を付けて、**Send SMS** を押します。
 2. **SMS sent** の表示が `waiting for the submit report` から `accepted by the SC` に変わります。
 3. `phone2` のカードの **SMS received** に、送信者の番号と本文が出ます。
-4. 各行の **ladder** で、その MESSAGE のラダー図が出ます。矢印を選ぶと、RP と TP のフィールドが出ます。
+4. 各行の **ladder** で、その MESSAGE のシーケンス図が出ます。矢印を選ぶと、RP と TP のフィールドが出ます。
 
-- ラボは Call-ID ごとにラダー図を描くので、6 通の MESSAGE は 6 つのラダー図になります。
+- ラボは Call-ID ごとにシーケンス図を描くので、6 通の MESSAGE は 6 つのシーケンス図になります。
 
 > 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
 

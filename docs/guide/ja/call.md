@@ -79,7 +79,7 @@ sip || diameter.cmd.code == 302 || dns.qry.type == 35 || rtp || rtcp
 
 **Telephony > VoIP Calls** に通話が表示されます。選んで次のボタンを押します。
 
-- **Flow Sequence.** ラダー図を表示します。
+- **Flow Sequence.** シーケンス図を表示します。
 - **Play Streams.** 両方向の音声を聞けます。
 
 RTP は SDP でしか知らされないポートを使います。キャプチャに同じ通話の SIP も入っていれば、Wireshark はそのポートを見つけられます。この手順のキャプチャには SIP も入っています。それでもストリームがただの UDP と表示されるときは、**Analyze > Enabled Protocols** で **rtp_udp**（RTP の推定）を有効にします。

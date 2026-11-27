@@ -61,7 +61,7 @@ ims-practice 勉強会 第 9 回（アクセス網、IMS-AKA、Rx でのポリ�
 | MMTel AS、中継ノード | 172.28.0.75、50 | MMTel AS の回と同じ。中継は RTCP も通す。 |
 
 - volte10 と volte12 は `compose.yaml` のプロファイル `volte` のサービスです。鍵は `deploy/compose/hss.yaml` に、加入者ごとのコンテナのアドレスは `deploy/compose/epc.yaml` にあります。
-- ラボ（172.28.0.60）は volte10 と volte12 を動かし、ラダー図に Rx を出し、網の手順を始める EPC スタブのパスをホストへ中継します。
+- ラボ（172.28.0.60）は volte10 と volte12 を動かし、シーケンス図に Rx を出し、網の手順を始める EPC スタブのパスをホストへ中継します。
 
 > 手順書 [「登場するノード」](../../../docs/guide/ja/volte.md#登場するノード)
 
@@ -219,7 +219,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 | 727 | S-CSCF → I-CSCF（401） | nonce は RAND と AUTN の base64。`ik` と `ck`。 |
 | 737 | P-CSCF → UE（401） | `ik` と `ck` を外し、`Security-Server` を足す。 |
 
-> 手順書 [「ラダー図」](../../../docs/guide/ja/volte.md#ラダー図) の 1 から 6。TS 24.229 5.1.1.2.2、5.2.2.1、5.2.2.2、5.4.1.1、5.4.1.2.1A。RFC 3329 2.3.1。TS 33.203 Annex H、7.2。TS 29.229 6.3.9。TS 33.102 6.3.2。TS 29.228 6.3。RFC 3310 3.2。
+> 手順書 [「シーケンス図」](../../../docs/guide/ja/volte.md#シーケンス図) の 1 から 6。TS 24.229 5.1.1.2.2、5.2.2.1、5.2.2.2、5.4.1.1、5.4.1.2.1A。RFC 3329 2.3.1。TS 33.203 Annex H、7.2。TS 29.229 6.3.9。TS 33.102 6.3.2。TS 29.228 6.3。RFC 3310 3.2。
 
 ---
 
@@ -234,7 +234,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 | 783 | P-CSCF:5064 → UE:5062 | 200 OK。アソシエーションが確立する。 |
 | 786 | P-CSCF → PCRF | AAR。信号の経路（Rx の節）。 |
 
-> 手順書 [「ラダー図」](../../../docs/guide/ja/volte.md#ラダー図) の 7 から 12。TS 33.102 6.3.3、C.2。TS 33.203 7.1。RFC 3329。RFC 3310 3.3。TS 24.229 5.4.1.2.2、5.2.2.2。TS 29.214 A.4。
+> 手順書 [「シーケンス図」](../../../docs/guide/ja/volte.md#シーケンス図) の 7 から 12。TS 33.102 6.3.3、C.2。TS 33.203 7.1。RFC 3329。RFC 3310 3.3。TS 24.229 5.4.1.2.2、5.2.2.2。TS 29.214 A.4。
 
 ---
 
@@ -388,7 +388,7 @@ volte10 <-- P-CSCF <-- volte12: 200 (INVITE)。続いて ACK
 - INVITE は `Supported: 100rel, timer, 199, precondition` です。Require には入れません。183 は `Require: 100rel, precondition` です。UPDATE は、PRACK に 200 が返ってから送ります。
 - 発信側では、UPDATE への 200 より先に 180 が来ることがあります。P-CSCF が新しい answer の AAR のために、その 200 を止めておくからです。フィルタは `sip.Require contains "precondition"`、プリコンディションの行をすべて探すなら `sdp.media_attr contains "qos"` です。
 
-> 手順書 [「プリコンディション」](../../../docs/guide/ja/volte.md#プリコンディション)。RFC 3312。IR.92 2.4.1。TS 24.229 5.1.3.1。ラダー図の全体とフレームの番号は手順書にあります。
+> 手順書 [「プリコンディション」](../../../docs/guide/ja/volte.md#プリコンディション)。RFC 3312。IR.92 2.4.1。TS 24.229 5.1.3.1。シーケンス図の全体とフレームの番号は手順書にあります。
 
 ---
 
@@ -590,7 +590,7 @@ curl http://localhost:8080/api/epc/ues/001010000000010
 3. カードの保留、再開、DTMF のボタンを押します。コーデックとプリコンディションの表も出ます。
 4. 前のスライドの `curl -X DELETE` で音声の bearer を解放します。
 
-- 通話のラダー図には、P-CSCF の隣に PCRF の列があります。
+- 通話のシーケンス図には、P-CSCF の隣に PCRF の列があります。
 - `curl` は volte10 の bearer を並べます。通話中は 5 と 6 です。ラボは、UE の状態と、網の手順を始める EPC スタブのパスを、`/api/epc` の下で中継します。
 
 > 手順書 [「ラボで」](../../../docs/guide/ja/volte.md#ラボで)

@@ -491,7 +491,7 @@ e2e で通知を受け取るには、上がる警報が要ります。[oam.md](.
 
 ### e2e と手順書
 
-Compose に OSS の代わり（通知を受けて残す小さなプログラム。「OSS の代わり」）を足し、HSS を止めて `notifyNewAlarm`、確認して `notifyAckStateChanged`、戻して `notifyClearedAlarm` が届くこと、一覧の `GET` の形を確かめます。pcap で、OAM と OSS のあいだの `GET`、`PATCH`、`POST` を確かめます。手順書（英語と日本語）に、OSS の代わりで警報を受け取る例、ラダー図、「簡略化したこと」を書き、用語集に足りない略語を足します。`internal/oam/doc.go` に経路を足します。約 600 行と文書。作りました。
+Compose に OSS の代わり（通知を受けて残す小さなプログラム。「OSS の代わり」）を足し、HSS を止めて `notifyNewAlarm`、確認して `notifyAckStateChanged`、戻して `notifyClearedAlarm` が届くこと、一覧の `GET` の形を確かめます。pcap で、OAM と OSS のあいだの `GET`、`PATCH`、`POST` を確かめます。手順書（英語と日本語）に、OSS の代わりで警報を受け取る例、シーケンス図、「簡略化したこと」を書き、用語集に足りない略語を足します。`internal/oam/doc.go` に経路を足します。約 600 行と文書。作りました。
 
 - OSS の代わりは `cmd/oss` です。`oss serve` が通知を受けて `internal/mns` の型で確かめ、`oss subscribe`、`oss unsubscribe`、`oss alarms`、`oss ack` が OSS の要求を送ります。Compose では、プロファイル `oss` のサービス `oss`（172.28.0.66）です。
 - e2e は `scripts/e2e-fm.sh` で、CI のジョブ `e2e-fm` が流します。成果物は pcap と、OSS と OAM のあいだのやり取りと HSS の DPR と CEA を並べた `e2e-out/fm-ladder.txt` です。流れは次のとおりです。購読を作って読み返す。MRFP のコンテナを `docker compose pause` で止め、`notifyPotentialFaultyAlarmList`、`unreliableAlarmScope`、戻したあとの `notifyAlarmListRebuilt` を確かめる。HSS を保守用の API で止め、5 つの役割の `notifyNewAlarm` を `href` と識別の属性で確かめる。filter を付けた `GET` で 5 つの記録を読み、通知の `alarmId` と記録の鍵が同じことを確かめる。S-CSCF の警報を確認し、`notifyAckStateChanged` を確かめる。HSS を戻し、5 つの `notifyClearedAlarm` と、解除と確認が済んだ記録が一覧から消えることを確かめる。購読を消し、そのあとの確認に通知が来ないことを確かめる。`oss serve` が断った通知が無いことも確かめる。pcap では、HTTP の各やり取りを順に、表示フィルタで確かめます（OAM と OSS はどちらもポート 8080 で待ち受けるので、Wireshark が HTTP と JSON を解読します）。どの待ちにも期限を付けています。HSS を止めてから警報が上がるまでと、戻してから解除されるまでに、それぞれ Tc（30 秒）ほどかかります。

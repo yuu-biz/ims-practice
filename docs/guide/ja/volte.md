@@ -37,7 +37,7 @@
 | HSS | 172.28.0.10 | 認証ベクトルを作る（MAR と MAA）。 |
 | MMTel AS | 172.28.0.75 | [MMTel AS の付加サービス](mmtel.md) と同じく、すべての通話を受け持つ。 |
 | メディアの中継ノード | 172.28.0.50 | RTP、RTCP、telephone-event を復号せずに中継する。 |
-| ラボ | 172.28.0.60 | volte10 と volte12 を操作し、ラダー図に Rx を出し、網の手順を始める EPC スタブのパスをホストに取り次ぐ。 |
+| ラボ | 172.28.0.60 | volte10 と volte12 を操作し、シーケンス図に Rx を出し、網の手順を始める EPC スタブのパスをホストに取り次ぐ。 |
 
 volte10 と volte12 は `compose.yaml` のプロファイル `volte` のサービスです。鍵は `deploy/compose/hss.yaml` にあり、`deploy/compose/epc.yaml` が加入者ごとにコンテナのアドレスを割り当てています。
 
@@ -109,7 +109,7 @@ QCI 1 は帯域を保証する会話音声の種類です（IR.92 4.4.2）。速
 
 K と OPc は MILENAGE の試験データ 1 の値です。OPc は事業者の OP と K から作ります（TS 35.206 4.1）。SIPp のように OP を渡すときは、`-opc` の代わりに `-op` を使います。共有するのはこれだけで、ほかの値は網と UE がそれぞれ、これらの値とランダムな challenge から計算します。
 
-### ラダー図
+### シーケンス図
 
 ```text
 #698  volte10:5060 -> P-CSCF:5060  REGISTER   Security-Client, Require: sec-agree, Authorization with an empty response
@@ -150,7 +150,7 @@ K と OPc は MILENAGE の試験データ 1 の値です。OPc は事業者の O
 
 ### 網が登録を終わらせたとき
 
-S-CSCF は、自分から登録を終わらせることがあります。そのときは reg イベントの NOTIFY で、UE の contact を `terminated` にして知らせます。S-CSCF は、同じ知らせを、P-CSCF が自分で持つ購読の NOTIFY でも P-CSCF に送ります。P-CSCF はその NOTIFY で、UE とのアソシエーションを終わらせ（TS 24.229 5.2.5.2）、信号の経路の Rx のセッションを解放します。アソシエーションは、UE への NOTIFY が届くあいだだけ残します。UE は、自分への NOTIFY を受けたら、自分のアソシエーションを消します（5.1.1.7）。`event="deactivated"` なら、UE は登録をやり直します（5.1.1.7）。アソシエーションはもう残っていないので、最初と同じように登録します。上の 1 から 12 がもう一度起き、AAR も新しく送られます。ラダー図は、P-CSCF への NOTIFY と Rx のメッセージを省いています。
+S-CSCF は、自分から登録を終わらせることがあります。そのときは reg イベントの NOTIFY で、UE の contact を `terminated` にして知らせます。S-CSCF は、同じ知らせを、P-CSCF が自分で持つ購読の NOTIFY でも P-CSCF に送ります。P-CSCF はその NOTIFY で、UE とのアソシエーションを終わらせ（TS 24.229 5.2.5.2）、信号の経路の Rx のセッションを解放します。アソシエーションは、UE への NOTIFY が届くあいだだけ残します。UE は、自分への NOTIFY を受けたら、自分のアソシエーションを消します（5.1.1.7）。`event="deactivated"` なら、UE は登録をやり直します（5.1.1.7）。アソシエーションはもう残っていないので、最初と同じように登録します。上の 1 から 12 がもう一度起き、AAR も新しく送られます。シーケンス図は、P-CSCF への NOTIFY と Rx のメッセージを省いています。
 
 ```text
  UE                         P-CSCF                     S-CSCF
@@ -173,7 +173,7 @@ S-CSCF は、自分から登録を終わらせることがあります。その�
  |--------------------------->|------------------------->|
 ```
 
-最初の REGISTER は保護されておらず、Authorization の nonce と response は空です。IMS-AKA の初期登録は、いつもこの形です（5.1.1.2.2）。S-CSCF は新しいベクトルで challenge を返し、P-CSCF は新しいアソシエーションを Security-Server で提示します。UE はそのアソシエーションを通して答え、Security-Verify にその Security-Server を写します。REGISTER は、上のラダー図と同じく I-CSCF を通ります。200 OK のあと、UE は自分の登録状態をもう一度購読します（5.1.1.3）。
+最初の REGISTER は保護されておらず、Authorization の nonce と response は空です。IMS-AKA の初期登録は、いつもこの形です（5.1.1.2.2）。S-CSCF は新しいベクトルで challenge を返し、P-CSCF は新しいアソシエーションを Security-Server で提示します。UE はそのアソシエーションを通して答え、Security-Verify にその Security-Server を写します。REGISTER は、上のシーケンス図と同じく I-CSCF を通ります。200 OK のあと、UE は自分の登録状態をもう一度購読します（5.1.1.3）。
 
 ### 認証ベクトルを手で確かめる
 
@@ -577,7 +577,7 @@ docker compose --profile volte up -d --no-deps volte10 volte12
 
 `--no-deps` を付けるのは、UE が依存する P-CSCF や EPC などのノードを Compose に作り直させないためです。新しくビルドしたあとは、Compose がそれらのノードのイメージを変わったものとみなして作り直すことがあり、作り直したノードは Diameter の接続を失っています。
 
-http://localhost:8080 を開きます。volte10 と volte12 のカードには、登録済みと出ます。volte10 から `tel:+12025550112` に発信すると、volte12 は呼び出し時間のあとで自分で応答します。カードには保留、再開、DTMF のボタンがあり、通話のコーデックとプリコンディションの表が出ます。通話のラダー図には、P-CSCF の隣に PCRF の列があります。上の `curl` で音声の bearer を解放すると、P-CSCF が通話を終わらせるところを見られます。
+http://localhost:8080 を開きます。volte10 と volte12 のカードには、登録済みと出ます。volte10 から `tel:+12025550112` に発信すると、volte12 は呼び出し時間のあとで自分で応答します。カードには保留、再開、DTMF のボタンがあり、通話のコーデックとプリコンディションの表が出ます。通話のシーケンス図には、P-CSCF の隣に PCRF の列があります。上の `curl` で音声の bearer を解放すると、P-CSCF が通話を終わらせるところを見られます。
 
 ### コマンドラインで
 

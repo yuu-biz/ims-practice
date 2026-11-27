@@ -212,7 +212,7 @@ curl -X PUT -H 'Content-Type: application/json' localhost:8091/sms-memory -d '{"
 sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70) || diameter.cmd.code in {302, 306, 307, 8388645, 8388646, 8388647, 8388648, 8388649, 16777214}
 ```
 
-REGISTER（第三者 REGISTER を含む）、MESSAGE とその応答、IP-SM-GW の SUBSCRIBE と NOTIFY、LIR、UDR、PUR とその応答、SGd と S6c の 5 つのコマンドとその応答、このプロジェクトの Ready-For-SM とその応答が表示されます。MESSAGE のボディは Wireshark が自分でデコードします。Info の列の最後に `(RP) RP-DATA (MS to Network)` のような RP のメッセージが表示され、パケットの詳細には`GSM A-I/F RP` の木と、その中の `GSM SMS TPDU` の木があります。**Statistics > Flow Graph** で **Limit to display filter** を選ぶと、ラダー図を描けます。
+REGISTER（第三者 REGISTER を含む）、MESSAGE とその応答、IP-SM-GW の SUBSCRIBE と NOTIFY、LIR、UDR、PUR とその応答、SGd と S6c の 5 つのコマンドとその応答、このプロジェクトの Ready-For-SM とその応答が表示されます。MESSAGE のボディは Wireshark が自分でデコードします。Info の列の最後に `(RP) RP-DATA (MS to Network)` のような RP のメッセージが表示され、パケットの詳細には`GSM A-I/F RP` の木と、その中の `GSM SMS TPDU` の木があります。**Statistics > Flow Graph** で **Limit to display filter** を選ぶと、シーケンス図を描けます。
 
 ## IP-SM-GW が利用者の登録を知る
 
@@ -343,9 +343,9 @@ UE が登録を解除すると、S-CSCF は Subscription-State が `terminated;r
   |         |---------------------------------------------------------->|
 ```
 
-I-CSCF は Record-Route を付けず、MESSAGE はダイアログを作らないので、どの MESSAGE とその応答も 1 ホップずつ進みます。IP-SM-GW が送る MESSAGE は新しい要求で、それぞれが別の Call-ID を持ちます。ラボのラダー図は 1 つの Call-ID ずつ描きます。
+I-CSCF は Record-Route を付けず、MESSAGE はダイアログを作らないので、どの MESSAGE とその応答も 1 ホップずつ進みます。IP-SM-GW が送る MESSAGE は新しい要求で、それぞれが別の Call-ID を持ちます。ラボのシーケンス図は 1 つの Call-ID ずつ描きます。
 
-ラダー図は順に並べて描いていますが、同時に進むものもあります。IP-SM-GW は 202 を送るとすぐに SC へメッセージを渡すので、キャプチャでは手順 5 の OFR が 202 より先に来ることがあります。SC がメッセージを受け取ると、submit report（手順 6）と配達（手順 8）は一緒に送られ、それぞれの LIR と応答は入り混じります。
+シーケンス図は順に並べて描いていますが、同時に進むものもあります。IP-SM-GW は 202 を送るとすぐに SC へメッセージを渡すので、キャプチャでは手順 5 の OFR が 202 より先に来ることがあります。SC がメッセージを受け取ると、submit report（手順 6）と配達（手順 8）は一緒に送られ、それぞれの LIR と応答は入り混じります。
 
 UE 1 の `ue sms` は送る直前に登録するので、キャプチャには UE 1 についても前の節の流れがあります。その流れは手順 1 の MESSAGE を送るときにまだ続いていることがあります。
 
@@ -483,7 +483,7 @@ UE 1 は SMS-SUBMIT の TP-SRR で status report を頼んだので、delivery r
 
 この SC の再送の間隔は 1 時間です（`deploy/compose/sc.yaml` の `retry_delays`）。そのため、下のどの場合も、ショートメッセージを届けるのは再送ではなく知らせのほうです。TS 23.040 3.2.7 の NOTE 5 は、この自発的な再送を運用者に任せています。ここでの再送は、HSS が送った知らせが SC に届かなかったときと、メモリに空きができた UE の知らせが HSS に届かなかったとき（[メモリに空きができた知らせが失われたとき](#メモリに空きができた知らせが失われたとき)）の備えです。UE が戻ったという知らせの代わりにはなりません。下の A4 の印を HSS が持っているあいだは、再送の SRA に DIAMETER_ERROR_ABSENT_USER が返るためです。
 
-ラダー図はどれも、S-CSCF と UE のあいだの P-CSCF と、I-CSCF が UE 2 の S-CSCF を見つける LIR を省いています。上の配達のラダー図にはどちらもあります。下の再登録のラダー図だけは、REGISTER が通る P-CSCF を入れ、I-CSCF を省いています。
+シーケンス図はどれも、S-CSCF と UE のあいだの P-CSCF と、I-CSCF が UE 2 の S-CSCF を見つける LIR を省いています。上の配達のシーケンス図にはどちらもあります。下の再登録のシーケンス図だけは、REGISTER が通る P-CSCF を入れ、I-CSCF を省いています。
 
 ### UE 2 がショートメッセージを受け取らない
 
@@ -523,7 +523,7 @@ UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送
 - **A1 から A2.** 配達は上の手順 8 と同じで、UE 2 までは同じように進みます。UE 2 は **480（Temporarily Unavailable）** で答えます。相手には届いたが、その状態では要求を受けられないという意味です（TS 24.341 5.3.3.4.2）。delivery report は送りません。
 - **A3.** TS 29.311 6.1.4.4.1 は 480 を、不在の加入者を表す MAP のユーザーエラーに写します。TS 29.338 7.3.3 はそれを TFA の **DIAMETER_ERROR_ABSENT_USER（5550）** で運びます。IMS での配達が失敗したことを知っているのはこのノードだけなので、IP-SM-GW は自分の UE-Not-Reachable-for-IP（UNRI）も立てます（TS 23.040 2.1.1）。
 - **A4.** SC は **Report-SM-Delivery-Status**（RDR、S6c のコマンド 8388649）で HSS に伝えます。`SM-Delivery-Cause` は ABSENT_USER です（TS 29.338 5.2.3、TS 23.040 3.2.8）。HSS は SC のアドレスを MWD に入れ、自分の UNRI を立てます。UNRI が立っているあいだ、HSS は SRA に serving node を入れません。今問い合わせたサービスセンタを、また失敗する IP-SM-GW へ向かわせないためです（TS 29.338 5.2.1.3）。
-- **A5.** `{"available": true}` でまた受け取るようになります。そのあと UE 2 が出した要求が IP-SM-GW に届けば、中身が何であれ、UE がそこにいることが分かります（TS 23.204 6.5b の step 2）。ここでは UE 2 自身のショートメッセージを使います。その OFR はラダー図では省いています。再登録でも同じことが分かります。次の場合で示します。
+- **A5.** `{"available": true}` でまた受け取るようになります。そのあと UE 2 が出した要求が IP-SM-GW に届けば、中身が何であれ、UE がそこにいることが分かります（TS 23.204 6.5b の step 2）。ここでは UE 2 自身のショートメッセージを使います。その OFR はシーケンス図では省いています。再登録でも同じことが分かります。次の場合で示します。
 - **A6.** IP-SM-GW は自分の UNRI を落とし、`Alert-Reason` が UE_PRESENT の **Ready-For-SM** を S6c で HSS に送ります。実際の網は、この知らせを MAP の READY_FOR_SM で送ります（TS 23.204 6.5b の step 2d、TS 29.002 12.4.1）。S6c にも Sh にもこの知らせのコマンドは無く、このプロジェクトは MAP を話しません。そこで Ready-For-SM は、このプロジェクトが独自に決めたコマンドにしてあります。コマンドコードは、RFC 6733 11.2.1 が実験用に取ってある 16777214 です（[このプロジェクトで簡略化していること](#このプロジェクトで簡略化していること)）。Wireshark はこれを知らないコマンドとして表示し、辞書に無いという警告を付けます。中の AVP は標準のもので、Wireshark はそれをデコードします。`User-Identifier` は RDR と同じく UE 2 を MSISDN で示し、`IP-SM-GW-Number` は IP-SM-GW を示します。`Alert-Reason` は、MME が S6a で同じことを HSS に伝えるときの AVP です（TS 29.272 7.3.83）。HSS が動くのは、その番号が UE 2 の登録している IP-SM-GW の番号のときだけです。HSS は ALR を送り終えるのを待たずに Ready-For-SM に答えるので、キャプチャでは、その答えが ALR より先に来ることがあります。
 - **A7.** HSS は UNRI を落とし、MWD にあるサービスセンタすべてに **Alert-Service-Centre**（ALR、S6c のコマンド 8388648）を送ります。送り先は、そのサービスセンタが開いた接続です（TS 29.338 5.2.2、TS 23.040 3.2.6 の 2c）。ALA が返ったアドレスは MWD から消えます。HSS は、サービスセンタの Diameter の名前を `deploy/compose/hss.yaml` の `service_centres` でアドレスから引き、Destination-Host に入れます（TS 29.338 5.3.1.2）。複数台で動かすサービスセンタは、`hosts` に台ごとの名前を並べます。HSS はその順に知らせを送り、成功の ALA を返した台で止めます。どの台も同じショートメッセージを預かっているので、どの台が配達してもかまいません。
 - **A8.** 知らせを受けた SC は、その番号の待ち行列を再送の間隔を待たずにすぐ配達に回します。UNRI が落ちた今、SRR にはまた IP-SM-GW が返り、預かっていたショートメッセージを TFR で送ります。SC は知らせに答える前に配達を始め、HSS が SC のアドレスを MWD から消すのは ALA が返ってからです。そのため SRA は、たいてい **MWD-Status** 0 を運びます。SC のアドレスが MWD にあり、どの印も立っていないという意味です（TS 29.338 5.3.3.8）。印が立っていないので、SC はこのあとの配達を HSS に報告しません（[メモリに空きができた知らせが失われたとき](#メモリに空きができた知らせが失われたとき)）。
@@ -547,7 +547,7 @@ UE 2 の制御 API に `PUT /sms-availability` で `{"available": false}` を送
 ```
 
 - **C1.** UE 2 は、登録の期限が切れる前に登録し直します。UE は本来これを自分で行い、`POST /register` はそれをすぐに行わせます。連絡先には、前と同じく `+g.3gpp.smsip` が付いています。
-- **C2.** S-CSCF は、ほかの再登録と同じく、IP-SM-GW に第三者 REGISTER を送ります。IP-SM-GW が購読を更新する SUBSCRIBE と、S-CSCF の NOTIFY は、ラダー図では省いています（[再登録と登録の解除](#再登録と登録の解除)）。どれも状態が変わらないので、PUR は送られません（TS 24.341 5.3.3.2）。
+- **C2.** S-CSCF は、ほかの再登録と同じく、IP-SM-GW に第三者 REGISTER を送ります。IP-SM-GW が購読を更新する SUBSCRIBE と、S-CSCF の NOTIFY は、シーケンス図では省いています（[再登録と登録の解除](#再登録と登録の解除)）。どれも状態が変わらないので、PUR は送られません（TS 24.341 5.3.3.2）。
 - **C3.** 登録は、UE がそこにいることを示します（TS 23.204 6.5b の step 2a）。IP-SM-GW は、A3 で立てた UE 2 の UNRI をまだ持っているので、それを落として、A6 と同じ知らせを HSS に送ります。MAP の READY_FOR_SM の代わりにこのプロジェクトが決めたコマンド、Ready-For-SM です。
 - **C4.** HSS は自分の UNRI を落とし、A7 と同じく SC に知らせます（TS 23.040 3.2.6 の 2c）。C3 の知らせが無ければ、UE 2 が登録し直すだけのあいだ、UNRI を落とすものはありません。SC の SRR には毎回 DIAMETER_ERROR_ABSENT_USER が返り、UE 2 宛の新しいショートメッセージの SRR にも同じものが返ります。
 

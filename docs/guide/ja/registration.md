@@ -66,7 +66,7 @@ IMS で電話をかけたり SMS を送ったりする前に、端末は登録�
 sip || diameter.cmd.code >= 300 || dns.qry.type == 35 || dns.qry.type == 33
 ```
 
-SIP のメッセージ、Cx のメッセージ、NAPTR と SRV の問い合わせが表示されます。Diameter の監視（DWR と DWA）は表示されません。**Statistics > Flow Graph** で **Limit to display filter** を選ぶと、次のラダー図が描かれます。
+SIP のメッセージ、Cx のメッセージ、NAPTR と SRV の問い合わせが表示されます。Diameter の監視（DWR と DWA）は表示されません。**Statistics > Flow Graph** で **Limit to display filter** を選ぶと、次のシーケンス図が描かれます。
 
 ## シーケンス
 
@@ -880,7 +880,7 @@ HSS のノードも同じ保守用の API をポート 8085 で出していま�
  |              |              |               |<------------>|
 ```
 
-- HSS が DPR を送り、相手が DPA を返し、DPA を受け取った側が TCP の接続を閉じます（RFC 6733 5.4）。ラダー図にあるのは Cx の 2 本です。IP-SM-GW と MMTel AS も Sh の接続を 1 本ずつ持っていて、そちらにも DPR が出るので、このやり取りは全部で 4 回です。`docker compose logs hss` には、そのあとに `stopped accepting connections` が出ます。
+- HSS が DPR を送り、相手が DPA を返し、DPA を受け取った側が TCP の接続を閉じます（RFC 6733 5.4）。シーケンス図にあるのは Cx の 2 本です。IP-SM-GW と MMTel AS も Sh の接続を 1 本ずつ持っていて、そちらにも DPR が出るので、このやり取りは全部で 4 回です。`docker compose logs hss` には、そのあとに `stopped accepting connections` が出ます。
 - Wireshark では、`diameter.cmd.code == 282` で DPR と DPA が見られます。どの DPR も `Disconnect-Cause` AVP は `REBOOTING (0)` です。
 - I-CSCF と S-CSCF には、要求を受ける HSS が 1 台も無くなりました。`docker compose exec icscf wget -qO- http://127.0.0.1:8085/maintenance/v1/state` を見ると、I-CSCF の `"operational_state":"DISABLED"` が出ます。運用者は I-CSCF を外していませんが、HSS が無ければ I-CSCF は動けないためです。
 - どちらも Tc ごと、つまり 30 秒ごとに接続し直そうとして、lock が解けるまで断られます。`docker compose logs icscf` には、試すたびに `connection failed` が出ます。Wireshark では、`tcp.flags.reset == 1 && tcp.srcport == 3868` で、HSS が接続を断るときのリセットが見られます。

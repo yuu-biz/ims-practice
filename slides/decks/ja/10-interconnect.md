@@ -125,7 +125,7 @@ docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue c
 
 - キャプチャ用のコンテナはブリッジごとに 1 つです。3 つとも開いてください。同じ通話が、どのファイルにも別々の Call-ID で入っています。
 - これまでの回のフィルタは、どのファイルでもそのまま使えます。`sip.Method == "INVITE" && count(sip.Via) == 1` は、網のあいだから IBCF の INVITE を選び出します。
-- 網のあいだのキャプチャで **Statistics > Flow Graph** を開くと、2 つの IBCF のあいだのラダー図になります。
+- 網のあいだのキャプチャで **Statistics > Flow Graph** を開くと、2 つの IBCF のあいだのシーケンス図になります。
 
 > 手順書 [「各キャプチャに見えるもの」](../../../docs/guide/ja/interconnect.md#各キャプチャに見えるもの)
 

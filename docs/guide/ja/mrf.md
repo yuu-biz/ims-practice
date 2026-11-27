@@ -77,7 +77,7 @@ printf "PUT /oam/v1/subscriptions/001010000000002@ims.mnc001.mcc001.3gppnetwork.
   nc -w 5 127.0.0.1 8080'
 ```
 
-そのあと http://localhost:8080 を開き、`phone1` から `phone2` に発信します。2 つ目の着信と会議は、ラボの手順書にある、2 つ目の着信を受けて会議を作る手順のとおりに進めます。通話のラダー図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
+そのあと http://localhost:8080 を開き、`phone1` から `phone2` に発信します。2 つ目の着信と会議は、ラボの手順書にある、2 つ目の着信を受けて会議を作る手順のとおりに進めます。通話のシーケンス図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
 
 ## キャプチャを開く
 

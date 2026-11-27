@@ -285,7 +285,7 @@ OSS                                OAM                       S-CSCF             
  |<---------------------------------|                           |                     |
 ```
 
-- ラダー図には S-CSCF だけを描きました。I-CSCF、IP-SM-GW、MMTel AS、Service Centre も同じように動き、それぞれのアラームに通知が届きます。
+- シーケンス図には S-CSCF だけを描きました。I-CSCF、IP-SM-GW、MMTel AS、Service Centre も同じように動き、それぞれのアラームに通知が届きます。
 - OAM と S-CSCF のあいだは、ポート 8085 の保守用の API です。Wireshark はこれを自分では HTTP として解読しません。OSS と OAM はどちらもポート 8080 で待ち受けるので、HTTP と JSON の本文まで解読します。`http && ip.addr == 172.28.0.66` でやり取りの全体が、`json.member_with_value == "notificationType:notifyNewAlarm"` で新しいアラームの通知が見えます。
 - 一覧の `GET` には、インベントリのすべてのノードに一覧を聞いてから答えます。確認は、鍵が示す 1 台のノードにだけ渡します。
 
