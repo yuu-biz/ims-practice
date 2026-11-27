@@ -422,3 +422,47 @@ func TestReINVITEWithoutAnOfferAnsweredInThePRACKBetweenTwoUAs(t *testing.T) {
 		t.Errorf("Accept returned %v, %v; want the ACK without a body", r.ack, r.err)
 	}
 }
+
+// RFC 6141 4.6: once a reliable provisional response to a re-INVITE has
+// gone, its target refresh holds, so the remote target stays the
+// Contact of the re-INVITE even when the re-INVITE then fails. After a
+// provisional response that is not reliable, the failure leaves the
+// target as it was (RFC 3261 12.2.2).
+func TestReliableResponseToAReINVITEKeepsItsTargetRefresh(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		headers  []HeaderField
+		reliable bool
+	}{
+		{"reliable", []HeaderField{supports100rel}, true},
+		{"unreliable", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			results := make(chan error, 2)
+			in, p := rawCall(t, testTimers, func(r *InDialogRequest) {
+				results <- r.Progress(180, Body{})
+				results <- r.Reject(488)
+			})
+			moved := "sip:moved@" + addrOf(p.peer).String()
+			reinvite := p.request(INVITE, holdOffer, append([]HeaderField{{Name: "Contact", Value: "<" + moved + ">"}}, tc.headers...)...)
+			prov := readProvisional(t, p)
+			if tc.reliable {
+				prackFrom(p, prov, Body{})
+			}
+			if err := returned(t, results, "Progress"); err != nil {
+				t.Fatalf("Progress: %v", err)
+			}
+			if final := readFinal(t, p, reinvite.Get("CSeq")); final.StatusCode != 488 {
+				t.Fatalf("re-INVITE got %s, want 488", startLine(final))
+			}
+			ackNonOK(t, p, reinvite)
+			want := p.target
+			if tc.reliable {
+				want = moved
+			}
+			if d, _ := in.Dialog(); d.RemoteTarget != want {
+				t.Errorf("remote target is %s after the 488, want %s", d.RemoteTarget, want)
+			}
+		})
+	}
+}
