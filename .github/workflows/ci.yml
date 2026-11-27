@@ -47,7 +47,9 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          files=$(git diff --name-only "$BASE" HEAD)
+          # A rename lists both paths, so that code moved into slides/ or
+          # docs/, or a guide moved away, still counts where it was.
+          files=$(git diff --name-only --no-renames "$BASE" HEAD)
           code=$(echo "$files" | grep -Ev '\.md$|^docs/|^LICENSE|^NOTICE$|^slides/' | head -n 1 || true)
           echo "first file of code: ${code:-none}"
           echo "code=$([ -n "$code" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
@@ -146,8 +148,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
       - name: gofmt
         run: test -z "$(gofmt -l slides)" || { gofmt -l slides; exit 1; }
+      # As in the go job: only a plain build notices code that leans on a
+      # helper from a _test.go file.
+      - run: go build ./slides/...
       - run: go vet ./slides/...
-      - run: go test ./slides/...
+      - run: go test -race ./slides/...
 
   # The go job runs this test with the others; this job runs it alone
   # when a change of documents touches the guides that it reads.

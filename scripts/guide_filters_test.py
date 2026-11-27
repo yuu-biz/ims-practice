@@ -106,6 +106,7 @@ CI = """jobs:
   changes:
     steps:
       - run: |
+          compose=$(echo "$files" | grep -E '^docs/guide/(en|ja)/(capture|sms)\\.md$')
           guides=$(echo "$files" | grep -E '^docs/guide/en/(sms|mmtel)\\.md$')
   e2e-sms:
     needs: changes
@@ -161,6 +162,18 @@ class ChecksTheGuides(unittest.TestCase):
 
     def test_a_job_that_does_not_run_when_its_guide_changes(self):
         self.write("ci.yml", CI.replace(" || contains(needs.changes.outputs.guides, ' sms ')", ""))
+        status, out = self.check()
+        self.assertEqual(status, 1)
+        self.assertIn("the CI job e2e-sms runs a script that reads this guide", out)
+
+    def test_a_guide_that_only_another_pattern_names(self):
+        self.write("ci.yml", CI.replace("en/(sms|mmtel)", "en/(mmtel)"))
+        status, out = self.check()
+        self.assertEqual(status, 1)
+        self.assertIn("the CI skips the end-to-end scripts when only this guide changes", out)
+
+    def test_a_condition_outside_the_if_of_the_job(self):
+        self.write("ci.yml", CI.replace(" || contains(needs.changes.outputs.guides, ' sms ')", "\n    # contains(needs.changes.outputs.guides, ' sms ')"))
         status, out = self.check()
         self.assertEqual(status, 1)
         self.assertIn("the CI job e2e-sms runs a script that reads this guide", out)
