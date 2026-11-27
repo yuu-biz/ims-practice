@@ -614,7 +614,7 @@ steps:
     active: cat-udr
     detail: [cat-udr, cat-uda]
     text: |
-      The operator sets the tone of a user in the HSS (TS 24.182 4.5.2). Here the Lab sets it.
+      The operator sets the tone of a user in the HSS (TS 24.182 4.5.2). Here it is set through the OAM.
       The AS reads it for each incoming call.
   - id: ask
     title: It asks the MRFC before it calls UE 2
@@ -634,7 +634,7 @@ steps:
     only: [cat-180-ue-p, cat-180-p-s, cat-180-s-as]
     active: cat-180-s-as
     detail: []
-    text: The 180 of UE 2 reaches the AS.
+    text: The 180 of UE 2 reaches the AS. Before it, the 183 of UE 2 with the precondition table has reached UE 1; the diagram leaves it out.
   - id: tone
     title: An UPDATE brings the SDP of the tone to UE 1
     show: [cat-update-as-s, cat-update-s-p, cat-update-p-ue]
@@ -671,7 +671,7 @@ steps:
 | The UPDATE to UE 1, after UE 2's 180 | `P-Early-Media: sendonly` and the SDP of the MRFP, with `a=content:g.3gpp.cat`. |
 | At the answer | A BYE to the MRFC, and an UPDATE that moves UE 1's media to UE 2, before the 200. |
 
-- The operator provisions the tone in the HSS (TS 24.182 4.5.2); here the Lab does it. The terminating AS reads it over Sh for each call and asks the MRFC before UE 2 is called (4.5.5.3.7).
+- The operator provisions the tone in the HSS (TS 24.182 4.5.2); here it is done through the OAM. The terminating AS reads it over Sh for each call and asks the MRFC before UE 2 is called (4.5.5.3.7).
 - UE 1 uses preconditions, so the tone comes in an UPDATE once UE 2 alerts (4.5.5.3.7 b 1). A caller without preconditions gets it in the 18x itself.
 
 The filter is `sdp.media_attr == "content:g.3gpp.cat"` (RFC 4796).

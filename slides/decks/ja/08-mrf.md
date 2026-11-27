@@ -42,7 +42,7 @@ events:
   - {id: an-inv-p-s, msg: INVITE, from: pcscf, to: scscf, proto: SIP}
   - {id: an-inv-s-as, msg: INVITE, from: scscf, to: mmtel, proto: SIP}
   - id: an-ocb
-    do: 発信規制を当てる
+    do: 発信規制をかける
     at: mmtel
     fields:
       - 発信規制: "UE 1 は `baoc` を設定している。通話を断る（TS 24.611 4.5.2.4.1）"
@@ -542,7 +542,7 @@ steps:
     detail: []
     text: UE 1 の INVITE が UE 1 の AS に届きます。
   - id: decide
-    title: AS が発信規制を当てる
+    title: AS が発信規制をかける
     show: [an-ocb]
     text: UE 1 は自分の発信を規制しているので、AS は通話を断ります。その前に `notice` を流します。
   - id: annc
@@ -614,7 +614,7 @@ steps:
     active: cat-udr
     detail: [cat-udr, cat-uda]
     text: |
-      利用者の呼び出し音は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここではラボが設定します。
+      利用者の呼び出し音は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここでは OAM から設定します。
       AS は着信のたびに読みます。
   - id: ask
     title: UE 2 を呼び出す前に MRFC に頼む
@@ -634,7 +634,7 @@ steps:
     only: [cat-180-ue-p, cat-180-p-s, cat-180-s-as]
     active: cat-180-s-as
     detail: []
-    text: UE 2 の 180 が AS に届きます。
+    text: UE 2 の 180 が AS に届きます。その前に UE 2 の 183 がプリコンディションの表とともに UE 1 まで届いていますが、この図では省きます。
   - id: tone
     title: UPDATE で呼び出し音の SDP が UE 1 に届く
     show: [cat-update-as-s, cat-update-s-p, cat-update-p-ue]
@@ -671,7 +671,7 @@ steps:
 | UE 2 の 180 のあとの UPDATE | `P-Early-Media: sendonly` と、`a=content:g.3gpp.cat` の付いた MRFP の SDP。 |
 | 応答のとき | MRFC への BYE と、200 の前に UE 1 のメディアを UE 2 へ移す UPDATE。 |
 
-- 利用者の呼び出し音は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここではラボが設定します。着信側の AS は着信のたびに Sh で読み、UE 2 を呼び出す前に MRFC に頼みます（4.5.5.3.7）。
+- 利用者の呼び出し音は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここでは OAM から設定します。着信側の AS は着信のたびに Sh で読み、UE 2 を呼び出す前に MRFC に頼みます（4.5.5.3.7）。
 - UE 1 はプリコンディションを使うので、呼び出し音は UE 2 が呼び出しを始めたあとの UPDATE で届きます（4.5.5.3.7 b 1）。プリコンディションを使わない発信者には、18x そのものに入ります。
 
 フィルタは `sdp.media_attr == "content:g.3gpp.cat"` です（RFC 4796）。
