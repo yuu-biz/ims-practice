@@ -688,13 +688,16 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 	d.invite = noInvite
 	// RFC 3262 4: the UAC keeps the RSeq until the final response. One
 	// that comes after it is discarded, which the RFC allows.
+	seq := d.reliable[cseq.Number]
 	delete(d.reliable, cseq.Number)
+	offerIn2xx := accepted && !offers && !reinvite.described && len(final.Body) > 0
 	switch {
-	case reinvite.described && !accepted && d.offer == OfferRemote:
-		// The offer of a reliable response has no answer yet, and goes
-		// with the re-INVITE (RFC 3261 14.1).
+	case !accepted && reinvite.offerRSeq > seq.pracked:
+		// The offer of a reliable response has no answer in a PRACK yet,
+		// and goes with the re-INVITE (RFC 3261 14.1). An offer that the
+		// peer made after an answer, in an UPDATE, stays open.
 		d.offerEvent(OfferRejected)
-	case !reinvite.described && accepted && !offers && len(final.Body) > 0:
+	case offerIn2xx:
 		d.offerEvent(OfferReceived)
 	}
 	d.answered(final, offers && !reinvite.described)
@@ -723,6 +726,9 @@ type reInviteSent struct {
 	// the session description of the re-INVITE: the answer to its
 	// offer, or the offer when it had none (RFC 3262 5).
 	described bool
+	// offerRSeq is the RSeq of that response when it carried the offer,
+	// whose answer goes into its PRACK; 0 otherwise.
+	offerRSeq uint32
 }
 
 // reInviteProvisional is RFC 3262 4 and 5 and RFC 6141 4.7 for resp, a
@@ -742,6 +748,7 @@ func (d *CallDialog) reInviteProvisional(resp *Message, r *reInviteSent) bool {
 	if d.usable() != nil || !d.reliableInOrder(resp) {
 		return false
 	}
+	rseq := d.reliableTo(resp).last
 	// RFC 6141 4.3: the target stays refreshed even when the re-INVITE
 	// then fails.
 	d.dialog.refreshTarget(resp)
@@ -751,6 +758,7 @@ func (d *CallDialog) reInviteProvisional(resp *Message, r *reInviteSent) bool {
 			d.offerEvent(AnswerReceived)
 		} else {
 			d.offerEvent(OfferReceived)
+			r.offerRSeq = rseq
 		}
 	}
 	// A response with an offer waits for the user's answer.
