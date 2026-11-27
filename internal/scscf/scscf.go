@@ -623,14 +623,33 @@ func (s *SCSCF) deregister(st *sip.ServerTransaction, privateID string, wildcard
 		s.refuseOutOfOrder(st, reg, log)
 		return
 	}
+	// TS 24.229 5.4.1.4.1: the S-CSCF removes the registration from its
+	// local data once the procedure with the HSS (TS 29.228 6.1.2) has
+	// completed, and TS 23.228 5.3.1 steps 7 to 9 have the HSS answer
+	// the SAR before the S-CSCF answers 200.
+	saa, err := s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, reg.ServerName, cx.UserDeregistration)
+	switch {
+	case err == nil && saa.Result.Success():
+	case err == nil && saa.Result == diameter.Experimental(cx.DiameterErrorIdentityAlreadyRegistered):
+		// TS 29.228 8.1.2: the HSS holds the user at another S-CSCF,
+		// which has taken the user over, and keeps it there. The
+		// registration here is this S-CSCF's to end (8.1.1).
+	default:
+		// Without an SAA, the S-CSCF cannot tell whether the SAR reached
+		// the HSS or only its answer was lost; a failed SAA says the HSS
+		// changed nothing (TS 29.228 6.1.2.1). The S-CSCF keeps the
+		// registration and answers 500, as for a SAR of a registration
+		// that fails. The REGISTER that the UE sends again sends the SAR
+		// again, and the expiry of the registration ends it otherwise.
+		log.Warn("deregistration refused: SAR failed", "result", describe(saa.Result, err))
+		s.respond(st, 500, nil)
+		return
+	}
 	if err := s.store.DeleteRegistration(ctx, privateID); err != nil {
 		s.storeFailed(st, err, log)
 		return
 	}
 	log.Info("deregistered")
-	// TS 23.228 5.3.1 steps 7 to 9: the HSS has answered the SAR before
-	// the S-CSCF answers 200.
-	s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, reg.ServerName, cx.UserDeregistration)
 	s.respond(st, 200, func(r *sip.Message) {
 		r.Add("Contact", fmt.Sprintf("<%s>;expires=0", reg.Contact))
 	})
