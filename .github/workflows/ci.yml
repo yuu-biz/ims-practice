@@ -78,6 +78,8 @@ jobs:
         run: python scripts/check_simplified.py
       - name: every abbreviation in the guides is in the glossary
         run: python scripts/check_glossary.py
+      - name: the Japanese headings are plain phrases and say シーケンス図
+        run: python scripts/check_japanese.py
       - name: the display filters of a guide are the same in both languages, and a scenario runs them
         run: python scripts/guide_filters.py --check
       - name: the tests of the scripts
