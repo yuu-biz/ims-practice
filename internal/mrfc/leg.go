@@ -91,10 +91,11 @@ func (o offered) request(direction string) agw.TerminationRequest {
 }
 
 // pcmuOf is PCMU in the audio stream m, under the payload type that m
-// gives it.
+// gives it: the single-channel one at 8000 Hz that the MRFP mixes, as
+// the negotiation picks it (sdp.AudioAnswer).
 func pcmuOf(m sdp.Media) (sdp.Codec, bool) {
 	for _, c := range m.Codecs() {
-		if c.Is(sdp.NamePCMU) && c.ClockRate == 8000 {
+		if c.Is(sdp.NamePCMU) && c.ClockRate == 8000 && c.Channels <= 1 {
 			return c, true
 		}
 	}

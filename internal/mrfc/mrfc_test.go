@@ -311,6 +311,40 @@ func TestAnnouncementWithADynamicPayloadType(t *testing.T) {
 	waitDone(t, out.Done(), "the dialog with the MRFC")
 }
 
+// TestAnnouncementSkipsAStereoPCMU: an offer that lists a two-channel
+// PCMU under a dynamic payload type before the single-channel static
+// one gets an answer with the one the MRFP plays, payload type 0, as the
+// negotiation picks it, and the announcement under it.
+func TestAnnouncementSkipsAStereoPCMU(t *testing.T) {
+	media := startMRFP(t)
+	m := startMRFC(t, mrfc.NewMemoryStore(), media.processor("mrfp1"))
+	as := newUA(t, "mmtel", nil)
+	caller := party(t)
+
+	o, err := sdp.AudioOffer("1", addrOf(caller), []sdp.Codec{
+		{PayloadType: dynamicPCMU, Name: sdp.NamePCMU, ClockRate: 8000, Channels: 2},
+		{PayloadType: 0, Name: sdp.NamePCMU, ClockRate: 8000},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := invite(t, as, "sip:annc@"+m.host+";play=/provisioned/notice", sip.Body{Type: "application/sdp", Content: o.Bytes()})
+	ok := final(t, out)
+	if ok.StatusCode != 200 {
+		t.Fatalf("got %d, want 200", ok.StatusCode)
+	}
+	answer, err := sdp.Parse(ok.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audio := answer.AudioMedia(); audio == nil || !slicesEqual(audio.Formats, []int{0}) {
+		t.Errorf("answer\n%s\nwant PCMU under payload type 0", ok.Body)
+	}
+	want := rtptest.Frames(t, announcements["notice"])
+	sameFrames(t, rtptest.ReadPCMU(t, caller, 0, len(want), 10*time.Second), want)
+	waitDone(t, out.Done(), "the dialog with the MRFC")
+}
+
 // TestAnnouncementAsEarlyMedia is the gateway model of TS 24.628 Annex G
 // and TS 24.182 4.5.5.3.7: the AS holds the caller's dialog early, sends
 // it a reliable 183 with the SDP of the MRFP and P-Early-Media sendonly,
