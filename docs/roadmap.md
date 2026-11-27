@@ -310,8 +310,9 @@
   - このリポジトリの個別の実装の説明。
 - 元データを Markdown などのテキストで管理し、HTML で表示し、pptx を出力する仕組みを選ぶ。自前の生成の道具にした（[implementation.md](design/implementation.md)）。
 - 各段階の手順書とラダー図をスライドから参照する。
+- 信号の移動、ノードの判断、値の変化を、図の段階で見せる（[design/slides.md](design/slides.md)）。HTML で段階を進め、pptx にチェックポイントごとの静止のページを残す。
 
-今あるもの。Go、パッケージ構成、網の地図、キャプチャとラボ、登録、通話、SMS、付加サービス、MRF、VoLTE、2 つの網の相互接続のデッキが英語と日本語で `slides/decks/` にあり、CI の `slides` のジョブが HTML と pptx を作ります（[slides/README.ja.md](../slides/README.ja.md)）。調査は [slides.md](background/slides.md) にあります。
+今あるもの。Go、パッケージ構成、網の地図、キャプチャとラボ、登録、通話、SMS、付加サービス、MRF、VoLTE、2 つの網の相互接続のデッキが英語と日本語で `slides/decks/` にあり、CI の `slides` のジョブが HTML と pptx を作ります（[slides/README.ja.md](../slides/README.ja.md)）。登録のデッキは、シーン（ノードとイベントのモデルを段階で進める図）で書いてあります。ほかのデッキは文字のページで、シーンへの書き直しが残っています。調査は [slides.md](background/slides.md) にあります。
 
 **完了条件.** CI でスライドの HTML と pptx が生成され、成果物として保存される。
 
@@ -327,4 +328,5 @@
 - 保存先の冗長（Valkey の Sentinel、クラスタ）。
 - SLF（Dx）。加入者を別々の HSS に分けて置くときに要る。
 - P-CSCF の網からの復旧（TS 23.380 5.1.2、5.4、5.5）。
+- スライドの映像（ナレーション、音声、字幕を付けた動画）。作るときに決める論点は [design/slides.md](design/slides.md) の「映像にするとき」にある。
 - SMS over SGs。MSC が必要で、CS 網は対象外なので、段階には入れない。
