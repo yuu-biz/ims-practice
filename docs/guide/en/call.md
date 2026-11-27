@@ -183,7 +183,7 @@ The 183 also has **Require: precondition**: UE 2 uses the mechanism because the 
 
 The 183 creates the **early dialog**: it carries a To tag, Contact and the Record-Route list.
 
-On the way back, each P-CSCF pass rewrites the answer: the callee's side points the core termination at UE 2's answer and names its core termination in the SDP; the caller's side does the same, so that UE 1 sees its own context's access termination. In the end, each UE talks only to the relay.
+On the way back, each P-CSCF pass rewrites the answer: the callee's side points the access termination at UE 2's answer and names its core termination in the SDP; the caller's side points the core termination at that answer, the core termination of context 2, and names its access termination in the SDP, so that UE 1 sees its own context's access termination. In the end, each UE talks only to the relay.
 
 The callee's side also asserts who answered. It removes any P-Asserted-Identity or P-Preferred-Identity that UE 2 put in the 183, the 180 and the 200, and puts in **P-Asserted-Identity** with the identity of the P-Called-Party-ID of step 6 (TS 24.229 5.2.6.4.4 step 1). That is the identity that UE 1 sees as the one who answered (TIP). When a response carries `Privacy: id`, the caller's side removes the P-Asserted-Identity before the response reaches UE 1, because the UE is outside the trust domain (RFC 3325 7, TS 24.229 4.4.2).
 
