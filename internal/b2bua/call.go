@@ -70,6 +70,9 @@ func New(in *sip.IncomingCall, hooks Hooks, log *slog.Logger) *Call {
 		early: earlyDialogs{last: map[string]*sip.Message{}}}
 	in.Handle(c.fromCaller)
 	in.RelayPRACK()
+	// The final response of a re-INVITE that a side cancels is the one of
+	// the other leg, which only that leg's end can choose (reinvite.go).
+	in.RelayReInviteCancel()
 	return c
 }
 
@@ -88,6 +91,7 @@ func (c *Call) Attempt(ua *sip.UA, inv sip.Invitation) (*sip.OutgoingCall, error
 	calleeTurns := newTurns()
 	var sent *sip.OutgoingCall
 	inv.ManualPRACK = true
+	inv.RelayReInviteCancel = true
 	inv.OnRequest = func(r *sip.InDialogRequest) {
 		c.mu.Lock()
 		out := sent
@@ -690,17 +694,6 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 			c.settledByTheEnds(r)
 		}
 		ack, err := r.Accept(m.Body, m.Headers...)
-		if err != nil {
-			// The side that sent the request has its final response
-			// already: a re-INVITE that it cancelled, which the UA answered
-			// 487 while no reliable provisional response had carried its
-			// session description, and whose far end made the change of the
-			// session all the same (RFC 6141 3.3, 3.8). The two ends are
-			// then on different sessions, and only a new offer of one of
-			// them settles that.
-			c.log.Info("the side that sent the request did not take the 2xx of the other leg",
-				"method", string(r.Request.Method), "error", err.Error())
-		}
 		if err == nil && offerless && ack != nil {
 			// A re-INVITE without an offer: the 2xx had the other side's
 			// offer, and this side's ACK has the answer (RFC 3261 14.1).

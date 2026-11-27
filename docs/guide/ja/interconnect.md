@@ -409,9 +409,9 @@ IBCF の各台は、こうした記録を自分の呼ごとに `Store` に置き
 - **re-INVITE は自分の PRACK と UPDATE を待たせません。** IBCF は片方から届いた要求を届いた順に先へ送り、1 つ前が応答を得てから次を送ります。相手が逆の順で受け取らないようにするためです（RFC 3261 12.2.2）。re-INVITE に最終応答が来るのはこの流れの最後なので、相手が信頼性のある暫定応答を返し、IBCF がそれを信頼性のある写しで渡した時点で、そのあとの要求を送れるようにします。そのときには相手が re-INVITE を受け取っていて、IBCF が付けた CSeq も決まっています。最終応答まで待つと、その写しへの PRACK と、そのあとの UPDATE が送れません。そうした応答が無ければ、re-INVITE は最終応答まで、2xx が offer を運ぶときは ACK まで順番を持ちます。
 - **PRACK が来なければ re-INVITE も終わります。** re-INVITE を送った側が信頼性のある 183 を 64\*T1、32 秒の間に確認しないと、IBCF は re-INVITE を 500 で終えます。RFC 3262 3 が UAS にそう求めています。すると、もう一方の脚の 183 も PRACK を得られません。相手もその 183 を送ってから 32 秒後に、同じように自分の re-INVITE を終えます。RFC 3262 3 は 2xx 以外の最終応答を PRACK の前に送ることを UAS に認めているので、相手の誤りの応答はその PRACK を待たず、IBCF がすぐに渡します。
 - **re-INVITE への CANCEL も境界を越えます。** UE A1 は新しいセッションの資源を確保できず、answer を受け取る前に変更をあきらめて、自分の re-INVITE を取り消すことがあります（RFC 3261 9.1、TS 24.229 6.1.4.2 の項目 b）。IBCF はその CANCEL に 200 を返し、受け取った CANCEL の Reason を付けた自分の CANCEL で、もう一方のダイアログの re-INVITE を取り消します（RFC 3261 9.2、RFC 3326 2）。CANCEL を送れるのは、取り消す要求に暫定応答が返ってからです（RFC 3261 9.1）。そのため、IBCF 自身の re-INVITE が相手の最初の応答をまだ待っているあいだに届いた CANCEL は、その応答が返った時点で出ていきます。
-- **取り消された re-INVITE の最終応答は相手が決めます。** IBCF は自分で作りません。re-INVITE のセッション記述を、IBCF の信頼性のある暫定応答がまだ運んでいなければ、その側のセッションは何も変わっていません。IBCF は re-INVITE をその場で 487（Request Terminated）で終え、セッションは前のままです（RFC 3261 14.1、RFC 6141 3.3 と 3.8）。信頼性のある応答が運んだあとは、変更がもう済んでいるかもしれず、それは相手しか分かりません。そこで IBCF は re-INVITE をもう一方の脚の最終応答に任せ、それを渡します。変更を済ませた相手に RFC 6141 3.3 が求める 200 でも、誤りの応答でも同じです。487 もほかと同じ 2xx 以外の最終応答なので、TrGW のターミネーションは断られた offer のあとと同じように戻ります。その戻し方は次の節にあり、`TestCancelledReInvitePutsTheTrGWBack` が確かめます。IBCF が自分で 487 を返したあとに相手が 2xx を返すと、両側のセッションは食い違ったままになり、どちらかが offer をし直すまで戻りません。IBCF はそのことをログに 1 行書きます。
+- **取り消された re-INVITE の最終応答は相手が決め、IBCF は自分で作りません。**セッションの変更がもう済んでいるかどうかは、相手にしか分からないためです。相手は、変更していなければ 487（Request Terminated）を返し、セッションは前のままです（RFC 3261 14.1）。変更を済ませていれば、CANCEL を受けたあとでも 2xx を返します（RFC 6141 3.3、3.8）。IBCF はどちらもそのまま渡すので、両側のセッションは同じままです。487 もほかと同じ 2xx 以外の最終応答なので、TrGW のターミネーションは断られた offer のあとと同じように戻ります。その戻し方は次の節にあり、`TestCancelledReInvitePutsTheTrGWBack` が確かめます。
 
-この回の UE A1 は answer の入った信頼性のある 183 のあとで取り消します。どちらの IBCF も最終応答をもう一方の脚に任せるので、UE B1 の 487 が UE A1 まで届きます。
+この回の UE A1 は answer の入った信頼性のある 183 のあとで取り消し、UE B1 の 487 が UE A1 まで届きます。
 
 ```text
  UE A1         IBCF-A          IBCF-B          UE B1
@@ -437,7 +437,7 @@ IBCF の各台は、こうした記録を自分の呼ごとに `Store` に置き
  |              |                |------------->|
 ```
 
-このプロジェクトの UE は re-INVITE に最終応答だけを返し、取り消すこともないので、スクリプトのキャプチャにはこれらの流れが出てきません。`internal/b2bua` の試験が 1 つのプロセスの中で流します。信頼性のある 183、その PRACK、UPDATE、200 の流れは `TestReliable183ToAReINVITECrossesBothLegs` が、信頼性のない 2 通りの写しは `TestAnUnreliable183ToAReINVITEIsCopiedUnreliably` と `TestAReINVITEWithout100relKeepsTheAnswerForThe2xx` が、CANCEL とそれが受け取る 2 通りの最終応答は `TestTheCancelOfARelayedReInviteReachesTheFarLeg` と `TestACancelledRelayedReInviteThatTheFarLegAnswersWith2xx` が確かめます。MMTel AS も同じように中継します（[付加サービスの手順書](mmtel.md)を参照）。
+このプロジェクトの UE は re-INVITE に最終応答だけを返し、取り消すこともないので、スクリプトのキャプチャにはこれらの流れが出てきません。`internal/b2bua` の試験が 1 つのプロセスの中で流します。信頼性のある 183、その PRACK、UPDATE、200 の流れは `TestReliable183ToAReINVITECrossesBothLegs` が、信頼性のない 2 通りの写しは `TestAnUnreliable183ToAReINVITEIsCopiedUnreliably` と `TestAReINVITEWithout100relKeepsTheAnswerForThe2xx` が、CANCEL とそれが受け取る最終応答は `TestTheCancelOfARelayedReInviteReachesTheFarLeg`、`TestACancelledRelayedReInviteThatTheFarLegAnswersWith2xx`、`TestACancelledRelayedReInviteBeforeAnyAnswerGetsTheFarLegsFinalResponse` が確かめます。MMTel AS も同じように中継します（[付加サービスの手順書](mmtel.md)を参照）。
 
 ## TrGW が SDP を受け取らないとき
 
