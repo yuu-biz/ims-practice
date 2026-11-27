@@ -792,7 +792,7 @@ steps:
     checkpoint: true
     text: |
       The INVITE on the link is IBCF-A's own, and the one that enters network B is IBCF-B's own.
-      This is where one call becomes three dialogs.
+      Each IBCF ends the dialog it received and starts one of its own. With the dialog of the MMTel AS that this picture leaves out, the whole call has four.
   - id: find
     title: Network B finds the callee (6)
     show: [lir, lia, inv-i-sb, inv-sb-ue]
@@ -818,7 +818,7 @@ steps:
     detail: []
     checkpoint: true
     text: |
-      The three dialogs each have their own PRACKs, ACK and BYE (8).
+      Each of the four dialogs of the call has its own PRACKs, ACK and BYE (8). The ladder marks the three around the border. The fourth is between UE A1 and the MMTel AS.
       The RTP runs from UE A1 to the media relay of network A, to TrGW-A, to TrGW-B and to UE B1 (9).
 ```
 
@@ -1009,13 +1009,13 @@ steps:
 
 ---
 
-## Three dialogs, three Call-IDs
+## Three dialogs around the border, three Call-IDs
 
 ```ims-scene
 id: dialogs
 view: ladder
 nodes: [scscf-a, ibcf-a, ibcf-b, icscf-b]
-lead: The INVITE of one call has a different Call-ID in each of the three captures, because the dialogs are split at the borders.
+lead: Three of the four dialogs of the call are around the border, one in each capture, each with a Call-ID of its own. The fourth is between UE A1 and the MMTel AS.
 steps:
   - id: first
     title: The INVITE in the capture of network A
@@ -1023,7 +1023,7 @@ steps:
     detail: [inv-s-ia]
     checkpoint: true
     text: |
-      The INVITE from the S-CSCF to IBCF-A. Its Call-ID and its Via entries are network A's.
+      The INVITE from the S-CSCF to IBCF-A, the second dialog of the call: the MMTel AS made it. Its Call-ID and its Via entries are network A's.
       This INVITE ends at IBCF-A.
   - id: legs-a
     title: IBCF-A ends it and sends it again
@@ -1054,7 +1054,7 @@ steps:
     active: ''
     detail: [inv-s-ia, inv-nni, inv-ib-i]
     checkpoint: true
-    text: One call has a different Call-ID in each capture, so take the Call-ID again in each file you follow it in.
+    text: Each dialog has its own Call-ID, so take the Call-ID again in each file you follow the call in.
 ```
 
 The INVITE on the link, shortened.
@@ -1071,10 +1071,10 @@ Contact: <sip:ibcf.nni.mnc001.example.net:5060>
 
 - **Via.** One entry, IBCF-A's. The nodes of network A put theirs on the INVITE that reached IBCF-A, and that INVITE ended there.
 - **Record-Route.** None. IBCF-A is the far end of this dialog, so the requests of network B reach it by its Contact.
-- **Call-ID.** IBCF-A's own. Compare it with the INVITE to IBCF-A and with the one from IBCF-B: the call has a different Call-ID in each of the three captures.
+- **Call-ID.** IBCF-A's own. Compare it with the INVITE to IBCF-A and with the one from IBCF-B: the three are different. The INVITE of UE A1 to the P-CSCF, in the capture of network A too, has a fourth.
 - **Max-Forwards.** IBCF-A took one hop off, as a proxy would (RFC 3261 16.6 step 3), so a call that two networks send round in a loop still ends.
 
-> Guide: ["Three dialogs in the captures"](../../../docs/guide/en/interconnect.md#three-dialogs-in-the-captures)
+> Guide: ["Three dialogs around the border in the captures"](../../../docs/guide/en/interconnect.md#three-dialogs-around-the-border-in-the-captures)
 
 ---
 
@@ -1579,7 +1579,7 @@ grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect intern
 
 ## Exercises
 
-1. Find the INVITE of the call in each of the three captures. How many Call-IDs does one call have, and why?
+1. Find the INVITE of the call in each of the three captures, and, in the capture of network A, the INVITE of UE A1 to the P-CSCF as well. How many Call-IDs does the call have in all, and why?
 2. Open the INVITE on the link. How many Via entries does it carry, and where are the others?
 3. Give IBCF-B the agreement `network-a-amr-wb-only.yaml` and call UE B1. Which status comes back, and which node sent it?
 4. Search the capture of network B for an address of 172.28.0.0/24. What should the result be?
@@ -1593,7 +1593,7 @@ For 3, the commands are in "When the profiles do not match" in the guide. For 5,
 
 ## Exercises: answers
 
-1. Three, one for each dialog. Each IBCF is a B2BUA: it ends the request on the side it came from and sends a new one on the other.
+1. Four, one for each dialog: UE A1 and the MMTel AS, the MMTel AS and IBCF-A, IBCF-A and IBCF-B, IBCF-B and UE B1. The MMTel AS and each IBCF are B2BUAs: each ends the request on the side it came from and sends a new one on the other. The captures put the last three side by side, and network B has no AS in this call.
 2. One, IBCF-A's. The nodes of network A put theirs on the INVITE that ended at IBCF-A.
 3. 488 (Not Acceptable Here), from IBCF-B. Network B takes AMR-WB alone, and UE A1 offers PCMU.
 4. Nothing. No address of network A's inside crosses the border.
@@ -1606,7 +1606,7 @@ For 3, the commands are in "When the profiles do not match" in the guide. For 5,
 ## Looking back
 
 1. What does an IBCF do with a request that reaches it from its own network?
-2. Why does one call across the border have three Call-IDs?
+2. Why does one call across the border have four Call-IDs?
 3. Which two reference points make up the II-NNI?
 4. What decides whether a MESSAGE may cross the border?
 5. Why does the caller's UE never see an address of the other network?
@@ -1619,7 +1619,7 @@ For 3, the commands are in "When the profiles do not match" in the guide. For 5,
 ## Looking back: answers
 
 1. It ends it as the exit point of its network, and sends a new request in a dialog of its own towards the peer network.
-2. One per dialog: the caller's side, the link, and the callee's side. Each IBCF ends one dialog and starts another.
+2. One per dialog: the caller and the MMTel AS, the MMTel AS and IBCF-A, the link, and IBCF-B and the callee. Each B2BUA ends one dialog and starts another.
 3. Ici between the IBCFs for the SIP, and Izi between the TrGWs for the media.
 4. The agreement with the peer network. MESSAGE is an optional method, and `methods` in the profile says whether it is allowed.
 5. The IBCF puts the media through its TrGW and writes the address of that TrGW in each network into the SDP of that side.

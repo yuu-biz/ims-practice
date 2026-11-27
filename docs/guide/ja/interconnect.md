@@ -129,11 +129,13 @@ UE A1  P-CSCF  S-CSCF  MMTel  DNS-A  IBCF-A ║ IBCF-B  I-CSCF  HSS-B  S-CSCF  P
   |       |      |       |      |      |    ║   |       |       |  183  |       | (7)  |
   |       |      |       |      |      |    ║   |<------|<--------------|<------|<-----|
   |<------|<-----|<------|<-----------------|<=============|      |       |       |      |
-  | PRACK、180、PRACK、200、ACK (8)。A1-IBCF-A、IBCF-A-IBCF-B、IBCF-B-B1 の 3 つのダイアログ |
+  | PRACK、180、PRACK、200、ACK (8)。A1-AS、AS-IBCF-A、IBCF-A-IBCF-B、IBCF-B-B1 の 4 つのダイアログそれぞれで |
   |<================= RTP。AGW、TrGW-A、TrGW-B を通る (9) ==============================>|
 ```
 
 二重線は網のあいだの `nni0` です。そこを通るメッセージは、IBCF-A と IBCF-B のあいだのダイアログのもので、どちらの UE にも見えません。
+
+この通話のダイアログは 4 つです。UE A1 と MMTel AS、MMTel AS と IBCF-A、IBCF-A と IBCF-B、IBCF-B と UE B1 のあいだです。MMTel AS と各 IBCF は B2BUA なので、それぞれが 1 つのダイアログを終え、自分の Call-ID で次のダイアログを始めます。P-CSCF、S-CSCF、I-CSCF はプロキシで、渡すダイアログをそのまま保ちます。網 B には、この通話の経路に AS がないので、網 B の側でダイアログは増えません。
 
 ### 1. UE A1 が番号に電話をかける
 
@@ -209,7 +211,9 @@ UE B1 から UE A2 への折り返しも、網の役割を入れ替えるだけ�
 
 自網の名前のうち、相手網に見えてよいものもあります。ドメインそのものは、利用者の識別子に現れます。たとえば From と P-Asserted-Identity の `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org` です。網をまたぐのは、利用者の番号の識別子です。相手網は、折り返すためにこれが要ります。番号とドメインからは、網の中のノードも IMSI も分かりません。
 
-## キャプチャで見る 3 つのダイアログ
+## キャプチャで見る境界まわりの 3 つのダイアログ
+
+UE A1 から UE B1 への通話には、ダイアログが 4 つあります（「網 A から網 B への通話」を見てください）。この節とスクリプトは、そのうち境界のまわりの 3 つを、キャプチャごとに 1 つずつ比べます。網 A のキャプチャの S-CSCF から IBCF-A への INVITE が 2 つめで、MMTel AS が作ったものです。網のあいだの INVITE が 3 つめ、網 B のキャプチャの IBCF-B から I-CSCF への INVITE が 4 つめです。UE A1 と MMTel AS のあいだの 1 つめも網 A のキャプチャにありますが、境界を越えないので、この比較には入れません。
 
 網のあいだのキャプチャを開き、172.28.2.10 から出た INVITE を見ます。ヘッダは次のとおりです（一部を省いています）。
 
@@ -229,7 +233,7 @@ Supported: 100rel, timer, 199, precondition, replaces
 - **Via**。IBCF-A の 1 つだけです。網 A のノードは、IBCF-A に届いた INVITE に自分の Via を入れました。その INVITE は IBCF-A で終わっています。
 - **Record-Route**。ありません。IBCF-A がこのダイアログの相手なので、網 B の要求は Contact を見て IBCF-A に届きます。
 - **Contact**。IBCF-A の外側の名前です。網 B からの PRACK、ACK、BYE はここに届きます。
-- **Call-ID、From の tag、CSeq**。IBCF-A が作ったものです。網 A のキャプチャで S-CSCF から IBCF-A への INVITE と、網 B のキャプチャで IBCF-B から I-CSCF への INVITE と、Call-ID を比べてください。1 つの呼が、3 つのキャプチャでそれぞれ別の Call-ID を持っています。
+- **Call-ID、From の tag、CSeq**。IBCF-A が作ったものです。網 A のキャプチャで S-CSCF から IBCF-A への INVITE と、網 B のキャプチャで IBCF-B から I-CSCF への INVITE と、Call-ID を比べてください。この 3 つは、どれも別の Call-ID を持っています。網 A のキャプチャにある UE A1 から P-CSCF への INVITE には、1 つめのダイアログの Call-ID があり、これが 4 つめです。
 - **Max-Forwards**。IBCF-A は、プロキシと同じように 1 つ減らしています（RFC 3261 16.6 の手順 3）。2 つの網が呼を回し続けても、いずれ止まるようにするためです。
 - **Supported**。UE A1 のものを、プロファイルの規則を当てたあとで写しています。UE A1 の使えない拡張を網 B が使わないようにするためです。`replaces` もこの中にあります。どちらの IBCF も渡す Replaces にもう一方の側のダイアログを書くためです（「境界を越える会議」を見てください）。
 
