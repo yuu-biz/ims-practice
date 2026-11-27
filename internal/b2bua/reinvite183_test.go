@@ -3,6 +3,7 @@ package b2bua_test
 import (
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -384,5 +385,112 @@ func provisionalTo(t *testing.T, ct *sip.ClientTransaction) *sip.Message {
 		if resp.StatusCode > 100 {
 			return resp
 		}
+	}
+}
+
+// reInviteWithout183PRACK is a call through the B2BUA in which the
+// caller sends a re-INVITE that the callee answers in a reliable 183,
+// and the caller never acknowledges the copy that reaches it. It
+// returns the re-INVITE at the callee, the requests the callee gets
+// after it, and where the final response of the caller's re-INVITE
+// comes.
+func reInviteWithout183PRACK(t *testing.T) (*rawCallee, *sip.ServerTransaction, <-chan *sip.ServerTransaction, <-chan result) {
+	t.Helper()
+	rc := newRawCallee(t, timers)
+	requests := rc.handleRequests()
+	b2b := newB2BUA(t, &hooks{}, rc.uri())
+	out, _ := answeredCall(t, rc, b2b, nil)
+	provisional := make(chan *sip.Message, 4)
+	done := make(chan result, 1)
+	go func() {
+		resp, err := out.ReInviteWith(sip.ReInvitation{
+			Body:          reOffer,
+			ManualPRACK:   true,
+			OnProvisional: func(p *sip.Message) { provisional <- p },
+		})
+		done <- result{resp, err}
+	}()
+	re := rc.next(sip.INVITE)
+	rc.reliable(re, 183, reAnswer)
+	within(t, "the 183 of the callee at the caller", provisional)
+	return rc, re, requests, done
+}
+
+// TestARejectOfAReINVITEDoesNotWaitForThePRACKOfItsCopy: the callee
+// answers the re-INVITE in a reliable 183 and then rejects it. RFC 3262
+// 3 lets a UAS send a final response other than 2xx before the PRACK
+// of its reliable provisional responses, so the 488 goes on to the
+// caller at once, instead of after the caller's PRACK for the copy of
+// the 183, or in the place of the 500 that would end that wait.
+func TestARejectOfAReINVITEDoesNotWaitForThePRACKOfItsCopy(t *testing.T) {
+	rc, re, _, done := reInviteWithout183PRACK(t)
+	rc.respond(re, 488, sip.Body{})
+	r := within(t, "the final response to the caller's re-INVITE", done)
+	if r.err != nil || r.resp.StatusCode != 488 {
+		t.Fatalf("the caller's re-INVITE got %v %v, want the 488 of the callee", r.resp, r.err)
+	}
+}
+
+// TestACopyWithoutAPRACKLeavesTheCalleesResponseWithoutOne: the caller
+// does not acknowledge the copy of the callee's reliable 183 within
+// 64*T1, and the B2BUA rejects the caller's re-INVITE with 500 (RFC
+// 3262 3). The 183 of the callee then gets no PRACK of the B2BUA's
+// either, so the callee gives up its own re-INVITE as well, and does
+// not go on to a session that the caller does not have.
+func TestACopyWithoutAPRACKLeavesTheCalleesResponseWithoutOne(t *testing.T) {
+	_, _, requests, done := reInviteWithout183PRACK(t)
+	r := within(t, "the final response to the caller's re-INVITE", done)
+	if r.err != nil || r.resp.StatusCode != 500 {
+		t.Fatalf("the caller's re-INVITE got %v %v, want 500 for the missing PRACK", r.resp, r.err)
+	}
+	select {
+	case st := <-requests:
+		t.Errorf("the callee got a %s for its 183, want none", st.Request.Method)
+	case <-time.After(20 * timers.T1):
+	}
+}
+
+// TestA2xxThatOvertakesThePRACKOfTheCopyGoesAfterIt: the callee sends a
+// reliable 183 without a session description and its 200 right after,
+// before any PRACK, as RFC 3262 3 lets a UAS do. The 200 reaches the
+// caller after the copy of the 183, and the caller's PRACK for that
+// copy still finds the re-INVITE it belongs to and gets its 200; the
+// callee, whose re-INVITE is over, gets nothing but the ACK.
+func TestA2xxThatOvertakesThePRACKOfTheCopyGoesAfterIt(t *testing.T) {
+	rc := newRawCallee(t, timers)
+	requests := rc.handleRequests()
+	b2b := newB2BUA(t, &hooks{}, rc.uri())
+	out, _ := answeredCall(t, rc, b2b, nil)
+
+	provisional := make(chan *sip.Message, 4)
+	done := make(chan result, 1)
+	go func() {
+		resp, err := out.ReInviteWith(sip.ReInvitation{
+			Body:          reOffer,
+			ManualPRACK:   true,
+			OnProvisional: func(p *sip.Message) { provisional <- p },
+		})
+		done <- result{resp, err}
+	}()
+	re := rc.next(sip.INVITE)
+	rc.reliable(re, 183, sip.Body{})
+	rc.respond(re, 200, reAnswer)
+	p := within(t, "the 183 of the callee at the caller", provisional)
+	select {
+	case r := <-done:
+		t.Fatalf("the caller's re-INVITE got %v %v before its 183 had a PRACK", r.resp, r.err)
+	case <-time.After(5 * timers.T1):
+	}
+	if resp, err := out.PRACK(p, sip.Body{}); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("the caller's PRACK got %v %v, want 200", resp, err)
+	}
+	r := within(t, "the final response to the caller's re-INVITE", done)
+	if r.err != nil || r.resp.StatusCode != 200 || string(r.resp.Body) != string(reAnswer.Content) {
+		t.Fatalf("the caller's re-INVITE got %v %v, want 200 with the callee's answer", r.resp, r.err)
+	}
+	select {
+	case st := <-requests:
+		t.Errorf("the callee got a %s after its 200, want none", st.Request.Method)
+	case <-time.After(10 * timers.T1):
 	}
 }

@@ -375,10 +375,7 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 	c.mu.Unlock()
 	// The PRACK of a copy of a response to a re-INVITE of the caller
 	// belongs to that re-INVITE, not to the INVITE of the call.
-	copies := &c.copies
-	if relay := c.reInviteOf(req); relay != nil {
-		copies = &relay.copies
-	}
+	relay := c.reInviteOf(req)
 	inDone, outDone := c.ends(req, out)
 	if !c.callerTurns.wait(r.Arrival, inDone, outDone) {
 		if req.Method == sip.PRACK {
@@ -388,7 +385,7 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 			// that sends the INVITE on to another callee (Attempt again)
 			// goes on relaying the caller's requests after the leg that this
 			// one gave up for has ended.
-			copies.acknowledged()
+			c.takeCopy(relay)
 		}
 		if !answered {
 			rejectEnded(r)
@@ -398,7 +395,7 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 	var acked *sip.Message
 	var own bool
 	if req.Method == sip.PRACK {
-		acked, own = copies.acknowledged()
+		acked, own = c.takeCopy(relay)
 	}
 	select {
 	case <-c.outReady:
@@ -514,7 +511,7 @@ func (c *Call) fromCallee(r *sip.InDialogRequest, out *sip.OutgoingCall, t *turn
 	inDone, outDone := c.ends(req, out)
 	if !t.wait(r.Arrival, inDone, outDone) {
 		if relay != nil {
-			relay.copies.acknowledged()
+			c.takeCopy(relay)
 		}
 		if !answered {
 			rejectEnded(r)
@@ -522,15 +519,17 @@ func (c *Call) fromCallee(r *sip.InDialogRequest, out *sip.OutgoingCall, t *turn
 		return
 	}
 	if relay != nil {
-		if acked, _ := relay.copies.acknowledged(); acked != nil {
+		if acked, _ := c.takeCopy(relay); acked != nil {
 			c.prack(r, relay.to, acked, answered, finish, ToCaller)
 			return
 		}
-		if answered {
-			// The PRACK of a copy of a response that the caller wants no
-			// PRACK for: the callee has its 200, and the PRACK ends here.
-			return
-		}
+	}
+	if answered {
+		// A PRACK without a body of the callee is one for a copy of a
+		// response of the caller: the UA answers the others itself. When
+		// the caller wants no PRACK for that response, the callee has its
+		// 200 and the PRACK ends here.
+		return
 	}
 	c.forward(r, c.in, ToCaller, finish)
 }
