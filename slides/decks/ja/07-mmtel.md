@@ -47,7 +47,7 @@ events:
     do: iFC を照らし合わせる
     at: scscf
     fields:
-      - 優先度 0 と 1: SMS の条件。REGISTER と MESSAGE なので一致しない
+      - 優先度 0 から 2: SMS の条件。REGISTER と MESSAGE なので一致しない
       - 優先度 10: INVITE かつ ORIGINATING_REGISTERED。一致する
       - ServerName: "`sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060`"
       - DefaultHandling: SESSION_TERMINATED
@@ -202,7 +202,7 @@ events:
     proto: SIP
     note: (C3)
   - id: pcscf-tip
-    do: 応答した相手を示す
+    do: 誰が応答したかを示す
     at: pcscf
     fields:
       - P-Asserted-Identity: INVITE の P-Called-Party-ID を入れる
@@ -245,7 +245,7 @@ events:
       - HSS に尋ねること: 無い。UDR を送らない
       - realm: ホームドメイン。どの利用者でも同じ
       - algorithm: SHA-256、MD5 の順
-      - nonce: どのチャレンジも同じ
+      - nonce: この 401 の 2 つのチャレンジで同じ
   - id: ut-401
     msg: "401"
     from: as2
@@ -1025,7 +1025,7 @@ steps:
     show: [scscf-ifc-orig]
     focus: [scscf]
     zoom: [scscf, hss, as1]
-    text: 条件は優先度の順に評価します。SMS の 2 つの条件のあと、優先度 10 の条件に一致します。
+    text: 条件は優先度の順に評価します。SMS の 3 つの条件のあと、優先度 10 の条件に一致します。
   - id: send
     title: 一致した条件の AS に送る
     show: [c1-s-as1]
@@ -1049,7 +1049,7 @@ steps:
 
 - 送り先はどれも `sip:mmtel.ims.mnc001.mcc001.3gppnetwork.org:5060` です。
 - 発信側は、AS が答えないと通話を終えます。規制を確実に効かせるためです。
-- SMS の 2 つの条件（優先度 0 と 1）のあとに並びます。どれも 1 つのセッションケースにしか一致しないので、互いに競いません。TERMINATING_UNREGISTERED の条件は CFNL のためのものです。
+- SMS の 3 つの条件（優先度 0 から 2）のあとに並びます。どれも 1 つのセッションケースにしか一致しないので、互いに競いません。TERMINATING_UNREGISTERED の条件は CFNL のためのものです。
 
 > 手順書 [「4 つのフィルタ条件」](../../../docs/guide/ja/mmtel.md#4-つのフィルタ条件)。TS 29.228 Annex E、B.2.3。TS 24.229 5.4.3.2 step 5、5.4.3.3 step 4。
 
@@ -1442,12 +1442,12 @@ steps:
     active: c3-as2-s
     text: このあと 183、PRACK、180 がダイアログごとに進みます。通話の回のとおりです。
   - id: answer
-    title: P-CSCF が応答した相手を示す
+    title: 誰が応答したかを P-CSCF が示す
     only: [ok-ue2-p, pcscf-tip]
     active: pcscf-tip
     text: UE 2 の P-CSCF は INVITE の P-Called-Party-ID を 200 OK の P-Asserted-Identity に入れます。
   - id: tip
-    title: UE 1 が応答した相手を受け取る（TIP）
+    title: 誰が応答したかが UE 1 に伝わる（TIP）
     hide: [ok-ue2-p]
     show: [ok-p-ue1]
     text: |
@@ -1662,7 +1662,7 @@ steps:
     show: [cfnr-181, cfnr-181-ue1, cfnr-c4]
     active: cfnr-c4
     detail: [cfnr-181, cfnr-c4]
-    text: 181 から先は CFU と同じです。キャプチャで 180 から CANCEL までの時間を測ってみます。
+    text: 181 から先は CFU と同じで、図は同じ区間を省いています。キャプチャで 180 から CANCEL までの時間を測ってみます。
 ```
 
 | 場合 | 見どころ |

@@ -38,7 +38,7 @@ MWI and ECT, which IR.92 leaves optional for the network (2.3.5, 2.3.11), are no
 
 ### The four filter criteria
 
-`deploy/compose/hss.yaml` gives every subscription four criteria for the AS, beside the two of SMS:
+`deploy/compose/hss.yaml` gives every subscription four criteria for the AS, beside the three of SMS:
 
 ```yaml
 - priority: 10
