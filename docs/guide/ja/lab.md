@@ -154,7 +154,7 @@ docker compose --profile phones up -d --build
 
 1. `phone2` のカードで、応答方針を `manual` にします。こうすると、応答するまで鳴り続けます。`auto` では 1 秒後に自動で応答し、`reject` ではすべての着信を 486（Busy Here）で断ります。
 2. `phone1` のカードで **Call** を押します。宛先の欄には、HSS の加入から調べたもう一方の UE の tel URI が最初から入っています。
-3. `phone2` のカードに、`ringing` の状態の着信が表示されます。**Answer** を押すと、両方のカードで通話が `active` になります。それぞれのカードの **Session** の行には、通話のコーデック、両側の SDP での音声の方向、プリコンディションの表（RFC 3312）、アクセス網がメディアのリソースを確保したかどうかが表示されます。`phone1` と `phone2` は Compose のネットワークから直接 P-CSCF につながります。このネットワークはメディアのリソースを確保する必要がないアクセス網なので、2 つのカードには `no reservation of media resources needed on this access network` と表示されます。
+3. `phone2` のカードに、`ringing` の状態の着信が表示されます。**Answer** を押すと、両方のカードで通話が `active` になります。それぞれのカードの **Session** の行には、UE が送る形式と受ける形式（コーデック、ペイロードタイプ（PT）、AMR なら `octet-aligned` か `bandwidth-efficient`）、受け取った RTP パケット数と AMR フレーム数、両側の SDP での音声の方向、プリコンディションの表（RFC 3312）、アクセス網がメディアのリソースを確保したかどうかが表示されます。UE は、相手の SDP の PT とフォーマットのパラメータで送り、自分の SDP のもので受けます（RFC 3264 5.1、6.1）。そのため 2 つの形式は違うことがあり、受信数は後者で数えます。1 つのパケットには AMR のフレームが 1 つ以上入る（RFC 4867 4.3）ので、2 つの数は単位が違います。AMR でない通話では、フレームの行は `not applicable` になります。`phone1` と `phone2` は Compose のネットワークから直接 P-CSCF につながります。このネットワークはメディアのリソースを確保する必要がないアクセス網なので、2 つのカードには `no reservation of media resources needed on this access network` と表示されます。
 4. `phone1` のカードで **Hold** を押します。UE は音声を `sendonly` にするオファーを入れた re-INVITE を送ります（TS 24.610）。両方のカードの Session の行に、新しい方向が表示されます。**Resume** を押すと、`sendrecv` に戻して通話を再開します。
 5. `12#` のような数字を入力して **Send DTMF** を押します。UE はその数字を RTP の telephone event として送ります（RFC 4733）。もう一方のカードの Session の行には、その数字が受け取った数字として表示されます。
 6. どちらかのカードで **Hang up** を押します。応答したあとの通話では BYE を送ります。応答の前なら、発信側は CANCEL を送り、着信側は 603（Decline）で断ります。

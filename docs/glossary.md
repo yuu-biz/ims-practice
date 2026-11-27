@@ -268,6 +268,7 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | Term | Full name | English | 日本語 |
 | --- | --- | --- | --- |
 | RTP | Real-time Transport Protocol | The protocol that carries voice packets (RFC 3550). | 音声のパケットを運ぶプロトコル（RFC 3550）。 |
+| PT | Payload Type | The number in an RTP packet, and in the SDP `m=` and `a=rtpmap` lines, that names the format of the payload. Each side's SDP lists the PTs it expects to receive (RFC 3550 5.1, RFC 3264 5.1). | RTP パケットと、SDP の `m=` 行、`a=rtpmap` 行にある、ペイロードの形式を示す番号。各側の SDP は、その側が受ける PT を並べる（RFC 3550 5.1、RFC 3264 5.1）。 |
 | RTCP | RTP Control Protocol | The companion protocol that reports reception quality for RTP. | RTP の受信品質を報告するプロトコル。 |
 | SSRC / CSRC | Synchronization source / Contributing source | The 32-bit number that names the source of an RTP stream, and the list of the sources that a mixer joined into one stream (RFC 3550 3). | RTP のストリームの送信元を表す 32 ビットの番号と、ミキサーが 1 つのストリームにまとめた送信元の一覧（RFC 3550 3）。 |
 | SDES / CNAME | Source description / Canonical name | The RTCP packet that describes a source, and its item that names the endpoint across its streams (RFC 3550 6.5). | 送信元を説明する RTCP のパケットと、その中で端点をストリームによらず表す項目（RFC 3550 6.5）。 |
