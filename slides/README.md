@@ -86,7 +86,7 @@ The pptx is an ordinary PowerPoint file. Everything on a slide is a native objec
 
 There are no pictures, and there are no speaker notes.
 
-A scene gives a page for each of its checkpoints, the states that its source marks to keep, and the last step of the scene is always one. The page draws the diagram as the checkpoint leaves it, numbers each message with the step that is about it, and writes out, beside or below the diagram, the title and the text of every step since the checkpoint before, with the fields of their messages in a table. A page that the learner reads without stepping through the scene so says what the HTML shows one step at a time. The longer explanation of the scene follows on a page of its own with the tag "Details". The arrows are not glued to the boxes: moving a node in PowerPoint leaves its arrows where they are.
+A scene gives a page for each of its checkpoints, the states that its source marks to keep, and the last step of the scene is always one. The page draws the diagram as the checkpoint leaves it, numbers each message with the step that is about it, and writes out, beside or below the diagram, the title and the text of every step since the checkpoint before, with the fields of their messages in a table. A page that the learner reads without stepping through the scene so says what the HTML shows one step at a time. A map too large to share a page with that text gets a page of its own, and the text follows on the next page. The longer explanation of the scene follows on a page of its own with the tag "Details". The arrows are not glued to the boxes: moving a node in PowerPoint leaves its arrows where they are.
 
 Known limits:
 
@@ -324,7 +324,7 @@ The text below the scene block is the longer explanation of the scene: the block
 | --- | --- |
 | `nodes` | Each node has an `id`, a `label` (its name, the same in every language), a `role` (a few words, in the language of the deck) and `at: [column, row]`, its place on the grid of the map. A node keeps its place in every scene of the deck. |
 | `groups` | A frame around nodes that belong together, such as two networks: `{id, label, nodes: [...]}`. |
-| `events` | Each event has an `id` and is one of three kinds. `msg: NAME` with `from`, `to` and `proto` is one message over one hop: a request and its answer are two events, and so are the hops of one REGISTER. `do: TEXT` with `at` is what one node does with what it received. `rel: TEXT` with `from` and `to` is a relation that is not a signal, such as an import between packages; it is drawn dashed. |
+| `events` | Each event has an `id` and is one of three kinds. `msg: NAME` with `from`, `to` and `proto` is one message over one hop: a request and its answer are two events, and so are the hops of one REGISTER. `do: TEXT` with `at` is what one node does with what it received. `rel: TEXT` with `from` and `to` is a relation that is not a signal, such as an import between packages; it is drawn dashed, with an arrowhead. A relation with `proto` is a reference point, such as `rel: Cx` with `proto: Diameter`: the interface between two nodes, drawn in the line of its protocol and without an arrowhead. |
 | `note` | A short qualifier under the name of the event, such as `(2nd)`. |
 | `fields` | The headers, AVPs or values that a step can show, one `- name: value` each. A value is a line of inline Markdown; put it in quotes when it starts with a backtick. |
 

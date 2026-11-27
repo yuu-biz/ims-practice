@@ -32,7 +32,7 @@ func structureOf(d *deck.Deck) []string {
 			case deck.EventProcess:
 				out = append(out, fmt.Sprintf("process %s at %s, fields %s", e.ID, e.Actor, fields))
 			case deck.EventRelation:
-				out = append(out, fmt.Sprintf("relation %s %s -> %s", e.ID, e.From, e.To))
+				out = append(out, fmt.Sprintf("relation %s %s -> %s (%s)", e.ID, e.From, e.To, e.Protocol))
 			}
 		}
 	}

@@ -44,11 +44,11 @@ func scenePages(d *deck.Deck, s deck.Slide) ([]Page, error) {
 		if !step.Checkpoint {
 			continue
 		}
-		page, err := checkpointPage(d, s, diagram, from, k)
+		cp, err := checkpointPages(d, s, diagram, from, k)
 		if err != nil {
 			return nil, err
 		}
-		pages = append(pages, page)
+		pages = append(pages, cp...)
 		from = k + 1
 	}
 	if len(s.Columns) > 0 && len(s.Columns[0]) > 0 {
@@ -61,9 +61,11 @@ func scenePages(d *deck.Deck, s deck.Slide) ([]Page, error) {
 	return pages, nil
 }
 
-// checkpointPage lays out the page of the checkpoint at step k, with the
-// text of the steps from from to k.
-func checkpointPage(d *deck.Deck, s deck.Slide, diagram *Diagram, from, k int) (Page, error) {
+// checkpointPages lays out the page of the checkpoint at step k, with the
+// text of the steps from from to k. A diagram that is too large to
+// share a page with its text gets a page of its own, and the text the
+// page after it; both belong to the checkpoint.
+func checkpointPages(d *deck.Deck, s deck.Slide, diagram *Diagram, from, k int) ([]Page, error) {
 	scene := s.Scene
 	step := scene.Steps[k]
 	page := Page{Slide: s.Number, Step: step.ID, Layout: deck.LayoutContent, Background: ColorWhite, Scale: 1}
@@ -96,7 +98,7 @@ func checkpointPage(d *deck.Deck, s deck.Slide, diagram *Diagram, from, k int) (
 			for _, e := range diagram.Events {
 				if slices.Contains(st.Events, e.ID) && hiddenRow(e, camera) {
 					if prev := from - 1; prev < 0 || !slices.Contains(scene.Steps[prev].Events, e.ID) {
-						return page, &OverflowError{Path: d.Path, Slide: s.Number, Title: deck.PlainText(s.Title),
+						return nil, &OverflowError{Path: d.Path, Slide: s.Number, Title: deck.PlainText(s.Title),
 							Reason: fmt.Sprintf("the checkpoint %s of the ladder adds more rows than a page shows; make an earlier step a checkpoint", step.ID)}
 					}
 				}
@@ -164,10 +166,34 @@ func checkpointPage(d *deck.Deck, s deck.Slide, diagram *Diagram, from, k int) (
 		if best != nil {
 			page.Scale = scale
 			page.Elements = append(page.Elements, best...)
-			return page, nil
+			return []Page{page}, nil
 		}
 	}
-	return page, &OverflowError{Path: d.Path, Slide: s.Number, Title: deck.PlainText(s.Title),
+	if scaleD := min(width/camera.W, height/camera.H, 1); scaleD >= minDiagramScale {
+		figure, text := page, page
+		figure.Elements = slices.Clone(page.Elements)
+		text.Elements = slices.Clone(page.Elements)
+		figure.Elements = append(figure.Elements, drawDiagram(diagram, scene, step, camera, scaleD, MarginX+(width-camera.W*scaleD)/2, top)...)
+		for _, scale := range scales {
+			b := builder{scale: scale}
+			steps := b.stepParagraphs(scene, from, k, numbers)
+			fields := b.fields(d.Model, details)
+			stepsW, fieldsW := width, 0.0
+			if len(fields) > 0 {
+				stepsW = math.Round(width * 0.54)
+				fieldsW = width - stepsW - paneGap
+			}
+			stepsH := paragraphsHeight(steps, stepsW)
+			if max(stepsH, fieldsHeight(fields, fieldsW)) > height {
+				continue
+			}
+			text.Scale = scale
+			text.Elements = append(text.Elements, &TextBox{X: MarginX, Y: top, W: stepsW, H: stepsH, Paragraphs: steps})
+			text.Elements = append(text.Elements, placeFields(fields, MarginX+stepsW+paneGap, top, fieldsW)...)
+			return []Page{figure, text}, nil
+		}
+	}
+	return nil, &OverflowError{Path: d.Path, Slide: s.Number, Title: deck.PlainText(s.Title),
 		Reason: fmt.Sprintf("the checkpoint %s does not fit: the diagram and the text of its steps need more room than a page has; make an earlier step a checkpoint, or show fewer fields", step.ID)}
 }
 
@@ -388,7 +414,7 @@ func drawDiagram(diagram *Diagram, scene *deck.Scene, step deck.Step, camera Box
 		if active {
 			width = 2.25
 		}
-		l := &Line{Name: "event " + e.ID, X1: x1, Y1: y1, X2: x2, Y2: y2, Color: color, Width: width, HeadEnd: true,
+		l := &Line{Name: "event " + e.ID, X1: x1, Y1: y1, X2: x2, Y2: y2, Color: color, Width: width, HeadEnd: !e.Undirected,
 			Dash: e.Family == "diameter" || e.Family == "relation", Dot: e.Family == "dns"}
 		g.Elements = append(g.Elements, l)
 		subSize := labelSize * DiagramSubSize / DiagramLabelSize

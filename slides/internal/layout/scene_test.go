@@ -1,6 +1,7 @@
 package layout
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -121,6 +122,63 @@ func TestLabelsKeepClearOfNodes(t *testing.T) {
 		for _, o := range diagram.Events {
 			if o.ID < e.ID && e.LabelBox().overlaps(o.LabelBox()) {
 				t.Errorf("the labels of %s and %s overlap", e.ID, o.ID)
+			}
+		}
+	}
+}
+
+// TestLargeDiagramGetsAPageOfItsOwn makes sure that a map too large to
+// share a page with the text of its steps is drawn on a page of its
+// own, followed by a page with the text, both of the same checkpoint.
+func TestLargeDiagramGetsAPageOfItsOwn(t *testing.T) {
+	var nodes, steps strings.Builder
+	for c := 0; c < 5; c++ {
+		for r := 0; r < 4; r++ {
+			fmt.Fprintf(&nodes, "  - {id: n%d%d, label: N%d%d, at: [%d, %d]}\n", c, r, c, r, c, r)
+		}
+	}
+	for i := 0; i < 4; i++ {
+		fmt.Fprintf(&steps, "  - {id: s%d, title: Step %d, focus: [n0%d], text: A line of text that says what the step shows on the map.}\n", i, i, i)
+	}
+	source := "---\ntitle: T\nfooter: F\nlang: en\nformat: visual\n---\n\n```ims-model\nnodes:\n" + nodes.String() + "```\n\n---\n\n# T\n\n---\n\n## Big\n\n```ims-scene\nid: big\nsteps:\n" + steps.String() + "```\n"
+	d, err := deck.Parse("big.md", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, problems := Deck(d)
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	if len(pages) != 3 || pages[1].Step != "s3" || pages[2].Step != "s3" {
+		t.Fatalf("pages = %d, want the title and two pages of checkpoint s3", len(pages))
+	}
+	if !strings.Contains(Text(pages[2]), "Step 0") || strings.Contains(Text(pages[1]), "Step 0") {
+		t.Error("the text of the steps is not on the second page alone")
+	}
+}
+
+// TestReferencePointHasNoArrowhead makes sure that a relation with a
+// protocol, an interface between two nodes, is drawn in the style of
+// its protocol and without an arrowhead.
+func TestReferencePointHasNoArrowhead(t *testing.T) {
+	source := "---\ntitle: T\nfooter: F\nlang: en\nformat: visual\n---\n\n```ims-model\nnodes:\n" +
+		"  - {id: a, label: A, at: [0, 0]}\n  - {id: b, label: B, at: [1, 0]}\nevents:\n" +
+		"  - {id: cx, rel: Cx, from: a, to: b, proto: Diameter}\n  - {id: uses, rel: uses, from: a, to: b}\n```\n\n---\n\n# T\n\n---\n\n## S\n\n" +
+		"```ims-scene\nid: s\nsteps:\n  - {id: x, title: X, show: [cx, uses], text: Y}\n```\n"
+	d, err := deck.Parse("ref.md", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagram := Draw(d.Model, d.Slides[1].Scene)
+	for _, e := range diagram.Events {
+		switch e.ID {
+		case "cx":
+			if !e.Undirected || e.Family != "diameter" || e.SubText() != "Diameter" {
+				t.Errorf("cx = %+v", e)
+			}
+		case "uses":
+			if e.Undirected || e.Family != "relation" {
+				t.Errorf("uses = %+v", e)
 			}
 		}
 	}

@@ -117,7 +117,7 @@ code, .mono, kbd { font-family: $MONO; }
 /* A wide map: the diagram across the stage, the step below it. */
 .scene.wide { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
 .scene.wide .panel { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); column-gap: 30px; align-content: start;
-  height: 216px; margin-top: 12px; overflow: auto; }
+  max-height: 216px; margin-top: 12px; overflow: auto; }
 .scene.wide .panel > * { grid-column: 1; }
 .scene.wide .panel > .detail { grid-column: 2; grid-row: 1 / span 20; }
 .scene.wide .detail .fields:first-child { margin-top: 0; }

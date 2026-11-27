@@ -93,15 +93,19 @@ func diagramSVG(b *strings.Builder, d *deck.Deck, s deck.Slide, diagram *layout.
 				num(e.Box.X), num(e.Box.Y), num(e.Box.W), num(e.Box.H), num(cx), num(cy+5), html.EscapeString(e.LabelText()))
 		} else {
 			length := math.Hypot(e.X2-e.X1, e.Y2-e.Y1)
-			fmt.Fprintf(b, `<line x1="%s" y1="%s" x2="%s" y2="%s" pathLength="%s" marker-end="url(#%s-arrow-%s)"/>`,
-				num(e.X1), num(e.Y1), num(e.X2), num(e.Y2), num(math.Round(length)), prefix, e.Family)
+			marker := fmt.Sprintf(` marker-end="url(#%s-arrow-%s)"`, prefix, e.Family)
+			if e.Undirected {
+				marker = ""
+			}
+			fmt.Fprintf(b, `<line x1="%s" y1="%s" x2="%s" y2="%s" pathLength="%s"%s/>`,
+				num(e.X1), num(e.Y1), num(e.X2), num(e.Y2), num(math.Round(length)), marker)
 			box := e.LabelBox()
 			fmt.Fprintf(b, `<rect class="pill" x="%s" y="%s" width="%s" height="%s" rx="9"/>`,
 				num(box.X), num(box.Y), num(box.W), num(box.H))
 			if e.LabelLines() == 2 && diagram.View == deck.ViewMap {
 				fmt.Fprintf(b, `<text class="label" x="%s" y="%s">%s</text><text class="sub" x="%s" y="%s">%s</text>`,
 					num(e.LabelX), num(box.Y+2+layout.DiagramLabelSize), html.EscapeString(e.LabelText()),
-					num(e.LabelX), num(box.Y+box.H-5), html.EscapeString(e.SubText()+noteOf(e)))
+					num(e.LabelX), num(box.Y+box.H-5), html.EscapeString(e.SubText()))
 			} else {
 				fmt.Fprintf(b, `<text class="label" x="%s" y="%s">%s`, num(e.LabelX), num(e.LabelY+5), html.EscapeString(e.LabelText()))
 				if sub := e.SubText(); sub != "" {
@@ -128,15 +132,6 @@ func diagramSVG(b *strings.Builder, d *deck.Deck, s deck.Slide, diagram *layout.
 		b.WriteString("</g>")
 	}
 	b.WriteString("</svg>")
-}
-
-// noteOf is the note of a relation, which has no protocol to go with
-// it; the note of a message is part of SubText.
-func noteOf(e layout.EventShape) string {
-	if e.Kind == deck.EventRelation && e.Note != "" && e.SubText() == "" {
-		return e.Note
-	}
-	return ""
 }
 
 // spansText is the text of spans, escaped, without their styles: the
