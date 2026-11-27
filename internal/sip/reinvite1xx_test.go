@@ -2,6 +2,7 @@ package sip
 
 import (
 	"errors"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -299,12 +300,22 @@ func TestPRACKForAReINVITEMatchesItsResponse(t *testing.T) {
 	ackFrom(p, reinvite)
 }
 
-// RFC 3261 9.2 and RFC 3262 3: a CANCEL gets the re-INVITE its 487 at
-// once, though a reliable provisional response still waits for its
-// PRACK. That PRACK, when it comes, still matches the response.
+// RFC 3261 9.2 and RFC 3262 3: before any reliable provisional response
+// has carried a session description, a CANCEL gets the re-INVITE its
+// 487 at once, though a reliable 180 still waits for its PRACK. That
+// PRACK, when it comes, still matches the response. The user learns of
+// the CANCEL all the same, as a B2BUA has to cancel its other leg.
 func TestCancelledReINVITEDoesNotWaitForThePRACK(t *testing.T) {
-	progressed := make(chan error, 1)
-	_, p := rawCall(t, slowTimers, func(r *InDialogRequest) { progressed <- r.Progress(183, holdAnswer) })
+	progressed := make(chan error, 2)
+	_, p := rawCall(t, slowTimers, func(r *InDialogRequest) {
+		progressed <- r.Progress(180, Body{})
+		select {
+		case <-r.Cancelled():
+			progressed <- nil
+		default:
+			progressed <- errors.New("Cancelled is not closed")
+		}
+	})
 	reinvite := reInviteFrom(p, holdOffer, supports100rel)
 	prov := readProvisional(t, p)
 	start := time.Now()
@@ -319,9 +330,83 @@ func TestCancelledReINVITEDoesNotWaitForThePRACK(t *testing.T) {
 	if err := returned(t, progressed, "Progress"); !errors.Is(err, ErrRequestAnswered) {
 		t.Errorf("Progress: %v, want ErrRequestAnswered", err)
 	}
+	if err := returned(t, progressed, "the check of Cancelled"); err != nil {
+		t.Error(err)
+	}
 	prack := prackFrom(p, prov, Body{})
 	if resp := readFinal(t, p, prack.Get("CSeq")); resp.StatusCode != 200 {
 		t.Errorf("PRACK after the 487 got %s, want 200", startLine(resp))
+	}
+}
+
+// RFC 6141 3.3 and 3.8: once a reliable 183 has carried the answer, a
+// CANCEL leaves the re-INVITE to the user, who knows whether the change
+// has been made. The user here does what a B2BUA does: on Cancelled it
+// passes the CANCEL on to its other leg, and ends the re-INVITE with the
+// final response that comes from there, a 2xx, which the UAC
+// acknowledges, or a 487.
+func TestCancelledReINVITEAfterAReliableAnswerIsLeftToTheUser(t *testing.T) {
+	for _, farEnd := range []int{200, 487} {
+		t.Run(strconv.Itoa(farEnd), func(t *testing.T) {
+			relayed := make(chan struct{})
+			final := make(chan int)
+			results := make(chan reinviteResult, 1)
+			_, p := rawCall(t, slowTimers, func(r *InDialogRequest) {
+				if err := r.Progress(183, holdAnswer); err != nil {
+					results <- reinviteResult{nil, err}
+					return
+				}
+				select {
+				case <-r.Cancelled():
+				case <-time.After(5 * time.Second):
+					results <- reinviteResult{nil, errors.New("Cancelled was not closed within 5s of the CANCEL")}
+					return
+				}
+				close(relayed)
+				if code := <-final; code == 487 {
+					results <- reinviteResult{nil, r.Reject(487)}
+					return
+				}
+				ack, err := r.Accept(Body{})
+				results <- reinviteResult{ack, err}
+			})
+			reinvite := reInviteFrom(p, holdOffer, supports100rel)
+			prack := prackFrom(p, readProvisional(t, p), Body{})
+			readFinal(t, p, prack.Get("CSeq"))
+			cancel := newMatchingRequest(reinvite, CANCEL, reinvite.Get("To"))
+			send(t, p.peer, cancel, p.ua.Stack())
+			if resp := readFinal(t, p, cancel.Get("CSeq")); resp.StatusCode != 200 {
+				t.Fatalf("CANCEL got %s, want 200", startLine(resp))
+			}
+			select {
+			case <-relayed:
+			case r := <-results:
+				t.Fatalf("the user: %v", r.err)
+			}
+			for until := time.Now().Add(3 * slowTimers.T1); time.Now().Before(until); {
+				if m, ok := readWithin(p.peer, time.Until(until)); ok && m.Get("CSeq") == reinvite.Get("CSeq") && m.StatusCode >= 200 {
+					t.Fatalf("the re-INVITE got %s before the user ended it", startLine(m))
+				}
+			}
+
+			final <- farEnd
+			if got := readFinal(t, p, reinvite.Get("CSeq")); got.StatusCode != farEnd {
+				t.Fatalf("re-INVITE got %s, want %d", startLine(got), farEnd)
+			}
+			if farEnd == 200 {
+				ackFrom(p, reinvite)
+			} else {
+				ackNonOK(t, p, reinvite)
+			}
+			select {
+			case r := <-results:
+				if r.err != nil || (farEnd == 200) != (r.ack != nil) {
+					t.Errorf("the user's answer returned %v, %v", r.ack, r.err)
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the user's answer did not return")
+			}
+		})
 	}
 }
 

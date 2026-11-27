@@ -877,26 +877,51 @@ func (d *CallDialog) receiveReInvite(st *ServerTransaction) {
 	c.handOver(r)
 }
 
-// watchCancel answers the re-INVITE with 487 (Request Terminated) when
-// the peer cancels it before its final response (RFC 3261 9.2). The 487
-// does not wait for the PRACK of a reliable provisional response, as
-// Reject would: RFC 3262 3 lets a final response other than 2xx pass
-// one.
+// Cancelled is closed when the peer cancels the re-INVITE before its
+// final response; the UA has answered the CANCEL with 200 (RFC 3261
+// 9.2). It is nil for any other request, which a CANCEL does not touch.
 //
-// SIMPLIFIED: RFC 6141 3.8. A re-INVITE whose change has been made gets
-// a 2xx, not a 487, when the peer cancels it (RFC 6141 3.3), and an
-// answer in a reliable provisional response makes the change unless
-// preconditions hold it back. The UA answers 487 all the same: the
-// preconditions are in the SDP, which the UA does not read, and with
-// them the change waits for the user, so 487 is right. No node of this
-// project cancels a re-INVITE.
+// Until a reliable provisional response has carried the session
+// description of the re-INVITE (Progress), the UA also answers the
+// re-INVITE with 487 (Request Terminated) at once. After one has, the
+// change of the session may have been made, and only the user can tell
+// (RFC 6141 3.3, 3.8): without preconditions the offer and answer made
+// it, and the user ends the re-INVITE with Accept, whose 2xx carries the
+// session as it is now; while preconditions still hold the change back,
+// the user ends it with Reject(487). A B2BUA cancels the re-INVITE that
+// it relayed to its other leg, and passes the final response from there
+// on in the same way.
+func (r *InDialogRequest) Cancelled() <-chan struct{} {
+	if r.Request.Method != INVITE {
+		return nil
+	}
+	return r.st.Cancelled()
+}
+
+// watchCancel answers the re-INVITE with 487 when the peer cancels it
+// before any reliable provisional response has carried its session
+// description (Cancelled). The 487 does not wait for the PRACK of a
+// reliable provisional response, as Reject would: RFC 3262 3 lets a
+// final response other than 2xx pass one. It is decided with c.mu held,
+// so that no such response can go between the check and the 487.
 func (r *InDialogRequest) watchCancel() {
+	c := r.d.c
 	select {
 	case <-r.st.Cancelled():
-		r.reject(487, r.d.c.ua.own(INVITE, true, nil))
 	case <-r.settled:
-	case <-r.d.c.done:
+		return
+	case <-c.done:
+		return
 	}
+	c.mu.Lock()
+	if r.described || r.answerable() != nil {
+		c.mu.Unlock()
+		return
+	}
+	resp := NewResponse(r.Request, 487, "")
+	r.settle(resp, false)
+	c.mu.Unlock()
+	c.ua.respondOwn(r.st, resp)
 }
 
 var errNoOfferFor2xx = errors.New("sip: the 2xx to a re-INVITE without an offer needs the offer")
