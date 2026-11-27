@@ -362,7 +362,7 @@ func drawDiagram(diagram *Diagram, scene *deck.Scene, step deck.Step, camera Box
 			g.Elements = append(g.Elements,
 				&Line{Name: "lifeline " + l.ID, X1: lx, Y1: ly1, X2: lx, Y2: ly2, Color: ColorDimLine, Width: 1},
 				&TextBox{Name: "node " + l.ID, X: hx, Y: hy, W: hw, H: hh, Fill: fill, Line: line, Round: true, Anchor: AnchorMiddle,
-					Paragraphs: []Paragraph{{Runs: []Run{{Text: l.Label}}, Size: nodeSize * 0.8, LineHeight: lineHeight(nodeSize*0.8, lineHeightTitle), Color: color, Bold: true, Align: AlignCenter}}})
+					Paragraphs: headParagraphs(l, nodeSize*0.8, roleSize*l.RoleSize/DiagramRoleSize, color)})
 		}
 	}
 	for _, n := range diagram.Nodes {
@@ -458,4 +458,14 @@ func tint(hex string, share float64) string {
 	fmt.Sscanf(hex, "%02x%02x%02x", &r, &g, &b)
 	mix := func(c int) int { return int(math.Round(float64(c) + (255-float64(c))*share)) }
 	return fmt.Sprintf("%02X%02X%02X", mix(r), mix(g), mix(b))
+}
+
+// headParagraphs are the name of the head of a lifeline and, under it,
+// its role.
+func headParagraphs(l LifelineShape, nameSize, roleSize float64, color string) []Paragraph {
+	out := []Paragraph{{Runs: []Run{{Text: l.Label}}, Size: nameSize, LineHeight: lineHeight(nameSize, lineHeightTitle), Color: color, Bold: true, Align: AlignCenter}}
+	if len(l.Role) > 0 {
+		out = append(out, Paragraph{Runs: runsOf([][]deck.Span{l.Role}), Size: roleSize, LineHeight: lineHeight(roleSize, lineHeightTitle), Color: ColorMuted, Align: AlignCenter})
+	}
+	return out
 }

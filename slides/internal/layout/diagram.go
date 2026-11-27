@@ -70,11 +70,15 @@ type GroupShape struct {
 
 // LifelineShape is the head and the line of a node in a ladder.
 type LifelineShape struct {
-	ID     string
-	Head   Box
-	Label  string
-	X      float64
-	Y1, Y2 float64
+	ID    string
+	Head  Box
+	Label string
+	// Role is said under the name, at RoleSize, as on a map: two
+	// nodes of one name, such as one AS in two roles, stay apart.
+	Role     []deck.Span
+	RoleSize float64
+	X        float64
+	Y1, Y2   float64
 }
 
 // EventShape is the line of a message or a relation, from (X1, Y1) to
@@ -116,8 +120,8 @@ const (
 	mapLane       = 8.0
 	mapLaneStep   = 14.0
 	ladderColW    = 168.0
-	ladderHeadW   = 132.0
-	ladderHeadH   = 40.0
+	ladderHeadW   = 156.0
+	ladderHeadH   = 54.0
 	ladderRowH    = 42.0
 	ladderTop     = 30.0
 
@@ -551,7 +555,16 @@ func drawLadder(m *deck.Model, s *deck.Scene) *Diagram {
 		if w := textWidth(n.Label, DiagramNodeSize*0.85, false, true); w > ladderHeadW-10 {
 			d.Problems = append(d.Problems, fmt.Sprintf("the name of node %s is wider than its head on the ladder", id))
 		}
-		d.Lines = append(d.Lines, LifelineShape{ID: id, Head: head, Label: n.Label, X: x, Y1: ladderTop + ladderHeadH})
+		// A long role gets smaller, down to 70% of the size, as a long
+		// name does on a map.
+		roleSize := DiagramRoleSize
+		if w := textWidth(deck.PlainText(n.Role), roleSize, false, false); w > ladderHeadW-8 {
+			roleSize = math.Floor(roleSize*(ladderHeadW-8)/w*2) / 2
+			if roleSize < DiagramRoleSize*0.7 {
+				d.Problems = append(d.Problems, fmt.Sprintf("the role of node %s is wider than its head on the ladder; say it in fewer words", id))
+			}
+		}
+		d.Lines = append(d.Lines, LifelineShape{ID: id, Head: head, Label: n.Label, Role: n.Role, RoleSize: roleSize, X: x, Y1: ladderTop + ladderHeadH})
 		d.Bounds = d.Bounds.union(head)
 	}
 	numbers := s.FirstActive()
