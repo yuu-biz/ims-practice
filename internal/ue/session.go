@@ -467,9 +467,10 @@ func (s *Session) reoffer() (sip.Body, error) {
 	if s.stream == nil {
 		return sip.Body{}, errors.New("no session to offer anew")
 	}
-	codecs := []sdp.Codec{s.stream.Codec}
-	if s.stream.Events != nil {
-		codecs = append(codecs, *s.stream.Events)
+	// The offer lists the payload types this UE takes in.
+	codecs := []sdp.Codec{s.stream.ReceiveCodec}
+	if s.stream.ReceiveEvents != nil {
+		codecs = append(codecs, *s.stream.ReceiveEvents)
 	}
 	d, err := sdp.AudioOffer(s.id, s.addr, codecs)
 	if err != nil {
@@ -579,11 +580,9 @@ func (s *Session) answerTo(offerBody []byte, initial bool) (sip.Body, error) {
 
 // negotiated takes the stream that local and remote, an offer and its
 // answer, settled. peer is the SDP of the peer, whose address and
-// payload types this UE sends with. s.mu is held.
-//
-// SIMPLIFIED: RFC 3264 6.1. An answer may number its payload types its
-// own way; the UE sends and receives with the numbers of the peer's
-// SDP. Every UA in this project answers with the numbers of the offer.
+// payload types this UE sends with; the UE takes in the payload types of
+// local, its own SDP (RFC 3264 5.1, 6.1). The two differ when the answer
+// numbers a dynamic payload type another way than the offer. s.mu is held.
 func (s *Session) negotiated(local, remote, peer sdp.Session) error {
 	i := slices.IndexFunc(local.Media, func(m sdp.Media) bool { return m.Type == "audio" && m.Port != 0 })
 	if i < 0 || i >= len(remote.Media) || remote.Media[i].Port == 0 {
@@ -609,6 +608,19 @@ func (s *Session) negotiated(local, remote, peer sdp.Session) error {
 			stream.Events = &c
 			break
 		}
+	}
+	mine := local.Media[i].Codecs()
+	n := slices.IndexFunc(mine, func(c sdp.Codec) bool { return sameFormat(c, stream.Codec) })
+	if n < 0 {
+		return errors.New("the speech codec of the session is not in the SDP of this UE")
+	}
+	stream.ReceiveCodec = mine[n]
+	if stream.Events != nil {
+		n = slices.IndexFunc(mine, func(c sdp.Codec) bool { return c.Is(sdp.NameTelephoneEvent) && c.ClockRate == stream.Codec.ClockRate })
+		if n < 0 {
+			return errors.New("the telephone-event of the session is not in the SDP of this UE")
+		}
+		stream.ReceiveEvents = &mine[n]
 	}
 	s.remoteDir = remote.Direction(remote.Media[i])
 	if err := s.media.SetStream(stream); err != nil {
