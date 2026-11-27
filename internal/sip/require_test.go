@@ -218,3 +218,77 @@ func TestRequestWithinADialogRequiringAnExtensionLeftOut(t *testing.T) {
 		t.Errorf("the INFO got %s, want 200", startLine(ok))
 	}
 }
+
+// requiring is a request of the method to ua that requires the
+// extensions of require: outside a dialog, or with toTag in the dialog
+// of a subscription that ua keeps as a notifier.
+func requiring(ua *UA, method Method, toTag, require string) *Message {
+	m := &Message{Method: method, RequestURI: ua.cfg.Contact}
+	m.Add("Max-Forwards", "70")
+	m.Add("From", "<"+caller+">;tag="+NewTag())
+	to := "<" + calleeURI + ">"
+	if toTag != "" {
+		to += ";tag=" + toTag
+	}
+	m.Add("To", to)
+	m.Add("Call-ID", NewCallID())
+	m.Add("CSeq", "1 "+string(method))
+	m.Add("Contact", "<sip:peer@127.0.0.1>")
+	m.Add("Require", require)
+	switch method {
+	case SUBSCRIBE:
+		m.Add("Event", "conference")
+	case MESSAGE:
+		Body{Type: "text/plain", Content: []byte("hello")}.addTo(m)
+	}
+	return m
+}
+
+// respond200 is an OnMessage or OnSubscribe that takes every request.
+func respond200(st *ServerTransaction) { st.Respond(NewResponse(st.Request, 200, NewTag())) }
+
+// RFC 3261 8.2.2.3 holds for every request that a UA takes as a UAS:
+// one outside a dialog, and a SUBSCRIBE within the dialog of a
+// subscription that the UA keeps as a notifier, too. What the UA or its
+// user understands is taken as before.
+func TestRequestOutsideADialogRequiringAnExtension(t *testing.T) {
+	ua := newUAWith(t, UAConfig{Timers: testTimers, OnCall: noCalls, OnMessage: respond200, OnSubscribe: respond200,
+		Supported: []string{OptionPrecondition}}, callee)
+	for _, tc := range []struct {
+		name   string
+		method Method
+		toTag  string
+	}{
+		{"INVITE", INVITE, ""},
+		{"OPTIONS", OPTIONS, ""},
+		{"MESSAGE", MESSAGE, ""},
+		{"SUBSCRIBE", SUBSCRIBE, ""},
+		{"SUBSCRIBE within a subscription", SUBSCRIBE, "notifier"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			refused := finalTo(t, ua, requiring(ua, tc.method, tc.toTag, "foo, "+OptionTimer+", bar"))
+			if got, want := refused.GetAll("Unsupported"), []string{"foo", "bar"}; refused.StatusCode != 420 || !slices.Equal(got, want) {
+				t.Errorf("got %s with Unsupported %q, want 420 with %q", startLine(refused), got, want)
+			}
+			if tc.method == INVITE {
+				return // the user of this UA turns every call down
+			}
+			if taken := finalTo(t, ua, requiring(ua, tc.method, tc.toTag, OptionTimer+", "+OptionPrecondition)); taken.StatusCode != 200 {
+				t.Errorf("with Require of known extensions got %s, want 200", startLine(taken))
+			}
+		})
+	}
+}
+
+// RFC 3261 8.2: outside a dialog, too, a method that the UA does not
+// take gets 405 (Method Not Allowed) before its Require is looked at.
+func TestRequestOutsideADialogOfAMethodNotTakenAndAnUnknownExtension(t *testing.T) {
+	ua := newUA(t, testTimers, callee, noCalls)
+	for _, method := range []Method{"FOO", MESSAGE, SUBSCRIBE} {
+		resp := finalTo(t, ua, requiring(ua, method, "", "foo"))
+		if resp.StatusCode != 405 || resp.Get("Allow") == "" || resp.Get("Unsupported") != "" {
+			t.Errorf("%s got %s with Allow %q and Unsupported %q, want 405 with Allow only",
+				method, startLine(resp), resp.Get("Allow"), resp.Get("Unsupported"))
+		}
+	}
+}
