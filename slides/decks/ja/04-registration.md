@@ -27,26 +27,54 @@ events:
       - From, To: 登録する公開の識別子
       - Contact: "ユーザー部に UUID。`+g.3gpp.smsip` と `expires=600000`"
       - Authorization: "`username` に秘密の識別子。`nonce` と `response` は空"
-  - id: dns-query
-    msg: NAPTR, SRV, A
+  - id: dns-naptr
+    msg: NAPTR
     from: pcscf
     to: dns
     proto: DNS
-    note: (3 つの問い合わせ)
+    note: (問い合わせ)
     fields:
-      - NAPTR: "`ims.mnc001.mcc001.3gppnetwork.org`"
-      - SRV: "`_sip._udp.ims.mnc001.mcc001.3gppnetwork.org`"
-      - A: "`icscf.ims.mnc001.mcc001.3gppnetwork.org`"
-  - id: dns-answer
-    msg: NAPTR, SRV, A
+      - 名前: "`ims.mnc001.mcc001.3gppnetwork.org`"
+  - id: dns-naptr-ans
+    msg: NAPTR
     from: dns
     to: pcscf
     proto: DNS
-    note: (3 つの答え)
+    note: (答え)
     fields:
-      - NAPTR の答え: "UDP の SIP は `_sip._udp...`"
-      - SRV の答え: "`icscf...` のポート 5060"
-      - A の答え: 172.28.0.20
+      - 答え: "UDP の SIP は `_sip._udp.ims.mnc001.mcc001.3gppnetwork.org`"
+  - id: dns-srv
+    msg: SRV
+    from: pcscf
+    to: dns
+    proto: DNS
+    note: (問い合わせ)
+    fields:
+      - 名前: "`_sip._udp.ims.mnc001.mcc001.3gppnetwork.org`"
+  - id: dns-srv-ans
+    msg: SRV
+    from: dns
+    to: pcscf
+    proto: DNS
+    note: (答え)
+    fields:
+      - 答え: "`icscf.ims.mnc001.mcc001.3gppnetwork.org` のポート 5060"
+  - id: dns-a
+    msg: A
+    from: pcscf
+    to: dns
+    proto: DNS
+    note: (問い合わせ)
+    fields:
+      - 名前: "`icscf.ims.mnc001.mcc001.3gppnetwork.org`"
+  - id: dns-a-ans
+    msg: A
+    from: dns
+    to: pcscf
+    proto: DNS
+    note: (答え)
+    fields:
+      - 答え: 172.28.0.20
   - id: pcscf-path
     do: ヘッダを足す
     at: pcscf
@@ -768,15 +796,28 @@ steps:
     text: |
       Request-URI はホーム網のドメインです。
       Authorization で、どの秘密の識別子を認証するかを先に伝えます。
-  - id: query
-    title: P-CSCF が DNS に尋ねる
-    show: [dns-query]
-    text: ドメインから、RFC 3263 の手順で NAPTR、SRV、A の順に引きます。
-  - id: answer
-    title: I-CSCF のアドレスが分かる
-    show: [dns-answer]
+  - id: naptr
+    title: P-CSCF がドメインの NAPTR を引く
+    show: [dns-naptr, dns-naptr-ans]
+    active: dns-naptr-ans
+    detail: [dns-naptr, dns-naptr-ans]
+    text: RFC 3263 の手順です。答えで、UDP の SIP がどの名前で提供されているかが分かります。
+  - id: srv
+    title: その名前の SRV を引く
+    hide: [dns-naptr, dns-naptr-ans]
+    show: [dns-srv, dns-srv-ans]
+    active: dns-srv-ans
+    detail: [dns-srv, dns-srv-ans]
     checkpoint: true
-    text: 3 つの答えで、ホーム網の入口が 172.28.0.20 の 5060 番だと分かります。
+    text: 引く名前は、前の答えが決めます。答えは I-CSCF の名前とポート 5060 です。
+  - id: answer
+    title: その名前の A を引き、I-CSCF のアドレスが分かる
+    hide: [dns-srv, dns-srv-ans]
+    show: [dns-a, dns-a-ans]
+    active: dns-a-ans
+    detail: [dns-a, dns-a-ans]
+    checkpoint: true
+    text: ホーム網の入口は 172.28.0.20 の 5060 番です。3 つの問い合わせは、どれも前の答えで次の名前が決まります。
   - id: add
     title: P-CSCF がヘッダを足す
     show: [pcscf-path]

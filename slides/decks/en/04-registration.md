@@ -27,26 +27,54 @@ events:
       - From, To: the public identity it registers
       - Contact: "A UUID as the user part, `+g.3gpp.smsip` and `expires=600000`"
       - Authorization: "The private identity in `username`; `nonce` and `response` empty"
-  - id: dns-query
-    msg: NAPTR, SRV, A
+  - id: dns-naptr
+    msg: NAPTR
     from: pcscf
     to: dns
     proto: DNS
-    note: (3 queries)
+    note: (query)
     fields:
-      - NAPTR: "`ims.mnc001.mcc001.3gppnetwork.org`"
-      - SRV: "`_sip._udp.ims.mnc001.mcc001.3gppnetwork.org`"
-      - A: "`icscf.ims.mnc001.mcc001.3gppnetwork.org`"
-  - id: dns-answer
-    msg: NAPTR, SRV, A
+      - name: "`ims.mnc001.mcc001.3gppnetwork.org`"
+  - id: dns-naptr-ans
+    msg: NAPTR
     from: dns
     to: pcscf
     proto: DNS
-    note: (3 answers)
+    note: (answer)
     fields:
-      - NAPTR answer: "SIP over UDP is at `_sip._udp...`"
-      - SRV answer: "`icscf...`, port 5060"
-      - A answer: 172.28.0.20
+      - answer: "SIP over UDP is at `_sip._udp.ims.mnc001.mcc001.3gppnetwork.org`"
+  - id: dns-srv
+    msg: SRV
+    from: pcscf
+    to: dns
+    proto: DNS
+    note: (query)
+    fields:
+      - name: "`_sip._udp.ims.mnc001.mcc001.3gppnetwork.org`"
+  - id: dns-srv-ans
+    msg: SRV
+    from: dns
+    to: pcscf
+    proto: DNS
+    note: (answer)
+    fields:
+      - answer: "`icscf.ims.mnc001.mcc001.3gppnetwork.org`, port 5060"
+  - id: dns-a
+    msg: A
+    from: pcscf
+    to: dns
+    proto: DNS
+    note: (query)
+    fields:
+      - name: "`icscf.ims.mnc001.mcc001.3gppnetwork.org`"
+  - id: dns-a-ans
+    msg: A
+    from: dns
+    to: pcscf
+    proto: DNS
+    note: (answer)
+    fields:
+      - answer: 172.28.0.20
   - id: pcscf-path
     do: adds headers
     at: pcscf
@@ -769,15 +797,28 @@ steps:
     text: |
       The Request-URI is the home network domain.
       Authorization already tells which private identity is to be authenticated.
-  - id: query
-    title: The P-CSCF asks the DNS
-    show: [dns-query]
-    text: From the domain it looks up NAPTR, SRV and A in turn, as RFC 3263 describes.
-  - id: answer
-    title: The address of the I-CSCF is found
-    show: [dns-answer]
+  - id: naptr
+    title: The P-CSCF looks up the NAPTR of the domain
+    show: [dns-naptr, dns-naptr-ans]
+    active: dns-naptr-ans
+    detail: [dns-naptr, dns-naptr-ans]
+    text: As RFC 3263 describes. The answer tells under which name SIP over UDP is offered.
+  - id: srv
+    title: It looks up the SRV of that name
+    hide: [dns-naptr, dns-naptr-ans]
+    show: [dns-srv, dns-srv-ans]
+    active: dns-srv-ans
+    detail: [dns-srv, dns-srv-ans]
     checkpoint: true
-    text: The three answers lead to the entry of the home network, port 5060 at 172.28.0.20.
+    text: The answer before decides the name to look up. This answer is the name of the I-CSCF and port 5060.
+  - id: answer
+    title: It looks up the A of that name, and the address of the I-CSCF is found
+    hide: [dns-srv, dns-srv-ans]
+    show: [dns-a, dns-a-ans]
+    active: dns-a-ans
+    detail: [dns-a, dns-a-ans]
+    checkpoint: true
+    text: The entry of the home network is port 5060 at 172.28.0.20. Each answer decides the name of the next query.
   - id: add
     title: The P-CSCF adds headers
     show: [pcscf-path]
