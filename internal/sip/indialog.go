@@ -135,20 +135,15 @@ var ErrNoAnswer = errors.New("sip: the 2xx to a request with an offer needs the 
 // Reject answers the request with a final response from 300 to 699,
 // such as 488 (Not Acceptable Here) for an offer that the user cannot
 // take. The session and the dialog stay as they were before the
-// request. Reject waits for a Progress to return. Like Accept, it sends
-// nothing and returns ErrCallEnded once a BYE has answered the request
-// with 487.
+// request. Reject does not wait for the PRACK of a reliable provisional
+// response to a re-INVITE, as a final response other than 2xx may pass
+// one (RFC 3262 3); a Progress that waits for that PRACK then returns
+// ErrRequestAnswered. Like Accept, Reject sends nothing and returns
+// ErrCallEnded once a BYE has answered the request with 487.
 func (r *InDialogRequest) Reject(code int, headers ...HeaderField) error {
 	if code < 300 || code > 699 {
 		return fmt.Errorf("sip: %d is not a final response that Reject can send", code)
 	}
-	r.answering.Lock()
-	defer r.answering.Unlock()
-	return r.reject(code, headers)
-}
-
-// reject is Reject for a response that does not wait for Progress.
-func (r *InDialogRequest) reject(code int, headers []HeaderField) error {
 	resp := NewResponse(r.Request, code, "")
 	addHeaders(resp, headers)
 	return r.respond(resp, false)
@@ -904,10 +899,10 @@ func (r *InDialogRequest) Cancelled() <-chan struct{} {
 
 // watchCancel answers the re-INVITE with 487 when the peer cancels it
 // before any reliable provisional response has carried its session
-// description (Cancelled). The 487 does not wait for the PRACK of a
-// reliable provisional response, as Reject would: RFC 3262 3 lets a
-// final response other than 2xx pass one. It is decided with c.mu held,
-// so that no such response can go between the check and the 487.
+// description (Cancelled). Like Reject, the 487 does not wait for the
+// PRACK of a reliable provisional response (RFC 3262 3). It is decided
+// with c.mu held, so that no such response can go between the check
+// and the 487.
 func (r *InDialogRequest) watchCancel() {
 	c := r.d.c
 	select {
@@ -1038,8 +1033,8 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 // the UA rejects the re-INVITE with 500 and Progress returns
 // ErrNoPRACK. Without 100rel, the response goes unreliably, and
 // Progress returns once it is sent. Accept waits for the PRACK of a
-// reliable response with a session description, and Reject for a
-// Progress to return.
+// reliable response with a session description; Reject does not wait,
+// and a Progress that waits for a PRACK then returns.
 //
 // The first reliable response with a session description carries the
 // answer to the offer of the re-INVITE, or the offer when the
@@ -1105,7 +1100,7 @@ func (r *InDialogRequest) Progress(code int, body Body, headers ...HeaderField) 
 	switch {
 	case errors.Is(err, ErrNoPRACK):
 		// RFC 3262 3: the UAS SHOULD reject the re-INVITE with a 5xx.
-		r.reject(500, c.ua.own(INVITE, true, nil))
+		r.Reject(500, c.ua.own(INVITE, true, nil)...)
 	case errors.Is(err, ErrRequestAnswered):
 		c.mu.Lock()
 		err = r.answerable()

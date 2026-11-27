@@ -197,3 +197,40 @@ func TestAnswersAfterTheAcceptOfAReINVITEReturnAtOnce(t *testing.T) {
 		t.Errorf("Accept returned %v, %v; want the ACK", a.ack, a.err)
 	}
 }
+
+// RFC 3262 3: only a 2xx waits for the PRACK of a reliable provisional
+// response, and only for one that carried a session description. A user
+// that ends a cancelled re-INVITE with 487 while its reliable 183 waits
+// for a PRACK that never comes gets the 487 out at once, and the
+// Progress that waited returns.
+func TestRejectOfAReINVITEDoesNotWaitForThePRACK(t *testing.T) {
+	progressed := make(chan error, 1)
+	rejected := make(chan error, 1)
+	_, p := rawCall(t, slowTimers, func(r *InDialogRequest) {
+		go func() { progressed <- r.Progress(183, holdAnswer) }()
+		select {
+		case <-r.Cancelled():
+		case <-time.After(5 * time.Second):
+			rejected <- errors.New("Cancelled was not closed within 5s of the CANCEL")
+			return
+		}
+		rejected <- r.Reject(487)
+	})
+	reinvite := reInviteFrom(p, holdOffer, supports100rel)
+	readProvisional(t, p)
+	start := time.Now()
+	send(t, p.peer, newMatchingRequest(reinvite, CANCEL, reinvite.Get("To")), p.ua.Stack())
+	if final := readFinal(t, p, reinvite.Get("CSeq")); final.StatusCode != 487 {
+		t.Fatalf("re-INVITE got %s, want the 487 of the user", startLine(final))
+	}
+	if elapsed := time.Since(start); elapsed > 16*slowTimers.T1 {
+		t.Errorf("487 after %v, want it at once", elapsed)
+	}
+	ackNonOK(t, p, reinvite)
+	if err := returned(t, rejected, "Reject"); err != nil {
+		t.Errorf("Reject: %v", err)
+	}
+	if err := returned(t, progressed, "Progress"); !errors.Is(err, ErrRequestAnswered) {
+		t.Errorf("Progress: %v, want ErrRequestAnswered", err)
+	}
+}
