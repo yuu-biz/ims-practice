@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | [implementation.md](implementation.md) | Go で書くこと。SIP の解析、トランザクション層、ダイアログ層を自作し、Diameter の符号化には go-diameter を使うこと。SIP のスタックのループで TCP の送信を待たないこと | IMS の手順が SIP のどの層の動きなのかを読めるようにするため。1 つの相手を待つあいだに、役割全体を止めないため |
 | [ue-simulator.md](ue-simulator.md) | UE シミュレータを自作し、SIPp と pjsua を独立した試験相手にすること | sec-agree を含む IMS-AKA の全体を見せ、UE と CSCF に同じ誤解が入るのを防ぐため |
-| [media-control.md](media-control.md) | メディア中継ノードを独自の API と H.248 で制御すること。P-CSCF の通過ごとのコンテキスト。網の境界の装置の振る舞い | 通話の基本を先に学べるようにし、実際の網と同じ形で中継を見せるため |
+| [media-control.md](media-control.md) | メディア中継ノードを独自の API と H.248 で制御すること。P-CSCF の通過ごとのコンテキスト。中継ノードが受け取らない、別のフォークの 2xx の扱い。網の境界の装置の振る舞い | 通話の基本を先に学べるようにし、実際の網と同じ形で中継を見せるため |
 | [environment-capture.md](environment-capture.md) | ホストとコンテナのあいだを NAT 越しとして扱うこと。ブリッジ全体を 1 つのコンテナでキャプチャすること | ホストのソフトフォンとつなぎ、すべての信号を 1 つの pcap で見るため |
 | [codecs.md](codecs.md) | G.711 から始め、AMR と AMR-WB を符号化済みのフレームで運ぶこと | IR.92 と NG.114 の必須のコーデックに従い、製品に cgo を入れないため |
 | [volte-access.md](volte-access.md) | 最初のアクセス網を EPC にすること。EPC と PCRF のスタブ。既定では ESP をかけず、上書きの構成で ESP（暗号化は null）をかける IMS-AKA。AKAv1-MD5 | VoLTE の手順（ベアラ、Rx、sec-agree）をキャプチャで見せるため |
