@@ -15,14 +15,14 @@ import (
 // that the resources are reserved can follow (RFC 3312 13.1, TS 24.229
 // 6.1.4.2 item b).
 //
-// SIMPLIFIED: RFC 3261 9.1 and RFC 6141 3.3. A CANCEL for a re-INVITE
-// that the Call relays ends on the leg it came on, and the Call sends
-// none on the other leg. The UA answers the re-INVITE with 487 while no
-// reliable provisional response has carried its session description, and
-// leaves it to the final response of the other leg once one has
-// (sip.InDialogRequest.Cancelled); the far end answers it as it would
-// have without the CANCEL, so the two ends can end up with different
-// sessions. No UE of this project cancels a re-INVITE.
+// A CANCEL for the re-INVITE goes on to the far leg, with its Reason
+// (RFC 3261 9.1, RFC 3326 2), and the final response of that leg comes
+// back as the final response of the re-INVITE: a 487 when the far end
+// made no change of the session, and a 2xx when it made one already
+// (RFC 6141 3.3, 3.8). So the Call invents no final response of its own,
+// and the role puts back what it changed for a re-INVITE that got no
+// 2xx, as it does for any other final response other than 2xx
+// (Hooks.Unanswered).
 
 // reInviteRelay is one re-INVITE that crosses the B2BUA, from its
 // arrival to its final response. The Call finds it by the CSeq number
@@ -158,6 +158,13 @@ func (c *Call) reInvite(r *sip.InDialogRequest, to leg, m Message, d Direction, 
 		Body:        m.Body,
 		Headers:     m.Headers,
 		ManualPRACK: k.reliable,
+		// The side that sent r may cancel it, and then the re-INVITE of
+		// to is cancelled too, with the Reason of that CANCEL (RFC 3261
+		// 9.1, RFC 3326 2). The UA of to sends the CANCEL once a
+		// provisional response has come, even where the CANCEL arrives
+		// while the re-INVITE still waits for its turn (turns).
+		Cancelled:     r.Cancelled(),
+		CancelHeaders: func() []sip.HeaderField { return c.reasons(r.CancelRequest(), d) },
 		OnProvisional: func(p *sip.Message) {
 			if p.Requires(sip.Option100rel) && k.reliable {
 				// to has the re-INVITE, and the side that sent it is to

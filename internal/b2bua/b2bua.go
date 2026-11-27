@@ -92,8 +92,9 @@ type Hooks interface {
 	// the one the UA writes.
 	Contact(resp *sip.Message) (c sip.NameAddr, recordRoute, ok bool)
 	// Reasons are the Reason header fields of ended, the request that
-	// ended one dialog, for the request that ends the other, which
-	// crosses in d (RFC 3326 2).
+	// ended one dialog or cancelled a re-INVITE on one leg, for the
+	// request that ends the other dialog or cancels the re-INVITE of the
+	// other leg, which crosses in d (RFC 3326 2).
 	Reasons(ended *sip.Message, d Direction) []sip.HeaderField
 	// KeepDialogs gets the two dialogs once the callee has answered, and
 	// again after each request within them: a target refresh request

@@ -1040,6 +1040,18 @@ func (r *InDialogRequest) Cancelled() <-chan struct{} {
 	return r.st.Cancelled()
 }
 
+// CancelRequest is the CANCEL that cancelled the re-INVITE, once
+// Cancelled is closed; nil before that, and for any other request. Its
+// Reason tells why the peer gave the change of the session up (RFC 3326
+// 2), which a B2BUA passes on in the CANCEL that it sends on its other
+// leg (ReInvitation.CancelHeaders).
+func (r *InDialogRequest) CancelRequest() *Message {
+	if r.Request.Method != INVITE {
+		return nil
+	}
+	return r.st.CancelRequest()
+}
+
 // watchCancel answers the re-INVITE with 487 when the peer cancels it
 // before any reliable provisional response has carried its session
 // description (Cancelled). Like Reject, the 487 does not wait for the

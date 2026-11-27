@@ -113,6 +113,8 @@ type Hooks interface {
 - `IncomingCall.RelayPRACK`。本文の無い PRACK を、`internal/sip` が自分で 200 で答えずに、受け取る側に渡します。B2BUA が PRACK と、それに続く UPDATE の順を守るためです。使う側が求めたときだけ変わるので、UE、MRFC、フォーカスの動きは変わりません。
 - `HasSessionDescription`。`internal/ibcf` と `internal/pcscf` の `hasSDP` を置き換えます。
 - `InDialogRequest.ProgressUnreliably`。re-INVITE が 100rel を挙げていても、信頼性のない暫定応答を送ります。B2BUA が 100rel なしで届いた暫定応答を同じ形で写すためです。RFC 3262 3 はどの暫定応答を信頼性のある形で送るかを UAS に任せています。
+- `CallDialog.CancelReInvite` と `ReInvitation.Cancelled`、`ReInvitation.CancelHeaders`。送った re-INVITE を取り消します。`CancelReInvite` だけでは、B2BUA が受けた CANCEL を落とすことがあります。中継する re-INVITE はもう一方の脚で番を待つことがあり、そのあいだは取り消す re-INVITE がまだ無いためです。`Cancelled` に渡したチャネルが閉じれば、`internal/sip` は re-INVITE が出てから CANCEL を送ります。`CancelHeaders` は、そのときの CANCEL のヘッダを返します。受けた CANCEL の Reason は、閉じたあとでなければ読めないためです。
+- `InDialogRequest.CancelRequest`。re-INVITE を取り消した CANCEL です。B2BUA がその Reason をもう一方の脚の CANCEL に写すために読みます（RFC 3326 2）。
 
 `internal/sip` が要求を 1 つずつ渡す形は採りません。UE、MRFC、フォーカスの動きも変わるうえ、中核が応答を返す前に次の要求へ進めなくなるためです。
 
@@ -131,6 +133,7 @@ type Hooks interface {
 | 本文の無い PRACK への 200 | 今までどおりすぐに返す | 着信側の応答を待つと、発信側の再送のタイマーにかかります。 |
 | 次の要求に進む時点 | もう一方のレグが、信頼性のある写しで渡す最初の暫定応答を返したとき。そうした応答が無ければ最終応答で、オファーの無い re-INVITE では ACK を中継したとき | 暫定応答が返った時点で、そのレグは re-INVITE を受け取っていて、CSeq も決まっています。最終応答まで番を持つと、その 1xx への PRACK と、資源の確保を伝える UPDATE が後ろで止まります（RFC 3262 4、RFC 3312 13.1）。 |
 | re-INVITE への暫定応答 | もう一方のレグの 1xx をすべて中継し、役割の hook で整える。写しを信頼性のある形にするのは、届いた応答が信頼性のある形で、かつ re-INVITE が 100rel を挙げているときだけ。hook は届いた順に通し、写しは別の goroutine から送る。2xx は写しをすべて送り終えてから渡し、2xx 以外の最終応答はすぐに渡す | 相手は信頼性のある 183 でアンサーを返し、資源の確保を伝える UPDATE を待ちます（RFC 3312 13.1、TS 24.229 6.1.4.2 の項目 b）。信頼性のない応答の SDP はアンサーではないので、信頼性のある写しにすると、受け取った側がそれをアンサーと数え、あとから届くアンサーを読みません（RFC 3261 13.2.1、RFC 3262 5）。信頼性のある写しは PRACK が届くまで送り終わらないので、同じ goroutine で送ると、そのあいだ相手の最終応答を読めません。2xx 以外の最終応答は PRACK を待たずに送ってよいものです（RFC 3262 3）。 |
+| re-INVITE への CANCEL | もう一方の脚の re-INVITE を、受けた CANCEL の Reason を付けて取り消す。最終応答はもう一方の脚のものを渡し、自分では作らない | CANCEL を落とすと、相手は CANCEL が無かったときと同じように応答し、両側のセッションが食い違います。変更を済ませた相手は 487 ではなく 2xx を返すので（RFC 6141 3.3、3.8）、B2BUA が 487 を作ると、その 2xx を取り消したことになります。2xx 以外の最終応答なら、ほかと同じ道筋で役割が変更を戻します（`Hooks.Unanswered`）。 |
 | re-INVITE への 2xx の SDP | 信頼性のある写しがセッション記述を運んだあとは外す。re-INVITE が 100rel を挙げていなければ、その信頼性のある応答の SDP を 2xx に入れる | アンサーは 2xx か信頼性のある暫定応答に入るものです（RFC 3261 13.2.1）。100rel を挙げない側は 2xx の SDP しか数えないので、2xx に入れないとアンサーが届きません。 |
 | early dialog の SDP | 着信側の UPDATE と PRACK の SDP も含める（今の MMTel AS の形） | CAT のプリコンディションが、それを使うためです。 |
 | ヘッダの表 | 共通の表に、役割ごとのものを足す | 和集合にすると、IBCF が、方針で通している P-Charging-Vector を落とします。 |

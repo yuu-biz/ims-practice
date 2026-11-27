@@ -313,8 +313,9 @@ func (c *Call) Answer(out *sip.OutgoingCall, resp *sip.Message) {
 }
 
 // reasons are the Reason header fields of ended, the request that ended
-// one leg, for the request that ends the other in direction d; none
-// when the leg ended without a request of its peer.
+// one leg or cancelled a re-INVITE on it, for the request that ends the
+// other leg or cancels its re-INVITE in direction d; none when the leg
+// ended without a request of its peer.
 func (c *Call) reasons(ended *sip.Message, d Direction) []sip.HeaderField {
 	if ended == nil {
 		return nil
@@ -689,6 +690,17 @@ func (c *Call) answerRequest(r *sip.InDialogRequest, sent sip.Body, resp *sip.Me
 			c.settledByTheEnds(r)
 		}
 		ack, err := r.Accept(m.Body, m.Headers...)
+		if err != nil {
+			// The side that sent the request has its final response
+			// already: a re-INVITE that it cancelled, which the UA answered
+			// 487 while no reliable provisional response had carried its
+			// session description, and whose far end made the change of the
+			// session all the same (RFC 6141 3.3, 3.8). The two ends are
+			// then on different sessions, and only a new offer of one of
+			// them settles that.
+			c.log.Info("the side that sent the request did not take the 2xx of the other leg",
+				"method", string(r.Request.Method), "error", err.Error())
+		}
 		if err == nil && offerless && ack != nil {
 			// A re-INVITE without an offer: the 2xx had the other side's
 			// offer, and this side's ACK has the answer (RFC 3261 14.1).
