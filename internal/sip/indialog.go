@@ -205,6 +205,7 @@ func (r *InDialogRequest) settle(resp *Message, accepted bool) {
 		// Only a re-INVITE that was refused or ended by a BYE comes here;
 		// acceptReInvite has its own way.
 		d.invite = noInvite
+		r.over = true
 		close(r.settled)
 	}
 	switch {
