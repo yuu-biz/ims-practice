@@ -215,7 +215,7 @@ func (u *UE) newSession(media *Media, codecs []sdp.Codec, changed func()) *Sessi
 // sessionDialog is the dialog of a call as its session uses it: an
 // OutgoingCall or an IncomingCall.
 type sessionDialog interface {
-	ReInvite(body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
+	ReInviteWith(re sip.ReInvitation) (*sip.Message, error)
 	Dialog() (sip.Dialog, bool)
 }
 
@@ -284,9 +284,17 @@ func (s *Session) hold(held bool) error {
 	defer s.changed()
 	for attempt := 0; ; attempt++ {
 		body, err := s.reoffer()
-		var resp *sip.Message
+		// answer is the response with the answer: the first reliable
+		// provisional response with SDP, after which the 2xx carries
+		// none, or else the 2xx (RFC 3261 13.2.1, RFC 3262 5).
+		var resp, answer *sip.Message
 		if err == nil {
-			resp, err = dialog.ReInvite(body, s.requestHeaders...)
+			resp, err = dialog.ReInviteWith(sip.ReInvitation{Body: body, Headers: s.requestHeaders,
+				OnProvisional: func(p *sip.Message) {
+					if answer == nil && p.Requires(sip.Option100rel) && len(p.Body) > 0 {
+						answer = p
+					}
+				}})
 		}
 		if err == nil && resp.StatusCode == 491 && attempt == 0 {
 			// RFC 3261 14.1: the re-INVITE crossed one of the peer.
@@ -297,10 +305,20 @@ func (s *Session) hold(held bool) error {
 			err = fmt.Errorf("re-INVITE answered %d %s", resp.StatusCode, resp.Reason)
 		}
 		if err == nil {
-			err = s.receiveAnswer(resp)
+			if answer == nil {
+				answer = resp
+			}
+			err = s.receiveAnswer(answer)
 		}
 		if err != nil {
 			// RFC 3264 8: a refused offer leaves the session as it was.
+			//
+			// SIMPLIFIED: RFC 6141 3.4. When a reliable provisional
+			// response had the answer and the re-INVITE fails all the
+			// same, the UAC SHOULD offer the session as it was, so that
+			// both sides agree on it. The UE only goes back to it. A UAS
+			// that has carried out the change SHOULD answer with a 2xx
+			// instead (RFC 6141 3.3).
 			s.mu.Lock()
 			s.held, s.localDir, s.offered = !held, before, offered
 			s.updateFlow()
