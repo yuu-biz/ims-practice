@@ -258,7 +258,7 @@ func TestAnnouncementAfterAnswer(t *testing.T) {
 	}
 
 	want := rtptest.Frames(t, announcements["notice"])
-	sameFrames(t, rtptest.ReadPCMU(t, caller, len(want), 10*time.Second), want)
+	sameFrames(t, rtptest.ReadPCMU(t, caller, rtptest.PCMU, len(want), 10*time.Second), want)
 	waitDone(t, out.Done(), "the dialog with the MRFC")
 	if bye := out.EndedBy(); bye == nil || bye.Method != sip.BYE {
 		t.Errorf("the dialog ended by %v, want the MRFC's BYE", bye)
@@ -460,7 +460,7 @@ func TestConferenceMixesTheOthers(t *testing.T) {
 	// others.
 	for i, party := range parties {
 		others := slices.Delete(slices.Clone(hz), i, i+1)
-		samples := rtptest.Heard(t, party, others, 30, 10*time.Second)
+		samples := rtptest.Heard(t, party, rtptest.PCMU, others, 30, 10*time.Second)
 		for j, f := range hz {
 			p := rtptest.Power(samples, f)
 			if j == i && p > 1e4 {

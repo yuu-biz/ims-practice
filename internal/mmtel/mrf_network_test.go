@@ -304,7 +304,7 @@ func TestCustomizedAlertingTone(t *testing.T) {
 		t.Errorf("the SDP of the tone has content %q, want g.3gpp.cat (4.5.5.3.7 b 2)", v)
 	}
 	tone := rtptest.Frames(t, mrfAnnouncements["cat1"])
-	if got := rtptest.ReadPCMU(t, call.media, len(tone), 10*time.Second); !startsWith(got, tone) {
+	if got := rtptest.ReadPCMU(t, call.media, rtptest.PCMU, len(tone), 10*time.Second); !startsWith(got, tone) {
 		t.Error("the early media is not the tone cat1, frame by frame")
 	}
 
@@ -343,7 +343,7 @@ func TestCustomizedAlertingToneThenBusy(t *testing.T) {
 	ic := receive(t, callee.calls, "call at the callee")
 	go ic.Progress(180, sip.Body{})
 	mrfpAnswer(t, n, call.next(t).m)
-	rtptest.ReadPCMU(t, call.media, 10, 10*time.Second)
+	rtptest.ReadPCMU(t, call.media, rtptest.PCMU, 10, 10*time.Second)
 	ic.Reject(486)
 	if final := call.next(t); final.m.StatusCode != 486 {
 		t.Errorf("the caller got %d, want 486", final.m.StatusCode)
@@ -361,7 +361,7 @@ func TestCustomizedAlertingToneThenCancel(t *testing.T) {
 	ic := receive(t, callee.calls, "call at the callee")
 	go ic.Progress(180, sip.Body{})
 	mrfpAnswer(t, n, call.next(t).m)
-	rtptest.ReadPCMU(t, call.media, 10, 10*time.Second)
+	rtptest.ReadPCMU(t, call.media, rtptest.PCMU, 10, 10*time.Second)
 	if err := call.out.Cancel(); err != nil {
 		t.Fatal(err)
 	}
