@@ -372,6 +372,7 @@ func (c *Call) keepDialogs() {
 type leg interface {
 	Update(body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
 	ReInvite(body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
+	ReInviteWith(re sip.ReInvitation) (*sip.Message, error)
 	Send(method sip.Method, body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
 	Ack(body sip.Body, headers ...sip.HeaderField) error
 	AddSubscriptionUsage() (end func(), err error)
@@ -590,7 +591,7 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 		}
 		resp, err = to.Update(m.Body, m.Headers...)
 	case sip.INVITE:
-		resp, err = to.ReInvite(m.Body, m.Headers...)
+		resp, err = reInvite(to, m)
 	case sip.PRACK:
 		// A PRACK with a new offer, for a copy of a response that the
 		// callee wanted no PRACK for (RFC 3262 5). The offer goes on in
@@ -606,6 +607,32 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 	if ofSubscription(req.Method) {
 		c.relayed(req, created, resp, err)
 	}
+}
+
+// reInvite sends m, a re-INVITE that crosses the B2BUA, on in to, and
+// returns its final response. The other side may answer an offer of m in
+// a reliable provisional response, which the UA of to acknowledges with
+// a PRACK, and then send a 2xx without SDP (RFC 3261 13.2.1, RFC 3262 5).
+// The side that sent m gets no provisional response of the other side's,
+// so the answer would be lost on the way: the 2xx that goes back carries
+// the answer of that provisional response instead.
+func reInvite(to leg, m Message) (*sip.Message, error) {
+	var answered *sip.Message
+	re := sip.ReInvitation{Body: m.Body, Headers: m.Headers}
+	if len(m.Body.Content) > 0 {
+		re.OnProvisional = func(p *sip.Message) {
+			if answered == nil && p.Requires(sip.Option100rel) && sip.HasSessionDescription(p) {
+				answered = p
+			}
+		}
+	}
+	resp, err := to.ReInviteWith(re)
+	if err == nil && resp.StatusCode < 300 && answered != nil && !sip.HasSessionDescription(resp) {
+		resp = resp.Clone()
+		resp.Set("Content-Type", answered.Get("Content-Type"))
+		resp.Body = answered.Body
+	}
+	return resp, err
 }
 
 // changesSession reports whether r, a request within a dialog, settles
