@@ -56,8 +56,10 @@ type Conference struct {
 type inDialogSubscription struct {
 	end func()
 	// stopExpiry stops the timer that ends the subscription at its
-	// expiry, which each NOTIFY sets anew.
+	// expiry, which each NOTIFY and each 2xx to a refresh sets anew;
+	// run tells a timer that fires late that it has been replaced.
 	stopExpiry func() bool
+	run        uint64
 }
 
 // ErrNotFocus is a conference session whose peer did not answer as a
@@ -254,29 +256,57 @@ func (c *Conference) Subscribe() error {
 	}
 	c.u.log.Info("SUBSCRIBE outside the dialog refused with 403; subscribing within the dialog of the conference session")
 	d := c.dialog()
-	// The usage is there before the SUBSCRIBE goes, since the first
-	// NOTIFY may come before the 2xx.
-	end, err := d.AddSubscriptionUsage()
+	created, err := c.addInDialog(d)
 	if err != nil {
 		return err
 	}
-	c.mu.Lock()
-	c.inDialog = &inDialogSubscription{end: end}
-	c.expireInDialog(conferenceExpires)
-	c.mu.Unlock()
 	resp, err := d.Send(sip.SUBSCRIBE, sip.Body{}, with(c.session.requestHeaders,
 		sip.HeaderField{Name: "Event", Value: confinfo.EventPackage},
 		sip.HeaderField{Name: "Accept", Value: confinfo.ContentType},
 		sip.HeaderField{Name: "Expires", Value: fmt.Sprint(int(conferenceExpires / time.Second))})...)
 	switch {
 	case err != nil:
-		c.endInDialog()
+		// A refresh that gets no answer ends the subscription (RFC 5057
+		// 4.2), and so does an initial SUBSCRIBE that fails.
+		if created || errors.Is(err, sip.ErrTimeout) {
+			c.endInDialog()
+		}
 		return err
 	case resp.StatusCode >= 300:
-		c.endInDialog()
+		// A refresh keeps the subscription unless its response says that
+		// it has ended (RFC 6665 4.1.2.2).
+		if created || sip.EndsSubscription(resp.StatusCode) {
+			c.endInDialog()
+		}
 		return fmt.Errorf("SUBSCRIBE within the dialog answered %d %s", resp.StatusCode, resp.Reason)
 	}
+	if granted, err := sip.SubscribeExpires(resp, 0); err == nil && granted > 0 {
+		c.mu.Lock()
+		if c.inDialog != nil {
+			c.expireInDialog(granted)
+		}
+		c.mu.Unlock()
+	}
 	return nil
+}
+
+// addInDialog makes the subscription within the dialog d a usage of
+// it, before its SUBSCRIBE goes, since the first NOTIFY may come before
+// the 2xx. A SUBSCRIBE that refreshes the subscription the UE has adds
+// none (RFC 6665 4.1.2.2): created is false then.
+func (c *Conference) addInDialog(d withinTheSession) (created bool, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.inDialog != nil {
+		return false, nil
+	}
+	end, err := d.AddSubscriptionUsage()
+	if err != nil {
+		return false, err
+	}
+	c.inDialog = &inDialogSubscription{end: end}
+	c.expireInDialog(conferenceExpires)
+	return true, nil
 }
 
 // withinTheSession is what the UE does within the dialog of the
@@ -304,9 +334,19 @@ func (c *Conference) expireInDialog(d time.Duration) {
 	if sub.stopExpiry != nil {
 		sub.stopExpiry()
 	}
+	sub.run++
+	run := sub.run
 	sub.stopExpiry = time.AfterFunc(d+64*sip.DefaultTimers().T1, func() {
+		c.mu.Lock()
+		if c.inDialog != sub || sub.run != run {
+			// A NOTIFY or a refresh has set the expiry anew meanwhile.
+			c.mu.Unlock()
+			return
+		}
+		c.inDialog = nil
+		c.mu.Unlock()
 		c.u.log.Info("conference subscription within the dialog expired without a NOTIFY that ends it")
-		c.endInDialog()
+		sub.end()
 	}).Stop
 }
 

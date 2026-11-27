@@ -3,6 +3,7 @@ package ue_test
 import (
 	"context"
 	"net/netip"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,9 +21,12 @@ type fakeFocus struct {
 	uri     string
 	refers  chan *sip.Message
 	session chan *sip.IncomingCall
-	// ends gets the end of the usage of each subscription that the focus
-	// takes within the dialog (sip.CallDialog.AddSubscriptionUsage).
-	ends chan func()
+	// ends gets the end of the usage of the subscription that the focus
+	// takes within the dialog (sip.CallDialog.AddSubscriptionUsage); a
+	// refresh of it adds none.
+	ends       chan func()
+	mu         sync.Mutex
+	subscribed bool
 }
 
 func startFakeFocus(t *testing.T) *fakeFocus {
@@ -63,13 +67,19 @@ func (f *fakeFocus) inDialog(t *testing.T, ic *sip.IncomingCall, r *sip.InDialog
 			s.Notify(200)
 		}
 	case sip.SUBSCRIBE:
-		end, err := ic.AddSubscriptionUsage()
-		if err != nil {
-			t.Error(err)
-			r.Reject(500)
-			return
+		f.mu.Lock()
+		refresh := f.subscribed
+		f.subscribed = true
+		f.mu.Unlock()
+		if !refresh {
+			end, err := ic.AddSubscriptionUsage()
+			if err != nil {
+				t.Error(err)
+				r.Reject(500)
+				return
+			}
+			f.ends <- end
 		}
-		f.ends <- end
 		r.Accept(sip.Body{}, sip.HeaderField{Name: "Expires", Value: "3600"})
 		doc := confinfo.Conference{URI: f.uri, MaximumUserCount: 6, Participants: []confinfo.Participant{
 			{User: impu, Endpoint: impu, Status: confinfo.Connected}}}
@@ -126,13 +136,22 @@ func TestConferenceOfTheUE(t *testing.T) {
 // NOTIFY that ends the subscription in that dialog, after the 200 to
 // its BYE, and answers it 200. Once it has, the UE no longer knows the
 // dialog (RFC 5057 4), and a request within it gets 481 (RFC 3261
-// 12.2.2).
+// 12.2.2). A UE that subscribes again refreshes the subscription it has
+// (RFC 6665 4.1.2.2), so it still lets the dialog go with that one
+// NOTIFY.
 func TestTheUEKeepsItsDialogForTheLastNOTIFY(t *testing.T) {
+	t.Run("subscribed", func(t *testing.T) { keepsItsDialogForTheLastNOTIFY(t, 1) })
+	t.Run("subscribed again", func(t *testing.T) { keepsItsDialogForTheLastNOTIFY(t, 2) })
+}
+
+func keepsItsDialogForTheLastNOTIFY(t *testing.T, subscriptions int) {
 	f := startFakeFocus(t)
 	conf, ended, cancel, at := conferenceOfTheUE(t, f)
 	defer cancel()
 	ic := <-f.session
-	subscribeWithin(t, conf)
+	for range subscriptions {
+		subscribeWithin(t, conf)
+	}
 	endAtTheFocus := <-f.ends
 	defer endAtTheFocus()
 
