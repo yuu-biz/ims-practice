@@ -1,11 +1,13 @@
 package ibcf_test
 
 import (
+	"maps"
 	"net/netip"
 	"testing"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/ibcf"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -183,4 +185,213 @@ func TestA500ThatDoesNotGoIsNotCounted(t *testing.T) {
 	if got := p.a.counter(t, series); got != 0 {
 		t.Errorf("network A counted %v INVITEs it answered 500, want 0", got)
 	}
+}
+
+// previewingCallee stands in network B for UE B1 on the transaction
+// layer of package sip, since the UA of UE B1 answers a re-INVITE with a
+// final response only. It answers the INVITE with a 200 and its SDP
+// answer at media, hands each re-INVITE to the test, and tells it of
+// each PRACK it answered.
+type previewingCallee struct {
+	addr      netip.AddrPort
+	media     netip.AddrPort
+	reinvites chan *sip.ServerTransaction
+	pracks    chan *sip.Message
+}
+
+// startPreviewingCallee has the INVITEs for network n's UE go to a
+// previewingCallee.
+func (n *network) startPreviewingCallee(t *testing.T) *previewingCallee {
+	t.Helper()
+	tl, _ := listen(t, n.plan.internal+".12", 0, "callee", n.rec)
+	c := &previewingCallee{addr: tl.LocalAddr(), media: netip.AddrPortFrom(tl.LocalAddr().Addr(), 46000),
+		reinvites: make(chan *sip.ServerTransaction, 1), pracks: make(chan *sip.Message, 4)}
+	newStack(t, tl, c.addr.String(), c.onRequest, func(*sip.Message) {})
+	n.contact = "sip:callee@" + c.addr.String()
+	return c
+}
+
+func (c *previewingCallee) onRequest(st *sip.ServerTransaction) {
+	switch {
+	case st.Request.Method != sip.INVITE:
+		st.Respond(sip.NewResponse(st.Request, 200, ""))
+		if st.Request.Method == sip.PRACK {
+			c.pracks <- st.Request
+		}
+	case ims.IsInDialog(st.Request):
+		c.reinvites <- st
+	default:
+		st.Respond(c.response(st.Request, 200, c.media))
+	}
+}
+
+// response is the callee's response with status to req, with the SDP
+// answer to the offer of req at media.
+func (c *previewingCallee) response(req *sip.Message, status int, media netip.AddrPort) *sip.Message {
+	resp := sip.NewResponse(req, status, "callee")
+	for _, rr := range req.GetAll("Record-Route") {
+		resp.Add("Record-Route", rr)
+	}
+	resp.Add("Contact", "<sip:callee@"+c.addr.String()+">")
+	offer, err := sdp.Parse(req.Body)
+	if err != nil {
+		return resp
+	}
+	answer, err := sdp.AudioAnswer(offer, "4680", media, sdp.VoLTECodecs())
+	if err != nil {
+		return resp
+	}
+	resp.Set("Content-Type", "application/sdp")
+	resp.Body = answer.Bytes()
+	return resp
+}
+
+// reliable is the callee's reliable provisional response with status to
+// req, with the SDP answer at media (RFC 3262 3).
+func (c *previewingCallee) reliable(req *sip.Message, status int, media netip.AddrPort) *sip.Message {
+	resp := c.response(req, status, media)
+	resp.Add("Require", sip.Option100rel)
+	resp.Add("RSeq", "1")
+	return resp
+}
+
+// TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer: the
+// callee shows its answer to a re-INVITE of UE A1 in a 183 that is not
+// reliable, at another port, and then turns the offer down with 488.
+// Only an answer in a 2xx or a reliable provisional response is the
+// answer (RFC 3261 13.2.1), so the session is as it was before the
+// re-INVITE (14.1). Each IBCF passes the 183 on to its other leg, and
+// its SDP through its TrGW, as it does with any provisional response,
+// and copies it unreliably because it came so: that session description
+// counts for nothing on either leg. After the 488, each termination of
+// the two TrGWs sends where the INVITE and its answer said again:
+// TrGW-A's to the old port of UE A1, and TrGW-B's to where the 200 of
+// the callee said.
+func TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer(t *testing.T) {
+	p := newPair(t, nil)
+	callee := p.b.startPreviewingCallee(t)
+	call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
+	if resp := final(t, call); resp.StatusCode != 200 {
+		t.Fatalf("the INVITE got %d, want 200", resp.StatusCode)
+	}
+	// Until its ACK has come, each IBCF answers a re-INVITE 491 (RFC
+	// 3261 14.1).
+	inA, _ := planA.instanceHosts(0)
+	inB, _ := planB.instanceHosts(0)
+	p.a.waitAcknowledged(t, inA)
+	p.b.waitAcknowledged(t, inB)
+	wantA, wantB := onlyContext(t, p.a.trgw).remote, onlyContext(t, p.b.trgw).remote
+	if wantB[ibcf.CoreSide] != callee.media {
+		t.Fatalf("TrGW-B sends to %s for the 200, want %s", wantB[ibcf.CoreSide], callee.media)
+	}
+
+	offer := p.a.offerAt(t, p.a.media.Port()+2, 2)
+	rejected := make(chan *sip.Message, 1)
+	go func() {
+		resp, err := call.ReInvite(offer)
+		if err != nil {
+			t.Errorf("re-INVITE: %v", err)
+		}
+		rejected <- resp
+	}()
+	var st *sip.ServerTransaction
+	select {
+	case st = <-callee.reinvites:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the re-INVITE did not reach the callee")
+	}
+	st.Respond(callee.response(st.Request, 183, netip.AddrPortFrom(callee.media.Addr(), callee.media.Port()+2)))
+	st.Respond(sip.NewResponse(st.Request, 488, ""))
+	select {
+	case resp := <-rejected:
+		if resp == nil || resp.StatusCode != 488 {
+			t.Fatalf("the re-INVITE got %v, want 488", resp)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the re-INVITE got no final response")
+	}
+
+	if got := onlyContext(t, p.a.trgw).remote; !maps.Equal(got, wantA) {
+		t.Errorf("TrGW-A sends to %v after the 488, want %v of the INVITE and its answer again", got, wantA)
+	}
+	if got := onlyContext(t, p.b.trgw).remote; !maps.Equal(got, wantB) {
+		t.Errorf("TrGW-B sends to %v after the 488, want %v of the INVITE and its answer again", got, wantB)
+	}
+	select {
+	case <-call.Done():
+		t.Fatal("the call ended")
+	default:
+	}
+	if err := call.Bye(); err != nil {
+		t.Fatalf("BYE: %v", err)
+	}
+	p.waitReleased(t)
+}
+
+// TestRejectedOfferAfterAReliableAnswerKeepsIt: the callee answers the
+// re-INVITE of UE A1 in a reliable 183, at another port, and then turns
+// the offer down with 488. That answer is the one that counts, and the
+// offer and the answer are done with it (RFC 3261 13.2.1, RFC 3262 5):
+// UE A1 has it, since each IBCF copies a reliable provisional response
+// reliably and passes the PRACK back. So the 488 puts no termination
+// back, and the media go on through both TrGWs as the 183 said. RFC
+// 6141 3.3 has the UAS accept such a re-INVITE rather than reject it,
+// which this callee does not, and that is what makes the two cases
+// differ.
+func TestRejectedOfferAfterAReliableAnswerKeepsIt(t *testing.T) {
+	p := newPair(t, nil)
+	callee := p.b.startPreviewingCallee(t)
+	call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
+	if resp := final(t, call); resp.StatusCode != 200 {
+		t.Fatalf("the INVITE got %d, want 200", resp.StatusCode)
+	}
+	inA, _ := planA.instanceHosts(0)
+	inB, _ := planB.instanceHosts(0)
+	p.a.waitAcknowledged(t, inA)
+	p.b.waitAcknowledged(t, inB)
+
+	moved := netip.AddrPortFrom(p.a.media.Addr(), p.a.media.Port()+2)
+	answered := netip.AddrPortFrom(callee.media.Addr(), callee.media.Port()+2)
+	rejected := make(chan *sip.Message, 1)
+	go func() {
+		resp, err := call.ReInvite(p.a.offerAt(t, moved.Port(), 2))
+		if err != nil {
+			t.Errorf("re-INVITE: %v", err)
+		}
+		rejected <- resp
+	}()
+	var st *sip.ServerTransaction
+	select {
+	case st = <-callee.reinvites:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the re-INVITE did not reach the callee")
+	}
+	st.Respond(callee.reliable(st.Request, 183, answered))
+	// The 183 waits for its PRACK, which UE A1 sends and both IBCFs pass
+	// on (RFC 3262 3, 4).
+	select {
+	case <-callee.pracks:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the reliable 183 of the callee got no PRACK")
+	}
+	st.Respond(sip.NewResponse(st.Request, 488, ""))
+	select {
+	case resp := <-rejected:
+		if resp == nil || resp.StatusCode != 488 {
+			t.Fatalf("the re-INVITE got %v, want 488", resp)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the re-INVITE got no final response")
+	}
+
+	if got := onlyContext(t, p.a.trgw).remote[ibcf.CoreSide]; got != moved {
+		t.Errorf("TrGW-A sends to %s after the 488, want %s of the offer that the 183 answered", got, moved)
+	}
+	if got := onlyContext(t, p.b.trgw).remote[ibcf.CoreSide]; got != answered {
+		t.Errorf("TrGW-B sends to %s after the 488, want %s of the answer in the reliable 183", got, answered)
+	}
+	if err := call.Bye(); err != nil {
+		t.Fatalf("BYE: %v", err)
+	}
+	p.waitReleased(t)
 }

@@ -66,13 +66,16 @@ type call struct {
 	// were done (agree), to which it goes back when an offer within a
 	// dialog gets no 2xx (Unanswered). offered is where the termination
 	// of a side sends for the offer of that side in a 2xx, until the ACK
-	// answers it.
-	mediaMu sync.Mutex
-	media   *MediaContext
-	ended   bool
-	sends   map[Side]netip.AddrPort
-	agreed  map[Side]netip.AddrPort
-	offered map[Side]netip.AddrPort
+	// answers it. previews holds, for a termination that the session
+	// description of a provisional response that is not reliable moved,
+	// the request that response answered (previewed).
+	mediaMu  sync.Mutex
+	media    *MediaContext
+	ended    bool
+	sends    map[Side]netip.AddrPort
+	agreed   map[Side]netip.AddrPort
+	offered  map[Side]netip.AddrPort
+	previews map[Side]*sip.Message
 }
 
 // onCall is the UAConfig.OnCall of side s: an INVITE outside a dialog,
@@ -367,6 +370,37 @@ func (c *call) agree(d interconnect.Direction, offer netip.AddrPort) {
 	if offer.IsValid() {
 		c.agreed[to] = offer
 	}
+	// Both terminations are where the offer and the answer say, so
+	// neither is left where a provisional response that is not reliable
+	// put it.
+	delete(c.previews, from)
+	delete(c.previews, to)
+}
+
+// previewed notes that the termination facing where a message crossing
+// in d comes from was moved by the session description of a provisional
+// response to req that is not reliable. That description is no answer
+// (RFC 3261 13.2.1), so the session is still the one of the last offer
+// and answer, and the termination goes back there when req then gets no
+// 2xx (Unanswered).
+func (c *call) previewed(d interconnect.Direction, req *sip.Message) {
+	c.mediaMu.Lock()
+	defer c.mediaMu.Unlock()
+	from, _ := facing(d)
+	if c.previews == nil {
+		c.previews = map[Side]*sip.Message{}
+	}
+	c.previews[from] = req
+}
+
+// answersFor reports whether the session description of resp is the
+// answer of the offer in the request it answers, or the offer of a
+// request without one: the one in a 2xx, or in a reliable provisional
+// response. The same description may come in a provisional response
+// that is not reliable before it, where it changes nothing (RFC 3261
+// 13.2.1, RFC 3262 5).
+func answersFor(resp *sip.Message) bool {
+	return resp.StatusCode >= 200 || resp.Requires(sip.Option100rel)
 }
 
 // offers notes that the side that faces where a message crossing in d
@@ -422,43 +456,67 @@ func (c *call) Refused(req *sip.Message, d b2bua.Direction, status int) {
 // that crossed in d and got no 2xx beyond the IBCF (b2bua.Hooks). The
 // IBCF told the termination that faces the side that sent the offer of
 // req to send where that offer said (throughTrGW), as TS 29.162 9.1.1.2
-// lets it do on the offer. The final response other than 2xx leaves the
-// session as it was before req (RFC 3261 14.1, RFC 3311 5.3), so that
-// side takes its media where the last offer and answer said, and the
-// termination is to send there again. Neither TS 29.162 9.1.3 nor TS
-// 24.229 6.7.1 names a procedure of its own for this; it follows from the
-// session that RFC 3261 14.1 leaves. When the TrGW does not take the
-// change back, the termination keeps sending where the side no longer
-// takes the media, and the IBCF releases the call (ok false).
+// lets it do on the offer, and the one that faces the other side to
+// send where a provisional response that is not reliable said
+// (previewed). The final response other than 2xx leaves the session as
+// it was before req (RFC 3261 14.1, RFC 3311 5.3), so each side takes
+// its media where the last offer and answer said, and each termination
+// is to send there again. Neither TS 29.162 9.1.3 nor TS 24.229 6.7.1
+// names a procedure of its own for this; it follows from the session
+// that RFC 3261 14.1 leaves. When the TrGW does not take a change back,
+// the termination keeps sending where the side no longer takes the
+// media, and the IBCF releases the call (ok false).
 func (c *call) Unanswered(req *sip.Message, d b2bua.Direction) bool {
-	if !sip.HasSessionDescription(req) {
-		return true
+	ok := true
+	for _, side := range c.movedFor(req, c.across(d)) {
+		if err := c.goBack(side); err != nil {
+			c.log.Warn("the TrGW does not go back to the last offer and answer: the IBCF releases the call",
+				"method", string(req.Method), "side", string(side), "error", err.Error())
+			ok = false
+		}
 	}
-	if err := c.goBack(c.across(d)); err != nil {
-		c.log.Warn("the TrGW does not go back to the last offer and answer: the IBCF releases the call",
-			"method", string(req.Method), "error", err.Error())
-		return false
-	}
-	return true
+	return ok
 }
 
-// goBack has the termination that faces where a message crossing in d
-// comes from send where it sent when the last offer and answer were done.
-func (c *call) goBack(d interconnect.Direction) error {
+// movedFor are the terminations that the IBCF moved for req, a request
+// within a dialog that crosses in d: the one facing the side that sent
+// an offer in req, and the one facing the other side when a provisional
+// response to req that is not reliable moved it (previewed). A
+// termination that another request moved, one with an offer of its own
+// on the way, is not among them: that request leaves its own offer
+// open, and puts its own termination back when it fails.
+func (c *call) movedFor(req *sip.Message, d interconnect.Direction) []Side {
+	from, to := facing(d)
+	var sides []Side
+	if sip.HasSessionDescription(req) {
+		sides = append(sides, from)
+	}
+	c.mediaMu.Lock()
+	previewed := c.previews[to] == req
+	c.mediaMu.Unlock()
+	if previewed {
+		sides = append(sides, to)
+	}
+	return sides
+}
+
+// goBack has the termination facing side s send where it sent when the
+// last offer and answer of that side were done.
+func (c *call) goBack(s Side) error {
 	c.mediaMu.Lock()
 	defer c.mediaMu.Unlock()
-	from, _ := facing(d)
-	agreed, ok := c.agreed[from]
-	if c.media == nil || c.ended || !ok || c.sends[from] == agreed {
+	agreed, ok := c.agreed[s]
+	if c.media == nil || c.ended || !ok || c.sends[s] == agreed {
 		return nil
 	}
 	ctx, cancel := trgwContext()
 	defer cancel()
-	if err := c.b.trgw.Modify(ctx, c.media.ID, terminations[from], agw.TerminationRequest{Remote: agreed}); err != nil {
+	if err := c.b.trgw.Modify(ctx, c.media.ID, terminations[s], agw.TerminationRequest{Remote: agreed}); err != nil {
 		return err
 	}
-	c.sends[from] = agreed
-	c.log.Info("the TrGW sends where the last offer and answer said again", "context", c.media.ID, "side", string(from), "remote", agreed.String())
+	c.sends[s] = agreed
+	delete(c.previews, s)
+	c.log.Info("the TrGW sends where the last offer and answer said again", "context", c.media.ID, "side", string(s), "remote", agreed.String())
 	return nil
 }
 
@@ -615,6 +673,11 @@ func (c *call) Response(resp, req *sip.Message, d b2bua.Direction) (b2bua.Messag
 		switch {
 		case !sip.HasSessionDescription(resp):
 			// A response without SDP, such as a 180, ends no offer.
+		case !answersFor(resp):
+			// The same answer before the response that counts, which the
+			// IBCF put through the TrGW all the same: the far end may have
+			// it only there.
+			c.previewed(c.across(d), req)
 		case sip.HasSessionDescription(req):
 			// The answer to the offer of req.
 			c.agree(c.across(d), offerOf(req))
