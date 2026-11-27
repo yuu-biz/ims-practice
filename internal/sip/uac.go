@@ -748,6 +748,17 @@ func (c *OutgoingCall) ReInviteWith(re ReInvitation) (*Message, error) {
 	return d.ReInviteWith(re)
 }
 
+// CancelReInvite is CallDialog.CancelReInvite in the dialog that the
+// call goes on in (Dialogs). Cancel, not this, cancels the INVITE that
+// started the call.
+func (c *OutgoingCall) CancelReInvite(headers ...HeaderField) error {
+	d, err := c.currentDialog()
+	if err != nil {
+		return err
+	}
+	return d.CancelReInvite(headers...)
+}
+
 // Update is CallDialog.Update in the dialog that the call goes on in
 // (Dialogs).
 func (c *OutgoingCall) Update(body Body, headers ...HeaderField) (*Message, error) {
