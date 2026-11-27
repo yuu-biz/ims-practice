@@ -1,10 +1,12 @@
 package b2bua_test
 
 import (
+	"slices"
 	"strconv"
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/b2bua"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -447,6 +449,56 @@ func TestACopyWithoutAPRACKLeavesTheCalleesResponseWithoutOne(t *testing.T) {
 	case st := <-requests:
 		t.Errorf("the callee got a %s for its 183, want none", st.Request.Method)
 	case <-time.After(20 * timers.T1):
+	}
+}
+
+// TestTheUPDATEAfterAReInviteWithoutAnOfferWaitsForTheACKAfterA180: the
+// caller's re-INVITE has no offer, and the callee sends a 180 that is
+// not reliable before the 200 with its offer. Nothing of that 180 calls
+// for a PRACK or an UPDATE, so the re-INVITE keeps its turn up to the
+// ACK with the caller's answer, and the UPDATE that the caller sends
+// right after the ACK reaches the callee after it (RFC 3261 14.1).
+func TestTheUPDATEAfterAReInviteWithoutAnOfferWaitsForTheACKAfterA180(t *testing.T) {
+	rc := newRawCallee(t, timers)
+	requests := rc.handleRequests()
+	h := &hooks{}
+	h.ack = func(ack *sip.Message, d b2bua.Direction) {
+		if d == b2bua.ToCallee && ack.Get("CSeq") != "1 ACK" {
+			until(overtake, func() bool { return slices.Contains(rc.requests(), "3 UPDATE") })
+		}
+	}
+	b2b := newB2BUA(t, h, rc.uri())
+	out, _ := answeredCall(t, rc, b2b, nil)
+
+	done := make(chan result, 1)
+	go func() {
+		resp, err := out.ReInvite(sip.Body{})
+		done <- result{resp, err}
+	}()
+	re := rc.next(sip.INVITE)
+	rc.respond(re, 180, sip.Body{})
+	rc.respond(re, 200, reAnswer)
+	r := within(t, "the final response to the caller's re-INVITE", done)
+	if r.err != nil || r.resp.StatusCode != 200 || len(r.resp.Body) == 0 {
+		t.Fatalf("the caller's re-INVITE got %v %v, want a 200 with the callee's offer", r.resp, r.err)
+	}
+	if err := out.Ack(reOffer); err != nil {
+		t.Fatalf("ACK with the answer: %v", err)
+	}
+	updated := make(chan result, 1)
+	go func() {
+		resp, err := out.Update(lateOffer)
+		updated <- result{resp, err}
+	}()
+	rc.respond(rc.next(sip.UPDATE), 200, lateAnswer)
+	if r := within(t, "the 200 to the caller's UPDATE", updated); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("the caller's UPDATE got %v %v, want 200", r.resp, r.err)
+	}
+	if got := rc.requests(); !before(got, "2 ACK", "3 UPDATE") {
+		t.Errorf("the callee received %v, want the ACK of the re-INVITE and then the UPDATE", got)
+	}
+	if len(requests) != 0 {
+		t.Errorf("the callee got %d more requests than the re-INVITE and the UPDATE", len(requests))
 	}
 }
 
