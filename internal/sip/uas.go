@@ -65,6 +65,10 @@ type provisionals struct {
 	unacked     *Message
 	pracked     chan struct{}
 	prackedRSeq uint32
+	// offerRSeq is the RSeq of the reliable provisional response that
+	// carried the offer of this UA, after an INVITE without one, whose
+	// answer goes into its PRACK (RFC 3262 5); 0 when none did.
+	offerRSeq uint32
 	// over tells that the INVITE has its final response. A response
 	// that still waits for its PRACK then goes on waiting (RFC 3262 3),
 	// but the PRACK can no longer take part in the offer and answer of
@@ -266,8 +270,8 @@ func (c *IncomingCall) progress(code int, body Body, headers []HeaderField, reli
 		}
 		c.start(d, fmt.Sprintf("%d sent", code))
 	}
-	if reliable {
-		c.sessionSent(body)
+	if reliable && c.sessionSent(body) {
+		c.offerRSeq = c.rseq
 	}
 	err := c.st.Respond(resp)
 	pracked := c.pracked
@@ -351,10 +355,11 @@ func (c *IncomingCall) EarlyDialogTerminated(cause int, headers ...HeaderField) 
 // carried the offer, it is the answer. When the INVITE carried none, it
 // is the offer, and the answer comes in the PRACK or the ACK. The same
 // description in a response that is not reliable, or again in a later
-// response, changes nothing. c.mu is held.
-func (c *IncomingCall) sessionSent(body Body) {
+// response, changes nothing. It reports whether body is that offer.
+// c.mu is held.
+func (c *IncomingCall) sessionSent(body Body) (offers bool) {
 	if len(body.Content) == 0 {
-		return
+		return false
 	}
 	switch c.offer {
 	case OfferRemote:
@@ -363,7 +368,9 @@ func (c *IncomingCall) sessionSent(body Body) {
 	case OfferNone:
 		c.offerEvent(OfferSent)
 		c.sent(body)
+		return true
 	}
+	return false
 }
 
 // ErrNoPRACK is what Progress returns, and why the call ends, when a
@@ -426,16 +433,27 @@ func (d *CallDialog) acceptPRACK(st *ServerTransaction) bool {
 		return true
 	}
 	r := &InDialogRequest{Request: req, d: d, st: st, dialog: d.dialog}
-	if len(req.Body) > 0 {
-		if d.offer == OfferLocal {
-			d.offerEvent(AnswerReceived)
-		} else if err := d.offerEvent(OfferReceived); err != nil {
+	switch {
+	case len(req.Body) == 0:
+	case rack.RSeq == p.offerRSeq:
+		// RFC 3262 5: the answer to the offer of the response that the
+		// PRACK acknowledges.
+		d.offerEvent(AnswerReceived)
+	default:
+		// After any other response, a new offer.
+		switch err := d.offerEvent(OfferReceived); {
+		case errors.Is(err, ErrOfferPending):
+			// It crosses an offer of this UA, which went only after the
+			// exchange that this PRACK may follow (Update). A crossing
+			// offer in an UPDATE gets 491 (RFC 3311 5.2).
+			d.respond(st, 491)
+			return false
+		case err != nil:
 			// The offer comes before the answer to the last one.
 			d.respond(st, 500, retryAfter())
 			return false
-		} else {
-			r.Offer = true
 		}
+		r.Offer = true
 	}
 	p.acknowledged(rack)
 	switch {
