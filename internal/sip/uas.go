@@ -39,7 +39,8 @@ type IncomingCall struct {
 }
 
 // provisionals is RFC 3262 3 at the UAS of one INVITE, the INVITE of an
-// IncomingCall: whether its provisional responses go reliably, and the
+// IncomingCall or a re-INVITE of the peer within a dialog of either
+// kind of call: whether its provisional responses go reliably, and the
 // reliable one that waits for its PRACK.
 type provisionals struct {
 	// reliable tells that the INVITE has 100rel in Supported or Require.
@@ -262,7 +263,7 @@ func (c *IncomingCall) progress(code int, body Body, headers []HeaderField, reli
 	// since a PRACK is not sent again for each retransmission. 64*T1
 	// passes before the interval could reach it.
 	t := c.stack.cfg.Timers
-	err = c.retransmit(c.st, resp, 64*t.T1, pracked, ErrNoPRACK)
+	err = c.retransmit(c.st, resp, 64*t.T1, pracked, nil, ErrNoPRACK)
 	if errors.Is(err, ErrNoPRACK) {
 		// RFC 3262 3: the UAS SHOULD reject the INVITE with a 5xx.
 		c.mu.Lock()
@@ -479,7 +480,7 @@ func (c *IncomingCall) Accept(body Body, headers ...HeaderField) (*Message, erro
 
 	// RFC 6026 8.1, which replaces this paragraph of RFC 3261 13.3.1.4.
 	t := c.stack.cfg.Timers
-	if err := c.retransmit(c.st, ok, t.T2, c.acked, ErrNoACK); err != nil {
+	if err := c.retransmit(c.st, ok, t.T2, c.acked, nil, ErrNoACK); err != nil {
 		if errors.Is(err, ErrNoACK) {
 			// RFC 3261 13.3.1.4: the dialog is confirmed, but the
 			// session SHOULD end with a BYE.
