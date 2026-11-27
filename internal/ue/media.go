@@ -75,7 +75,10 @@ type Media struct {
 	mu     sync.Mutex
 	stream *Stream
 	flow   Flow
-	format amr.Format // of an AMR or AMR-WB stream
+	format amr.Format // of an AMR or AMR-WB stream, as the peer's SDP has it: what goes out
+	// receiveFormat is the same as this side's SDP has it: what the peer
+	// sends in and the received frames are read in (RFC 3264 5.1, 6.1).
+	receiveFormat amr.Format
 
 	// What goes out: the speech, one packet per 20 ms, and the next of it.
 	// PCMU is kept as payloads. AMR and AMR-WB are kept as frames, and each
@@ -216,6 +219,14 @@ func (m *Media) SetStream(s Stream) error {
 	if s.ReceiveCodec.Name == "" {
 		s.ReceiveCodec, s.ReceiveEvents = s.Codec, s.Events
 	}
+	var receiveFormat amr.Format
+	if isAMR(s.ReceiveCodec) {
+		f, err := s.ReceiveCodec.AMRFormat()
+		if err != nil {
+			return err
+		}
+		receiveFormat = f
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.stream != nil && !m.stream.Codec.Is(s.Codec.Name) && m.started {
@@ -231,9 +242,9 @@ func (m *Media) SetStream(s Stream) error {
 			"waiting_digits", string(m.dtmf), "event_in_progress", len(m.reports) > 0)
 		m.dtmf, m.reports = nil, nil
 	}
-	m.stream, m.format = &s, format
-	if isAMR(s.Codec) && m.recorder == nil {
-		m.recorder = amr.NewRecorder(format.Codec)
+	m.stream, m.format, m.receiveFormat = &s, format, receiveFormat
+	if isAMR(s.ReceiveCodec) && m.recorder == nil {
+		m.recorder = amr.NewRecorder(receiveFormat.Codec)
 	}
 	return nil
 }
@@ -298,7 +309,7 @@ func (m *Media) streamReceived() {
 		return
 	case m.recorder != nil:
 		if m.liveFrames == nil {
-			m.liveFrames = amr.NewStreamWriter(m.live, m.format.Codec)
+			m.liveFrames = amr.NewStreamWriter(m.live, m.receiveFormat.Codec)
 		}
 		filed := m.recorder.Frames()
 		frames = append(frames, filed[m.liveFiled:]...)
@@ -611,7 +622,7 @@ func (m *Media) receivedPacket(p rtp.Packet, arrival time.Time) (rune, bool) {
 			m.pcmuReceived = append(m.pcmuReceived, p.Payload...)
 			return 0, false
 		}
-		payload, err := m.format.Unmarshal(p.Payload)
+		payload, err := m.receiveFormat.Unmarshal(p.Payload)
 		if err != nil {
 			return 0, false
 		}

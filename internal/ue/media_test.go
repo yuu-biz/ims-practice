@@ -258,6 +258,49 @@ func TestMediaPacksTheFramesInTheFormatOfTheStreamAtTheTick(t *testing.T) {
 	}
 }
 
+// TestMediaReadsWhatItReceivesInTheFormatOfItsOwnSDP: the peer answered
+// octet-aligned, but the UE's own SDP offered bandwidth-efficient. The
+// peer sends in the format of the UE's SDP (RFC 3264 5.1, 6.1), so the UE
+// reads the packets in that format, whatever it sends in.
+func TestMediaReadsWhatItReceivesInTheFormatOfItsOwnSDP(t *testing.T) {
+	peer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	own, theirs := sdp.VoLTECodecs()[0], sdp.VoLTECodecs()[1] // bandwidth-efficient 96, octet-aligned 97
+	ownFormat, err := own.AMRFormat()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	a := listenMedia(t)
+	a.SetFlow(ue.Flow{Receive: true})
+	if err := a.SetStream(ue.Stream{Remote: loopback(uint16(peer.LocalAddr().(*net.UDPAddr).Port)),
+		Codec: theirs, ReceiveCodec: own}); err != nil {
+		t.Fatal(err)
+	}
+	speech := ue.ToneSpeech(time.Second)
+	dst := &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: int(a.Port())}
+	for i, f := range speech.AMRWB {
+		payload, err := ownFormat.Marshal(amr.Payload{CMR: amr.NoModeRequest, Frames: []amr.Frame{f}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pkt := rtp.Packet{PayloadType: uint8(own.PayloadType), SequenceNumber: uint16(i), Timestamp: uint32(i * 320), SSRC: 1, Payload: payload}
+		if _, err := peer.WriteToUDP(pkt.Marshal(), dst); err != nil {
+			t.Fatal(err)
+		}
+	}
+	waitFor(t, "every frame the peer sent to be read", func() bool { return len(a.ReceivedFrames()) == len(speech.AMRWB) })
+	if !slices.EqualFunc(a.ReceivedFrames(), speech.AMRWB, sameFrame) {
+		t.Errorf("the frames read are not the %d frames the peer sent", len(speech.AMRWB))
+	}
+	if got := a.Stats().FramesReceived; got != len(speech.AMRWB) {
+		t.Errorf("FramesReceived = %d, want %d", got, len(speech.AMRWB))
+	}
+}
+
 func sameFrame(a, b amr.Frame) bool {
 	return a.Type == b.Type && a.Quality == b.Quality && bytes.Equal(a.Data, b.Data)
 }
