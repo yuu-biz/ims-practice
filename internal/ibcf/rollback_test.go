@@ -575,6 +575,12 @@ func TestCancelledReInvitePutsTheTrGWBack(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the 180 did not reach UE A1")
 	}
+	// The offer moved TrGW-A on its way, so there is something to put
+	// back.
+	moved := netip.AddrPortFrom(p.a.media.Addr(), p.a.media.Port()+2)
+	if got := onlyContext(t, p.a.trgw).remote[ibcf.CoreSide]; got != moved {
+		t.Fatalf("TrGW-A sends to %v while the re-INVITE is pending, want %v of its offer", got, moved)
+	}
 	if err := call.CancelReInvite(reason.Header()); err != nil {
 		t.Fatalf("CancelReInvite: %v", err)
 	}
@@ -588,17 +594,17 @@ func TestCancelledReInvitePutsTheTrGWBack(t *testing.T) {
 	}
 	select {
 	case got := <-cancel:
-		if got == nil || got.Get("Reason") != reason.String() {
+		if got == nil {
+			t.Error("UE B1 has no CANCEL for its re-INVITE")
+		} else if got.Get("Reason") != reason.String() {
 			t.Errorf("the CANCEL at UE B1 has Reason %q, want %q", got.Get("Reason"), reason.String())
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("UE B1 did not report the CANCEL")
 	}
 
-	// IBCF-A answered the re-INVITE of UE A1 with 487 itself, since no
-	// reliable provisional response had carried its session description,
-	// so the 487 of UE B1 reaches it after that (RFC 6141 3.3). TrGW-A
-	// goes back when it does.
+	// IBCF-A passes the 487 of UE B1 on, a final response other than
+	// 2xx, and TrGW-A goes back where the last offer and answer said.
 	waitFor(t, "TrGW-A back on "+p.a.media.String()+" after the cancelled re-INVITE", func() bool {
 		return onlyContext(t, p.a.trgw).remote[ibcf.CoreSide] == p.a.media
 	})
