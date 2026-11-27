@@ -330,13 +330,13 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		return
 	}
 	kept := known && !other
-	answer, answered := func(*sip.Message) {}, func(*sip.Message, error) {}
+	answer, unanswered, answered := func(*sip.Message) {}, func(*sip.Message, error) {}, func(*sip.Message, error) {}
 	if kept && carriesSDP(out, d.Relay) {
 		ue := st.Source.Addr.Addr()
 		if toUE {
 			ue = targets[0].Addr.Addr()
 		}
-		answer, answered, err = p.renegotiate(out, d, toUE, ue, log)
+		answer, unanswered, answered, err = p.renegotiate(out, d, toUE, ue, log)
 		if err != nil {
 			p.notRelayed(st, d, err, log)
 			return
@@ -369,6 +369,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		// other final response to its user.
 		relay(final)
 	}
+	unanswered(final, err)
 	ims.Finish(st, final, err)
 	answered(final, err)
 	if kept && out.Method == sip.BYE && byeEndsDialog(final, err) {
@@ -387,9 +388,27 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // first offer. The first function it returns takes each response on its
 // way back: with the answer the PCRF gets the changed service
 // information in the policy session of the dialog (TS 29.214 A.1,
-// 4.4.2). The second one is for subsequent to call once the final
-// response has gone, with what ProxyWith returned. ue is the address of
-// the served UE.
+// 4.4.2), and the Dialog keeps where the relay now sends to each party
+// (RelayContext.AccessRemote). The second and the third one are for
+// subsequent to call with what ProxyWith returned, before the final
+// response goes on and once it has gone. ue is the address of the served
+// UE.
+//
+// A final response other than 2xx, or none, leaves the session as it was
+// before the request (RFC 3261 14.1, RFC 3311 5.3): the party that
+// offered takes its media where the last offer and answer said, though
+// the P-CSCF told the relay where the offer says when it passed the offer
+// on. So the second function has the termination that faces that party
+// send there again (goBack). It does so before the response goes on, so that the party
+// finds the relay as it was when it sends its next offer, which may
+// follow the response at once. When the relay does not take the change
+// back, the termination keeps sending where the party no longer takes
+// the media, and the P-CSCF releases the dialog once the response has
+// gone, as for an answer that the relay did not take. An answer that the
+// relay took in a reliable provisional response counts though the
+// re-INVITE then fails: that offer and answer are done, and the UAC is to
+// bring both parties to one view of the session with a new offer (RFC
+// 6141 3.3, 3.4), which goes through the relay as any other.
 //
 // When the SDP is not pointed at the relay, renegotiate returns the
 // error, and the request goes no further: the P-CSCF, as an IMS-ALG, is
@@ -423,18 +442,31 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // authorised as it was: the far end has given its answer by then. TS
 // 24.229 V20.1.0 has a procedure for refused resources only for the
 // initial INVITE (5.2.7.2).
-func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) (answer func(*sip.Message), answered func(final *sip.Message, err error), err error) {
+func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) (answer func(*sip.Message), unanswered, answered func(final *sip.Message, err error), err error) {
 	received := out.Body
-	if _, err := p.relaySDP(out, d.Relay, toUE); err != nil {
-		return nil, nil, err
+	offered, err := p.relaySDP(out, d.Relay, toUE)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 	offer := ueSide(received, out.Body, toUE)
 	// taken is true once the relay has taken an answer to the offer, and
 	// refused once the P-CSCF has set out to release the dialog for one
-	// that it did not take.
-	authorized, taken, refused := false, false, false
+	// that it did not take. stuck is true once the relay has not gone back
+	// after a response other than 2xx.
+	authorized, taken, refused, stuck := false, false, false, false
+	unanswered = func(final *sip.Message, err error) {
+		// The 2xx of a re-INVITE goes through Proxy, which then returns
+		// neither a final response nor an error.
+		answeredWith2xx := err == nil && (final == nil || final.StatusCode < 300)
+		if taken || refused || answeredWith2xx {
+			return
+		}
+		stuck = !p.goBack(d.Relay, facingSender(toUE), offered, log)
+	}
 	answered = func(final *sip.Message, err error) {
 		switch {
+		case stuck:
+			p.release(d.Key, SDPNotRelayed, false, log)
 		case !refused:
 		case out.Method != sip.INVITE:
 			p.release(d.Key, SDPNotRelayed, false, log)
@@ -449,7 +481,8 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 			return
 		}
 		received := resp.Body
-		if _, err := p.relaySDP(resp, d.Relay, !toUE); err != nil {
+		sent, err := p.relaySDP(resp, d.Relay, !toUE)
+		if err != nil {
 			log.Warn("media relay refused the answer", "error", err.Error())
 			if !taken {
 				refused = true
@@ -461,13 +494,26 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 			}
 			return
 		}
+		if !taken && d.Relay != nil {
+			_, _, err := p.store.UpdateDialog(context.Background(), d.Key, func(d *Dialog) {
+				if d.Relay != nil {
+					d.Relay = d.Relay.agreeing(facingSender(toUE), offered).agreeing(facingSender(!toUE), sent)
+				}
+			})
+			if err != nil {
+				// The response goes on; a later offer that gets no 2xx puts
+				// the relay back where the offer and answer before this one
+				// said.
+				log.Warn("the dialog keeps the offer and answer before this one: the store failed", "error", err.Error())
+			}
+		}
 		taken = true
 		// A 2xx to a re-INVITE comes again until its ACK arrives.
 		if authorized || d.PolicySession == "" || p.policy == nil {
 			return
 		}
 		authorized = true
-		_, err := p.policy.AuthorizeMedia(context.Background(), policy.MediaRequest{
+		_, err = p.policy.AuthorizeMedia(context.Background(), policy.MediaRequest{
 			Session:   d.PolicySession,
 			UE:        ue,
 			SDP:       policy.OfferAnswer{Offer: offer, Answer: ueSide(received, resp.Body, !toUE), UEOffered: !toUE},
@@ -479,7 +525,37 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		}
 		log.Info("changed media authorised", "policy_session", string(d.PolicySession))
 	}
-	return answer, answered, nil
+	return answer, unanswered, answered, nil
+}
+
+// goBack has side, the termination of rc that faces the party of an
+// offer that got no 2xx, send where the last offer and answer said, when
+// that offer told it to send elsewhere, to offered (renegotiate). It is
+// Configure AGW Connection Point (TS 29.334 5.17.2.3) like the Modify of
+// the offer, and reports false when the relay did not take the change
+// back. A Dialog that keeps no last offer and answer, as one of a P-CSCF
+// that kept none, leaves the relay as it is.
+func (p *PCSCF) goBack(rc *RelayContext, side agw.TerminationID, offered netip.AddrPort, log *slog.Logger) bool {
+	if rc == nil {
+		return true
+	}
+	agreed := rc.agreed(side)
+	if !offered.IsValid() || !agreed.IsValid() || offered == agreed {
+		return true
+	}
+	relay, err := p.relayOf(*rc)
+	if err == nil {
+		ctx, cancel := relayContext()
+		err = relay.Modify(ctx, rc.ID, side, agw.TerminationRequest{Remote: agreed})
+		cancel()
+	}
+	if err != nil {
+		log.Warn("the media relay does not go back to the last offer and answer: the P-CSCF releases the dialog",
+			"context", rc.ID, "termination", string(side), "error", err.Error())
+		return false
+	}
+	log.Info("the media relay sends where the last offer and answer said again", "context", rc.ID, "termination", string(side), "remote", agreed.String())
+	return true
 }
 
 // notRelayed answers st, a request within the dialog d whose SDP

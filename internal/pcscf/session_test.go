@@ -475,6 +475,10 @@ type fakeRelay struct {
 	refusing agw.TerminationID
 	refusal  error
 	applied  bool
+	// refusedRemote, when valid, is where no Modify can tell a
+	// termination to send from the moment a test names it
+	// (refuseRemote): such a Modify fails, having changed nothing.
+	refusedRemote netip.AddrPort
 	// failSubtracts is how many Subtracts fail before one succeeds.
 	failSubtracts int
 	contexts      map[string]bool
@@ -532,6 +536,9 @@ func (f *fakeRelay) Modify(ctx context.Context, id string, side agw.TerminationI
 	if side == f.refusing && !f.applied {
 		return f.refusal
 	}
+	if f.refusedRemote.IsValid() && change.Remote == f.refusedRemote {
+		return errRefusedModify
+	}
 	if !f.contexts[id] {
 		f.strays = append(f.strays, id)
 	}
@@ -564,6 +571,14 @@ func (f *fakeRelay) Subtract(ctx context.Context, id string) error {
 // termination side, and change nothing.
 func (f *fakeRelay) refuseModify(side agw.TerminationID) {
 	f.breakModify(side, errRefusedModify, false)
+}
+
+// refuseRemote makes the relay turn down every later Modify that tells a
+// termination to send to remote, and change nothing.
+func (f *fakeRelay) refuseRemote(remote netip.AddrPort) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refusedRemote = remote
 }
 
 // breakModify makes every later Modify of the termination side fail

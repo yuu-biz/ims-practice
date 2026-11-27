@@ -92,8 +92,9 @@ const (
 	// 5.2.8.1).
 	ResourcesLost ReleaseCause = "resources-lost"
 	// SDPNotRelayed is a release for an SDP that the P-CSCF could not
-	// point at the media relay: an answer that the relay did not take, or
-	// the SDP of a request within the dialog (notRelayed).
+	// point at the media relay: an answer that the relay did not take, the
+	// SDP of a request within the dialog (notRelayed), or an offer that got
+	// no 2xx and that the relay did not go back from (goBack).
 	SDPNotRelayed ReleaseCause = "sdp-not-relayed"
 )
 
@@ -157,8 +158,13 @@ type RelayContext struct {
 	Core   netip.AddrPort
 	// AccessRemote and CoreRemote are where the access and the core
 	// termination send for the last offer and answer that are done: where
-	// the UE, and the party on the network side, take their media. Not
-	// valid in a Dialog of a P-CSCF that kept neither.
+	// the UE, and the party on the network side, take their media. A
+	// request whose offer gets no 2xx leaves the session as it was before
+	// the request (RFC 3261 14.1, RFC 3311 5.3), and the termination that
+	// the offer moved goes back there (goBack). The relay cannot be asked,
+	// and the next request of the dialog may pass another P-CSCF
+	// instance, so the Dialog keeps them. Not valid in a Dialog of a
+	// P-CSCF that kept neither.
 	AccessRemote netip.AddrPort
 	CoreRemote   netip.AddrPort
 }
