@@ -515,6 +515,7 @@ func (d *CallDialog) receiveRequest(st *ServerTransaction) {
 	c := d.c
 	c.mu.Lock()
 	sessionEnded := d.sessionEnded
+	handled := c.onRequest != nil
 	c.mu.Unlock()
 	if sessionEnded && !ofSubscription(st.Request.Method) && st.Request.Method != OPTIONS {
 		// A REFER would create a subscription of its own (RFC 5057 4.2),
@@ -529,8 +530,13 @@ func (d *CallDialog) receiveRequest(st *ServerTransaction) {
 		return
 	}
 	// RFC 3261 12.2.2: the checks of a request outside a dialog come
-	// first, among them that of Require (8.2.2.3), and a rejected request
-	// changes nothing in the dialog. ACK and CANCEL never come here.
+	// first, in their order (8.2): the method (8.2.1), then Require
+	// (8.2.2.3). A rejected request changes nothing in the dialog. ACK
+	// and CANCEL never come here.
+	if !d.takes(st.Request.Method, handled) {
+		c.ua.respondNotAllowed(st)
+		return
+	}
 	if c.ua.refuseUnknownExtensions(st) {
 		return
 	}
@@ -544,11 +550,6 @@ func (d *CallDialog) receiveRequest(st *ServerTransaction) {
 		c.mu.Unlock()
 		d.endPending(pending)
 	case PRACK:
-		if d.in == nil {
-			// Only a UAS sends reliable provisional responses.
-			c.ua.respondNotAllowed(st)
-			return
-		}
 		d.in.receivePRACK(st)
 	case OPTIONS:
 		// RFC 3261 11.2 and 12.2.2: an OPTIONS within a dialog is
@@ -563,6 +564,21 @@ func (d *CallDialog) receiveRequest(st *ServerTransaction) {
 	default:
 		d.receiveOther(st)
 	}
+}
+
+// takes is RFC 3261 8.2.1 for a request within the dialog: whether the
+// UA takes its method here. PRACK goes to the UAS of the call, as only
+// a UAS sends reliable provisional responses, and a method that the UA
+// does not handle by itself needs a user of the call to answer it
+// (handled, receiveOther).
+func (d *CallDialog) takes(method Method, handled bool) bool {
+	switch method {
+	case BYE, OPTIONS, UPDATE, INVITE, NOTIFY:
+		return true
+	case PRACK:
+		return d.in != nil
+	}
+	return handled
 }
 
 // receiveACK takes the ACK for a 2xx that this UA sent within the
