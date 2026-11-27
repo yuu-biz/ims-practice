@@ -196,7 +196,7 @@ func (r *InDialogRequest) settle(resp *Message, accepted bool) {
 		// Only a re-INVITE that was refused or ended by a BYE comes here;
 		// acceptReInvite has its own way.
 		d.invite = noInvite
-		r.over = true
+		d.inviteOver(r.cseq)
 		close(r.settled)
 	}
 	switch {
@@ -479,8 +479,12 @@ var ErrPRACKPending = errors.New("sip: a reliable provisional response with a se
 // with a session description waits for its PRACK, before the final
 // response of its INVITE. c.mu is held.
 func (d *CallDialog) prackPending() bool {
-	p := d.peerInvite
-	return p != nil && !p.over && p.unacked != nil && HasSessionDescription(p.unacked)
+	for _, p := range d.peerInvites {
+		if !p.over && p.unacked != nil && HasSessionDescription(p.unacked) {
+			return true
+		}
+	}
+	return false
 }
 
 // answered makes the changes of state that the final response to a
@@ -890,7 +894,7 @@ func (d *CallDialog) receiveReInvite(st *ServerTransaction) {
 	r.cseq, r.settled, r.acked = cseq.Number, make(chan struct{}), make(chan struct{})
 	r.reliable = st.Request.Supports(Option100rel)
 	d.invite = inviteReceived
-	d.peerInvite = &r.provisionals
+	d.receivedInvite(r.cseq, &r.provisionals)
 	c.ua.spawn(r.watchCancel)
 	c.handOver(r)
 }
@@ -994,7 +998,8 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 		c.mu.Unlock()
 		return nil, err
 	}
-	r.answered, r.over = true, true
+	r.answered = true
+	d.inviteOver(r.cseq)
 	d.removePending(r)
 	close(r.settled)
 	if !r.described {

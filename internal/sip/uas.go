@@ -69,12 +69,11 @@ type provisionals struct {
 	// carried the offer of this UA, after an INVITE without one, whose
 	// answer goes into its PRACK (RFC 3262 5); 0 when none did.
 	offerRSeq uint32
-	// over tells that the INVITE has its final response. A response
-	// that still waits for its PRACK then goes on waiting (RFC 3262 3),
-	// but the PRACK can no longer take part in the offer and answer of
-	// the INVITE. Only a re-INVITE needs it: a final response other than
-	// 2xx to the INVITE of an IncomingCall ends its dialog, and a 2xx
-	// waits for every PRACK.
+	// over tells that the INVITE has its final response (inviteOver). A
+	// response that still waits for its PRACK then goes on waiting (RFC
+	// 3262 3), but the PRACK can no longer take part in the offer and
+	// answer of the INVITE. A final response other than 2xx to the INVITE
+	// of an IncomingCall ends its dialog, and with it every PRACK.
 	over bool
 }
 
@@ -83,6 +82,31 @@ type provisionals struct {
 func (p *provisionals) acknowledged(rack RAck) {
 	p.unacked, p.prackedRSeq = nil, rack.RSeq
 	close(p.pracked)
+}
+
+// receivedInvite keeps p, the UAS side of an INVITE of the peer with the
+// CSeq number seq, for the PRACKs of its reliable provisional responses.
+// c.mu is held.
+func (d *CallDialog) receivedInvite(seq uint32, p *provisionals) {
+	if d.peerInvites == nil {
+		d.peerInvites = map[uint32]*provisionals{}
+	}
+	d.peerInvites[seq] = p
+}
+
+// inviteOver is the final response to the INVITE of the peer with the
+// CSeq number seq. The dialog keeps the INVITE only while a reliable
+// provisional response of it waits for its PRACK, which may still come
+// (RFC 3262 3). c.mu is held.
+func (d *CallDialog) inviteOver(seq uint32) {
+	p := d.peerInvites[seq]
+	if p == nil {
+		return
+	}
+	p.over = true
+	if p.unacked == nil {
+		delete(d.peerInvites, seq)
+	}
 }
 
 // receiveInvite is RFC 3261 8.2 and 13.3.1 for an INVITE outside a
@@ -124,8 +148,9 @@ func (ua *UA) receiveInvite(st *ServerTransaction) {
 		tag:          NewTag(),
 		acked:        make(chan struct{}),
 	}
-	c.CallDialog = CallDialog{c: &c.call, in: c, invite: inviteReceived, peerAllowsUpdate: req.Allows(UPDATE),
-		peerInvite: &c.provisionals}
+	c.CallDialog = CallDialog{c: &c.call, in: c, invite: inviteReceived, peerAllowsUpdate: req.Allows(UPDATE)}
+	cseq, _ := ParseCSeq(req.Get("CSeq"))
+	c.receivedInvite(cseq.Number, &c.provisionals)
 	c.sessionAnswer = session
 	if len(req.Body) > 0 {
 		c.offer = OfferRemote
@@ -407,9 +432,10 @@ func (d *CallDialog) receivePRACK(st *ServerTransaction) {
 
 // acceptPRACK is RFC 3262 3: the PRACK that matches the reliable
 // provisional response waiting for it, by RSeq and by the response's
-// CSeq, stops the retransmissions. That is a response to the last
-// INVITE of the peer in the dialog (peerInvite). Any other PRACK gets
-// 481. It reports whether the PRACK matched. c.mu is held.
+// CSeq, stops the retransmissions. That is a response to an INVITE of
+// the peer in the dialog (peerInvites), found by the CSeq number in the
+// RAck. Any other PRACK gets 481. It reports whether the PRACK matched.
+// c.mu is held.
 //
 // A PRACK without a body gets its 200 here, unless the user relays the
 // PRACKs (RelayPRACK). One with a body carries the answer to an offer
@@ -418,8 +444,8 @@ func (d *CallDialog) receivePRACK(st *ServerTransaction) {
 func (d *CallDialog) acceptPRACK(st *ServerTransaction) bool {
 	c := d.c
 	req := st.Request
-	p := d.peerInvite
 	rack, err := ParseRAck(req.Get("RAck"))
+	p := d.peerInvites[rack.CSeq.Number]
 	if err != nil || p == nil || p.unacked == nil || rack != rackFor(p.unacked) {
 		c.ua.respondOwn(st, NewResponse(req, 481, ""))
 		return false
@@ -428,7 +454,9 @@ func (d *CallDialog) acceptPRACK(st *ServerTransaction) bool {
 		// The final response ended the offer and answer of the INVITE
 		// (RFC 3261 14.1), so a session description in the PRACK is
 		// neither an answer nor an offer, and the 200 carries none.
+		// Nothing of the INVITE waits for a PRACK any more.
 		p.acknowledged(rack)
+		delete(d.peerInvites, rack.CSeq.Number)
 		c.ua.respondOwn(st, NewResponse(req, 200, ""))
 		return true
 	}
@@ -511,6 +539,8 @@ func (c *IncomingCall) Accept(body Body, headers ...HeaderField) (*Message, erro
 	// RFC 4028 9: the session expiration counts from this 2xx.
 	c.setSession(c.sessionAnswer.Timer)
 	c.final = ok
+	cseq, _ := ParseCSeq(c.Request.Get("CSeq"))
+	c.inviteOver(cseq.Number)
 	// The INVITE has its final response, so a re-INVITE may come before
 	// the ACK (RFC 3261 14.2).
 	c.invite = noInvite
