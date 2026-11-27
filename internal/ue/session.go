@@ -326,7 +326,7 @@ func (s *Session) offerAnew(dialog sessionDialog) (resp, answer *sip.Message, er
 	}
 	resp, err = dialog.ReInviteWith(sip.ReInvitation{Body: body, Headers: s.requestHeaders,
 		OnProvisional: func(p *sip.Message) {
-			if answer == nil && p.Requires(sip.Option100rel) && len(p.Body) > 0 {
+			if answer == nil && p.Requires(sip.Option100rel) && sip.HasSessionDescription(p) {
 				answer = p
 			}
 		}})
