@@ -74,7 +74,9 @@ type provisionals struct {
 	// 3262 3), but the PRACK can no longer take part in the offer and
 	// answer of the INVITE. A final response other than 2xx to the INVITE
 	// of an IncomingCall ends its dialog, and with it every PRACK.
-	over bool
+	// finished is closed then.
+	over     bool
+	finished chan struct{}
 }
 
 // acknowledged takes the response that waited for the PRACK with rack
@@ -91,6 +93,7 @@ func (d *CallDialog) receivedInvite(seq uint32, p *provisionals) {
 	if d.peerInvites == nil {
 		d.peerInvites = map[uint32]*provisionals{}
 	}
+	p.finished = make(chan struct{})
 	d.peerInvites[seq] = p
 }
 
@@ -100,10 +103,11 @@ func (d *CallDialog) receivedInvite(seq uint32, p *provisionals) {
 // (RFC 3262 3). c.mu is held.
 func (d *CallDialog) inviteOver(seq uint32) {
 	p := d.peerInvites[seq]
-	if p == nil {
+	if p == nil || p.over {
 		return
 	}
 	p.over = true
+	close(p.finished)
 	if p.unacked == nil {
 		delete(d.peerInvites, seq)
 	}
