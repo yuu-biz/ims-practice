@@ -590,7 +590,7 @@ func (s *Session) negotiated(local, remote, peer sdp.Session) error {
 	}
 	pm := peer.Media[i]
 	stream := Stream{Remote: peer.Address(pm)}
-	stream.RS, stream.RR = pm.RTCPBandwidth()
+	stream.RS, stream.RR = peer.RTCPBandwidth(pm)
 	speech := false
 	for _, c := range pm.Codecs() {
 		if !slices.ContainsFunc(s.codecs, func(o sdp.Codec) bool { return sameFormat(o, c) }) {
