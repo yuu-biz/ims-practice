@@ -588,7 +588,15 @@ func drawLadder(m *deck.Model, s *deck.Scene) *Diagram {
 	for i := range d.Lines {
 		d.Lines[i].Y2 = y
 	}
-	d.Bounds = d.Bounds.union(Box{0, 0, diagramMargin*2 + float64(len(s.Nodes))*ladderColW, y + diagramMargin/2})
+	width := diagramMargin*2 + float64(len(s.Nodes))*ladderColW
+	d.Bounds = d.Bounds.union(Box{0, 0, width, y + diagramMargin/2})
+	// A label that reaches past the sides of the ladder would be cut by
+	// the view: the HTML hides the label of an event outside the camera.
+	for _, e := range d.Events {
+		if b := e.LabelBox(); e.Kind != deck.EventProcess && (b.X < 0 || b.X+b.W > width) {
+			d.Problems = append(d.Problems, fmt.Sprintf("the label of %s is wider than the room of the ladder; put its two nodes nearer the middle, or say it in fewer words", e.ID))
+		}
+	}
 	for _, step := range s.Steps {
 		d.Cameras = append(d.Cameras, d.ladderCamera(step))
 	}
