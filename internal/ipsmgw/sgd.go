@@ -36,7 +36,9 @@ import (
 //
 // An SMS-GMSC that got no TFA in time may send the TFR again, with the
 // same Origin-Host and End-to-End Identifier and the T flag set (RFC
-// 6733 3, 5.5.4), and the copy may reach another instance. RFC 6733 3
+// 6733 3, 5.5.4), and the copy may reach another instance. The SC of
+// this project sends no such copy: it tries again later with a new TFR
+// (smsc.SMSC.forward), which the IP-SM-GW delivers anew. RFC 6733 3
 // has a duplicate get the answer of the original and change nothing that
 // the original set, so the delivery that a TFR begins is kept in the
 // Store under the name of the request (BeginTFR). A copy begins no
