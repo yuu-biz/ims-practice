@@ -347,7 +347,9 @@ func (ua *UA) receiveRequest(st *ServerTransaction) {
 		}
 		if req.Method == SUBSCRIBE && ua.cfg.OnSubscribe != nil {
 			// The dialog of a subscription, which the notifier keeps.
-			go ua.cfg.OnSubscribe(st)
+			if !ua.refuseUnknownExtensions(st) {
+				go ua.cfg.OnSubscribe(st)
+			}
 			return
 		}
 		if ua.cfg.OnUnknownDialog != nil {
@@ -361,6 +363,8 @@ func (ua *UA) receiveRequest(st *ServerTransaction) {
 		ua.respondNoDialog(st)
 		return
 	}
+	// RFC 3261 8.2: the method first (8.2.1), then Require (8.2.2.3),
+	// which receiveInvite checks for an INVITE.
 	switch req.Method {
 	case INVITE:
 		ua.receiveInvite(st)
@@ -369,15 +373,21 @@ func (ua *UA) receiveRequest(st *ServerTransaction) {
 			ua.respondNotAllowed(st)
 			return
 		}
-		go ua.cfg.OnMessage(st)
+		if !ua.refuseUnknownExtensions(st) {
+			go ua.cfg.OnMessage(st)
+		}
 	case OPTIONS:
-		go ua.answerOptions(st)
+		if !ua.refuseUnknownExtensions(st) {
+			go ua.answerOptions(st)
+		}
 	case SUBSCRIBE:
 		if ua.cfg.OnSubscribe == nil {
 			ua.respondNotAllowed(st)
 			return
 		}
-		go ua.cfg.OnSubscribe(st)
+		if !ua.refuseUnknownExtensions(st) {
+			go ua.cfg.OnSubscribe(st)
+		}
 	case NOTIFY:
 		// RFC 6665 4.1.3: a NOTIFY that matches no subscription.
 		st.Respond(NewResponse(req, 481, NewTag()))
