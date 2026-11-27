@@ -1008,7 +1008,7 @@ steps:
 
 ---
 
-## 要求が AS に届くしくみ（4 つのフィルタ条件）
+## 要求を AS に届ける 4 つのフィルタ条件
 
 ```ims-scene
 id: ifc
@@ -1113,7 +1113,7 @@ P-Served-User: <sip:+12025550102@…>;orig-cdiv;regstate=reg
 
 ---
 
-## コードで見る着信側の順番
+## 着信側のコードを読む順番
 
 [internal/mmtel/sessioncase.go](../../../internal/mmtel/sessioncase.go)
 
@@ -1135,7 +1135,7 @@ P-Served-User: <sip:+12025550102@…>;orig-cdiv;regstate=reg
 
 ---
 
-## ODI と、1 つの通話に 3 つのダイアログ
+## ODI と 3 つのダイアログ
 
 ```ims-scene
 id: odi
@@ -1196,7 +1196,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 
 ---
 
-## 3 つのダイアログがキャプチャに与えるもの
+## 3 つのダイアログはキャプチャでどう見えるか
 
 | 見るもの | 見どころ |
 | --- | --- |
@@ -1215,7 +1215,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 
 ---
 
-## 設定のある場所（simservs の文書）
+## 設定の置き場所（simservs の文書）
 
 ```ims-scene
 id: document
@@ -1336,7 +1336,7 @@ steps:
 
 ---
 
-## コードで見る HTTP Digest のチャレンジ
+## HTTP Digest のチャレンジをコードで見る
 
 [internal/xcap/digest.go](../../../internal/xcap/digest.go)
 
@@ -1743,7 +1743,7 @@ steps:
 
 ---
 
-## 規制
+## 発着信の規制
 
 ```ims-scene
 id: barring
