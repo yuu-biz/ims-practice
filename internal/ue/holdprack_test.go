@@ -281,3 +281,21 @@ func TestHoldFailedAfterAReliable183IsUndoneWithANewOffer(t *testing.T) {
 	}
 	b.hangUp(true)
 }
+
+// TestHoldTakesNoAnswerFromABodyThatIsNotSDP: a reliable 183 whose body
+// is of another type than SDP carries no answer (RFC 3261 13.2.1), as
+// the SIP stack takes it too, so the answer of the hold is that of the
+// 200.
+func TestHoldTakesNoAnswerFromABodyThatIsNotSDP(t *testing.T) {
+	b := newBareCall(t)
+	held, reinvite := b.hold()
+	b.progress(reinvite, sip.Body{Type: "text/plain", Content: []byte("connecting")})
+	b.final(reinvite, 200, b.answer(reinvite.Body, b.c.callerMedia.Port()))
+	if err := b.returned(held); err != nil {
+		t.Fatalf("Hold: %v", err)
+	}
+	if st := b.s.Status(); !st.Held || st.PeerDirection != "recvonly" {
+		t.Errorf("after the hold the session is %+v, want held, with the answer of the 200", st)
+	}
+	b.hangUp(false)
+}
