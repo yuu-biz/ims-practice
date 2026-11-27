@@ -191,20 +191,22 @@ func TestA500ThatDoesNotGoIsNotCounted(t *testing.T) {
 // layer of package sip, since the UA of UE B1 answers a re-INVITE with a
 // final response only. It answers the INVITE with a 200 and its SDP
 // answer at media, hands each re-INVITE to the test, and tells it of
-// each PRACK it answered.
+// each PRACK it answered. With previewOnly, its answer to the INVITE
+// comes in a 183 that is not reliable, and the 200 after it has none.
 type previewingCallee struct {
-	addr      netip.AddrPort
-	media     netip.AddrPort
-	reinvites chan *sip.ServerTransaction
-	pracks    chan *sip.Message
+	addr        netip.AddrPort
+	media       netip.AddrPort
+	previewOnly bool
+	reinvites   chan *sip.ServerTransaction
+	pracks      chan *sip.Message
 }
 
 // startPreviewingCallee has the INVITEs for network n's UE go to a
 // previewingCallee.
-func (n *network) startPreviewingCallee(t *testing.T) *previewingCallee {
+func (n *network) startPreviewingCallee(t *testing.T, previewOnly bool) *previewingCallee {
 	t.Helper()
 	tl, _ := listen(t, n.plan.internal+".12", 0, "callee", n.rec)
-	c := &previewingCallee{addr: tl.LocalAddr(), media: netip.AddrPortFrom(tl.LocalAddr().Addr(), 46000),
+	c := &previewingCallee{addr: tl.LocalAddr(), media: netip.AddrPortFrom(tl.LocalAddr().Addr(), 46000), previewOnly: previewOnly,
 		reinvites: make(chan *sip.ServerTransaction, 1), pracks: make(chan *sip.Message, 4)}
 	newStack(t, tl, c.addr.String(), c.onRequest, func(*sip.Message) {})
 	n.contact = "sip:callee@" + c.addr.String()
@@ -220,6 +222,12 @@ func (c *previewingCallee) onRequest(st *sip.ServerTransaction) {
 		}
 	case ims.IsInDialog(st.Request):
 		c.reinvites <- st
+	case c.previewOnly:
+		st.Respond(c.response(st.Request, 183, c.media))
+		ok := c.response(st.Request, 200, c.media)
+		ok.Body = nil
+		ok.Remove("Content-Type")
+		st.Respond(ok)
 	default:
 		st.Respond(c.response(st.Request, 200, c.media))
 	}
@@ -255,6 +263,22 @@ func (c *previewingCallee) reliable(req *sip.Message, status int, media netip.Ad
 	return resp
 }
 
+// reliableOffer is the callee's reliable provisional response with status
+// to req, a re-INVITE without an offer, with the SDP offer at media
+// (RFC 3262 5).
+func (c *previewingCallee) reliableOffer(t *testing.T, req *sip.Message, status int, media netip.AddrPort) *sip.Message {
+	t.Helper()
+	resp := c.reliable(req, status, media)
+	offer, err := sdp.AudioOffer("4680", media, sdp.VoLTECodecs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	offer.Origin.Version = 1
+	resp.Set("Content-Type", "application/sdp")
+	resp.Body = offer.Bytes()
+	return resp
+}
+
 // TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer: the
 // callee shows its answer to a re-INVITE of UE A1 in a 183 that is not
 // reliable, at another port, and then turns the offer down with 488.
@@ -265,11 +289,30 @@ func (c *previewingCallee) reliable(req *sip.Message, status int, media netip.Ad
 // and copies it unreliably because it came so: that session description
 // counts for nothing on either leg. After the 488, each termination of
 // the two TrGWs sends where the INVITE and its answer said again:
-// TrGW-A's to the old port of UE A1, and TrGW-B's to where the 200 of
-// the callee said.
+// TrGW-A's to the old port of UE A1, and TrGW-B's to where the callee
+// answered the INVITE.
+//
+// The callee may also answer the INVITE only in a 183 that is not
+// reliable, and send its 200 without SDP, although RFC 3261 13.3.1.4
+// has that 200 carry the answer. The caller takes the first session
+// description it gets as the answer and keeps it (RFC 3261 13.2.1, RFC
+// 6337 3.1.1), and the callee sent it as its own. Once the 200 has ended
+// the INVITE, that 183 is the answer that the session goes back to.
 func TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		previewOnly bool
+	}{
+		{"the 200 answers the INVITE", false},
+		{"only a 183 that is not reliable answers the INVITE", true},
+	} {
+		t.Run(c.name, func(t *testing.T) { rejectAfterAPreview(t, c.previewOnly) })
+	}
+}
+
+func rejectAfterAPreview(t *testing.T, previewOnly bool) {
 	p := newPair(t, nil)
-	callee := p.b.startPreviewingCallee(t)
+	callee := p.b.startPreviewingCallee(t, previewOnly)
 	call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
 	if resp := final(t, call); resp.StatusCode != 200 {
 		t.Fatalf("the INVITE got %d, want 200", resp.StatusCode)
@@ -280,12 +323,29 @@ func TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer(t *testing.T)
 	inB, _ := planB.instanceHosts(0)
 	p.a.waitAcknowledged(t, inA)
 	p.b.waitAcknowledged(t, inB)
-	wantA, wantB := onlyContext(t, p.a.trgw).remote, onlyContext(t, p.b.trgw).remote
-	if wantB[ibcf.CoreSide] != callee.media {
-		t.Fatalf("TrGW-B sends to %s for the 200, want %s", wantB[ibcf.CoreSide], callee.media)
+	if got := onlyContext(t, p.b.trgw).remote[ibcf.CoreSide]; got != callee.media {
+		t.Fatalf("TrGW-B sends to %s for the answer of the INVITE, want %s", got, callee.media)
 	}
+	rejectWithAPreview(t, p, call, callee, netip.AddrPortFrom(callee.media.Addr(), callee.media.Port()+2))
+	select {
+	case <-call.Done():
+		t.Fatal("the call ended")
+	default:
+	}
+	if err := call.Bye(); err != nil {
+		t.Fatalf("BYE: %v", err)
+	}
+	p.waitReleased(t)
+}
 
-	offer := p.a.offerAt(t, p.a.media.Port()+2, 2)
+// rejectWithAPreview has UE A1 offer a new port in a re-INVITE, which the
+// callee answers at preview in a 183 that is not reliable, and then
+// turns down with 488. Each termination of the two TrGWs then sends
+// where it sent before the re-INVITE.
+func rejectWithAPreview(t *testing.T, p *pair, call *sip.OutgoingCall, callee *previewingCallee, preview netip.AddrPort) {
+	t.Helper()
+	wantA, wantB := onlyContext(t, p.a.trgw).remote, onlyContext(t, p.b.trgw).remote
+	offer := p.a.offerAt(t, p.a.media.Port()+2, 3)
 	rejected := make(chan *sip.Message, 1)
 	go func() {
 		resp, err := call.ReInvite(offer)
@@ -300,7 +360,7 @@ func TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer(t *testing.T)
 	case <-time.After(10 * time.Second):
 		t.Fatal("the re-INVITE did not reach the callee")
 	}
-	st.Respond(callee.response(st.Request, 183, netip.AddrPortFrom(callee.media.Addr(), callee.media.Port()+2)))
+	st.Respond(callee.response(st.Request, 183, preview))
 	st.Respond(sip.NewResponse(st.Request, 488, ""))
 	select {
 	case resp := <-rejected:
@@ -312,16 +372,84 @@ func TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer(t *testing.T)
 	}
 
 	if got := onlyContext(t, p.a.trgw).remote; !maps.Equal(got, wantA) {
-		t.Errorf("TrGW-A sends to %v after the 488, want %v of the INVITE and its answer again", got, wantA)
+		t.Errorf("TrGW-A sends to %v after the 488, want %v of the last offer and answer again", got, wantA)
 	}
 	if got := onlyContext(t, p.b.trgw).remote; !maps.Equal(got, wantB) {
-		t.Errorf("TrGW-B sends to %v after the 488, want %v of the INVITE and its answer again", got, wantB)
+		t.Errorf("TrGW-B sends to %v after the 488, want %v of the last offer and answer again", got, wantB)
+	}
+}
+
+// TestRejectedOfferGoesBackToTheAnswerInAPRACK: UE A1 sends a re-INVITE
+// without an offer, the callee offers another port in a reliable 183,
+// and UE A1 answers at another port of its own in the PRACK (RFC 3262
+// 5). The re-INVITE then gets its 200. That offer and answer are the
+// last ones, so when the next offer of UE A1 is turned down, each
+// termination of the two TrGWs goes back to them: TrGW-A's to where the
+// PRACK said, and TrGW-B's to where the 183 said.
+func TestRejectedOfferGoesBackToTheAnswerInAPRACK(t *testing.T) {
+	p := newPair(t, nil)
+	callee := p.b.startPreviewingCallee(t, false)
+	call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
+	if resp := final(t, call); resp.StatusCode != 200 {
+		t.Fatalf("the INVITE got %d, want 200", resp.StatusCode)
+	}
+	inA, _ := planA.instanceHosts(0)
+	inB, _ := planB.instanceHosts(0)
+	p.a.waitAcknowledged(t, inA)
+	p.b.waitAcknowledged(t, inB)
+
+	offered := netip.AddrPortFrom(callee.media.Addr(), callee.media.Port()+2)
+	provisional := make(chan *sip.Message, 1)
+	reinvited := make(chan *sip.Message, 1)
+	go func() {
+		resp, err := call.ReInviteWith(sip.ReInvitation{OnProvisional: func(m *sip.Message) { provisional <- m }})
+		if err != nil {
+			t.Errorf("re-INVITE: %v", err)
+		}
+		reinvited <- resp
+	}()
+	var st *sip.ServerTransaction
+	select {
+	case st = <-callee.reinvites:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the re-INVITE did not reach the callee")
+	}
+	st.Respond(callee.reliableOffer(t, st.Request, 183, offered))
+	var offer *sip.Message
+	select {
+	case offer = <-provisional:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the reliable 183 of the callee did not reach UE A1")
+	}
+	if resp, err := call.PRACK(offer, p.a.answer(t, offer)); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("PRACK with the answer: %v %v", resp, err)
 	}
 	select {
-	case <-call.Done():
-		t.Fatal("the call ended")
-	default:
+	case <-callee.pracks:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the PRACK with the answer did not reach the callee")
 	}
+	st.Respond(callee.response(st.Request, 200, callee.media))
+	select {
+	case resp := <-reinvited:
+		if resp == nil || resp.StatusCode != 200 {
+			t.Fatalf("the re-INVITE got %v, want 200", resp)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the re-INVITE got no final response")
+	}
+	waitFor(t, "the ACK of the re-INVITE at the callee", func() bool {
+		return len(p.b.rec.requests("callee", sip.ACK)) == 2
+	})
+	answered := netip.AddrPortFrom(p.a.media.Addr(), 50000)
+	if got := onlyContext(t, p.a.trgw).remote[ibcf.CoreSide]; got != answered {
+		t.Fatalf("TrGW-A sends to %s for the answer in the PRACK, want %s", got, answered)
+	}
+	if got := onlyContext(t, p.b.trgw).remote[ibcf.CoreSide]; got != offered {
+		t.Fatalf("TrGW-B sends to %s for the offer in the 183, want %s", got, offered)
+	}
+
+	rejectWithAPreview(t, p, call, callee, netip.AddrPortFrom(callee.media.Addr(), callee.media.Port()+4))
 	if err := call.Bye(); err != nil {
 		t.Fatalf("BYE: %v", err)
 	}
@@ -340,7 +468,7 @@ func TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer(t *testing.T)
 // differ.
 func TestRejectedOfferAfterAReliableAnswerKeepsIt(t *testing.T) {
 	p := newPair(t, nil)
-	callee := p.b.startPreviewingCallee(t)
+	callee := p.b.startPreviewingCallee(t, false)
 	call := p.a.invite(t, p.b.sipURI(), p.a.offer(t, sdp.VoLTECodecs(), 1, ""), nil)
 	if resp := final(t, call); resp.StatusCode != 200 {
 		t.Fatalf("the INVITE got %d, want 200", resp.StatusCode)
