@@ -640,14 +640,21 @@ func regSubscription(callID string, lifetime time.Duration) ipsmgw.RegSubscripti
 	return ipsmgw.RegSubscription{PublicIdentity: impu, MSISDN: "12025550101", IMSI: imsi,
 		Dialog: sip.Dialog{ID: sip.DialogID{CallID: callID, LocalTag: "l"}, LocalSeq: 1, LocalURI: "sip:ipsmgw.ims.mnc001.mcc001.3gppnetwork.org",
 			RemoteURI: impu, RemoteTarget: "sip:scscf.ims.mnc001.mcc001.3gppnetwork.org", RouteSet: []string{"<sip:scscf;lr>"}},
-		ICID: "icid-" + callID, Available: true, Expires: time.Now().Add(lifetime).Round(time.Millisecond)}
+		ICID: "icid-" + callID, Available: true, NotifyDeadline: time.Now().Add(lifetime),
+		Expires: time.Now().Add(lifetime).Round(time.Millisecond)}
 }
 
 func ipsmgwRegSubscription(t *testing.T, a, b ipsmgw.Store) {
 	sub := regSubscription("sub:1@ipsmgw", short)
 	putRegSubscription(t, a, sub)
-	if got, ok := getRegSubscription(t, b, sub.Dialog.ID.CallID); !ok || !sameJSON(t, got, sub) {
+	got, ok := getRegSubscription(t, b, sub.Dialog.ID.CallID)
+	if !ok || !sameJSON(t, got, sub) {
 		t.Fatalf("RegSubscription = %+v, %v; want %+v", got, ok, sub)
+	}
+	// Timer N tells its own SUBSCRIBE by this time, to the nanosecond
+	// (internal/ipsmgw/regevent.go).
+	if !got.NotifyDeadline.Equal(sub.NotifyDeadline) {
+		t.Errorf("NotifyDeadline = %v, want %v", got.NotifyDeadline, sub.NotifyDeadline)
 	}
 	// The host of a SIP URI compares without case (RFC 3261 19.1.4).
 	if got, ok := regSubscriptionOf(t, b, "sip:001010000000001@IMS.mnc001.mcc001.3gppnetwork.org"); !ok || got.Dialog.ID != sub.Dialog.ID {

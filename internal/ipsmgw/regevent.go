@@ -44,14 +44,8 @@ const featureSMSOverIP = "+g.3gpp.smsip"
 // third-party REGISTER for every reregistration, so the refresh comes
 // before the subscription would end, and the S-CSCF ends the
 // subscription itself when the registration ends (TS 24.229 5.4.2.1.2).
-// The IP-SM-GW runs no timer for it.
-//
-// SIMPLIFIED: RFC 6665 4.1.2.4. Timer N does not run: a SUBSCRIBE that
-// no NOTIFY follows leaves a subscription without a dialog, which the
-// next third-party REGISTER replaces with a new one and the Store
-// forgets when it expires. The S-CSCF follows every 200 to a SUBSCRIBE
-// with a NOTIFY at once (RFC 6665 4.2.1.2), so the timer would only
-// shorten the wait for a NOTIFY that was lost.
+// The IP-SM-GW runs no refresh timer for it. It does run Timer N after
+// each SUBSCRIBE (awaitNotify).
 //
 // The REGISTER has been answered when this runs. When the Store fails,
 // the IP-SM-GW sends no SUBSCRIBE and logs the failure; the third-party
@@ -115,12 +109,17 @@ func (g *IPSMGW) subscribeRegEvent(publicID, msisdn string, expires time.Duratio
 		log.Warn("reg event SUBSCRIBE not built", "error", err.Error())
 		return
 	}
+	deadline, err := g.notifyDeadline()
+	if err != nil {
+		log.Warn("reg event SUBSCRIBE not sent", "error", err.Error())
+		return
+	}
 	// In the Store before the SUBSCRIBE goes out: the first NOTIFY may
 	// come before the 200, and to another IP-SM-GW (RFC 6665 4.1.2.4).
 	ctx := context.Background()
 	log = log.With("subscription_call_id", d.ID.CallID)
 	if err := g.store.PutRegSubscription(ctx, RegSubscription{PublicIdentity: publicID, MSISDN: msisdn, Dialog: d, ICID: icid,
-		Expires: time.Now().Add(expires)}); err != nil {
+		NotifyDeadline: deadline, Expires: time.Now().Add(expires)}); err != nil {
 		log.Warn("reg event SUBSCRIBE not sent: the store failed", "error", err.Error())
 		return
 	}
@@ -133,6 +132,7 @@ func (g *IPSMGW) subscribeRegEvent(publicID, msisdn string, expires time.Duratio
 		defer g.userQuit()
 		final, err := g.send(m, g.entryPoint())
 		if err == nil && final.StatusCode < 300 {
+			g.awaitNotify(publicID, d.ID.CallID, deadline, log)
 			return
 		}
 		if errors.Is(err, sip.ErrStackClosed) {
@@ -178,6 +178,11 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 		log.Warn("reg event refresh not sent", "error", err.Error())
 		return
 	}
+	deadline, err := g.notifyDeadline()
+	if err != nil {
+		log.Warn("reg event refresh not sent", "error", err.Error())
+		return
+	}
 	callID := sub.Dialog.ID.CallID
 	log = log.With("subscription_call_id", callID)
 	// The CSeq of the refresh is in the Store before the refresh goes
@@ -185,6 +190,7 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 	// expiry at both ends, and the next third-party REGISTER subscribes
 	// anew.
 	ctx := context.Background()
+	sub.NotifyDeadline = deadline
 	if err := g.store.PutRegSubscription(ctx, sub); err != nil {
 		log.Warn("reg event refresh not sent: the store failed", "error", err.Error())
 		return
@@ -198,6 +204,7 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 		final, err := g.send(m, hop)
 		switch {
 		case err == nil && final.StatusCode < 300:
+			g.awaitNotify(sub.PublicIdentity, callID, deadline, log)
 			return
 		case final == nil || !sip.EndsSubscription(final.StatusCode):
 			// RFC 6665 4.1.2.2: the subscription stays until it expires.
@@ -239,6 +246,62 @@ func (g *IPSMGW) endRegSubscription(ctx context.Context, sub RegSubscription, lo
 	if sub.Available {
 		g.updateHSS(&sub, false, log)
 	}
+}
+
+// notifyDeadline is when Timer N runs out for a SUBSCRIBE that goes out
+// now: 64*T1 of the stack that sends it (RFC 6665 4.1.2.4).
+func (g *IPSMGW) notifyDeadline() (time.Time, error) {
+	stack, err := g.stack.Get()
+	if err != nil {
+		return time.Time{}, err
+	}
+	return time.Now().Add(64 * stack.Timers().T1), nil
+}
+
+// awaitNotify runs Timer N for a SUBSCRIBE that the S-CSCF has accepted
+// with a 2xx, until deadline, the NotifyDeadline that the SUBSCRIBE
+// wrote. A SUBSCRIBE that the S-CSCF refused needs none: no NOTIFY
+// follows a final response other than 2xx (RFC 6665 4.1.2.1), and the
+// refresh that fails keeps or ends the subscription by its response
+// (4.1.2.2).
+//
+// The NOTIFY may reach another instance, so it is the Store that says
+// whether one came. The wait is no user of the IP-SM-GW
+// (maintenance.go): a shut down does not wait for it. A subscription
+// whose instance stops before Timer N runs out stays as it is until it
+// expires, or until the next third-party REGISTER replaces it, or
+// refreshes it with a Timer N of its own.
+func (g *IPSMGW) awaitNotify(publicID, callID string, deadline time.Time, log *slog.Logger) {
+	time.AfterFunc(time.Until(deadline), func() { g.notifyWaitOver(publicID, callID, deadline, log) })
+}
+
+// notifyWaitOver is Timer N running out. Under the lock of the user,
+// every NOTIFY clears the NotifyDeadline, at whichever instance it
+// arrives, and every later SUBSCRIBE writes a deadline of its own. So
+// only a subscription that still holds deadline got no NOTIFY after this
+// SUBSCRIBE. It has failed, if this was the first SUBSCRIBE (RFC 6665
+// 4.1.2.4), or ended, if this was a refresh (4.1.2.2), and the IP-SM-GW
+// forgets it either way. A NOTIFY that comes later then gets 481. When
+// the lock or the Store fails, the subscription stays as if this
+// instance had stopped (awaitNotify).
+func (g *IPSMGW) notifyWaitOver(publicID, callID string, deadline time.Time, log *slog.Logger) {
+	ctx := context.Background()
+	unlock, err := g.users.Lock(ctx, publicID)
+	if err != nil {
+		log.Warn("reg event subscription after Timer N not read: the lock of the user was not taken", "error", err.Error())
+		return
+	}
+	defer unlock()
+	sub, ok, err := g.store.RegSubscription(ctx, callID)
+	switch {
+	case err != nil:
+		log.Warn("reg event subscription after Timer N not read: the store failed", "error", err.Error())
+		return
+	case !ok || !sub.NotifyDeadline.Equal(deadline):
+		return
+	}
+	log.Warn("reg event subscription ended: no NOTIFY followed the SUBSCRIBE within Timer N")
+	g.endRegSubscription(ctx, sub, log)
 }
 
 // receiveRegEvent is a NOTIFY of a subscription of the IP-SM-GW (TS
@@ -338,6 +401,8 @@ func (g *IPSMGW) receiveRegEvent(st *sip.ServerTransaction) {
 			available = takesShortMessages(doc, sub.PublicIdentity)
 		}
 		sub.Dialog = d
+		// The NOTIFY that Timer N waits for is here (notifyWaitOver).
+		sub.NotifyDeadline = time.Time{}
 		if expires {
 			// 5.7.1.1: the expiration time is that of Subscription-State.
 			sub.Expires = time.Now().Add(state.Expires)

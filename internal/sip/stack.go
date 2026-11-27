@@ -284,6 +284,11 @@ func NewStack(transport *TransportLayer, cfg Config, log *slog.Logger) (*Stack, 
 // LocalAddr is the address the stack's transport is bound to.
 func (s *Stack) LocalAddr() netip.AddrPort { return s.transport.LocalAddr() }
 
+// Timers are the timers of the stack's transactions, from which a
+// transaction user derives a timer of its own such as Timer N (RFC 6665
+// 4.1.2.4).
+func (s *Stack) Timers() Timers { return s.cfg.Timers }
+
 // Close stops the stack and its transport. Client transactions still
 // running end with ErrStackClosed. The messages that the stack handed to
 // the transport before still go out on the TCP connections that are
