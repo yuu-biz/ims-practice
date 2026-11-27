@@ -466,3 +466,64 @@ func TestReliableResponseToAReINVITEKeepsItsTargetRefresh(t *testing.T) {
 		})
 	}
 }
+
+// A B2BUA passes the reliable provisional responses of its other leg on
+// to a re-INVITE, and the PRACKs back (RFC 3262 4). After RelayPRACK the
+// user of the call gets each PRACK of the re-INVITE, with or without a
+// body, and the 200 to it is the user's; otherwise the UA answers a
+// PRACK without a body itself.
+func TestRelayPRACKOfAReINVITE(t *testing.T) {
+	for _, relay := range []bool{false, true} {
+		name := "PRACK of the UA"
+		if relay {
+			name = "PRACK of the user"
+		}
+		t.Run(name, func(t *testing.T) {
+			pracks := make(chan *InDialogRequest, 1)
+			progressed := make(chan error, 1)
+			_, p := rawCall(t, testTimers, func(r *InDialogRequest) {
+				if r.Request.Method == PRACK {
+					pracks <- r
+					return
+				}
+				if relay {
+					r.RelayPRACK()
+				}
+				progressed <- r.Progress(180, Body{})
+				r.Accept(holdAnswer)
+			})
+			reInviteFrom(p, holdOffer, supports100rel)
+			prack := prackFrom(p, readProvisional(t, p), Body{})
+			if relay {
+				var r *InDialogRequest
+				select {
+				case r = <-pracks:
+				case <-time.After(2 * time.Second):
+					t.Fatal("the user did not get the PRACK")
+				}
+				if r.Request.Get("CSeq") != prack.Get("CSeq") || r.Arrival != 2 {
+					t.Fatalf("the user got CSeq %q with Arrival %d, want the PRACK after the re-INVITE", r.Request.Get("CSeq"), r.Arrival)
+				}
+				// Only a retransmission of the 180 that crossed the PRACK
+				// may come before the user accepts it.
+				for until := time.Now().Add(3 * testTimers.T1); time.Now().Before(until); {
+					if m, ok := readWithin(p.peer, time.Until(until)); ok && m.Get("CSeq") == prack.Get("CSeq") {
+						t.Fatalf("the PRACK got %s before the user accepted it", startLine(m))
+					}
+				}
+				if _, err := r.Accept(Body{}); err != nil {
+					t.Fatalf("Accept of the PRACK: %v", err)
+				}
+			}
+			if resp := readFinal(t, p, prack.Get("CSeq")); resp.StatusCode != 200 {
+				t.Fatalf("PRACK got %s, want 200", startLine(resp))
+			}
+			if err := returned(t, progressed, "Progress"); err != nil {
+				t.Errorf("Progress: %v", err)
+			}
+			if !relay && len(pracks) > 0 {
+				t.Error("the user got the PRACK without a body, which the UA answers")
+			}
+		})
+	}
+}

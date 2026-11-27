@@ -1057,6 +1057,19 @@ func (r *InDialogRequest) Progress(code int, body Body, headers ...HeaderField) 
 	return err
 }
 
+// RelayPRACK has the UA hand every PRACK of the peer for the reliable
+// provisional responses to the re-INVITE to the handler of the call,
+// with or without a body, as IncomingCall.RelayPRACK does for the
+// INVITE of a call. A B2BUA that passes the reliable provisional
+// responses of its other leg on with Progress relays their PRACKs back
+// this way (RFC 3262 4). The user calls it before the first Progress.
+func (r *InDialogRequest) RelayPRACK() {
+	c := r.d.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	r.relay = true
+}
+
 var errNoOfferInReliable = errors.New("sip: the first reliable provisional response to a re-INVITE without an offer needs the offer")
 
 // sessionSent is RFC 3262 5 for body in a reliable provisional
