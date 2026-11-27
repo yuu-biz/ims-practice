@@ -882,6 +882,14 @@ func (d *CallDialog) receiveReInvite(st *ServerTransaction) {
 // does not wait for the PRACK of a reliable provisional response, as
 // Reject would: RFC 3262 3 lets a final response other than 2xx pass
 // one.
+//
+// SIMPLIFIED: RFC 6141 3.8. A re-INVITE whose change has been made gets
+// a 2xx, not a 487, when the peer cancels it (RFC 6141 3.3), and an
+// answer in a reliable provisional response makes the change unless
+// preconditions hold it back. The UA answers 487 all the same: the
+// preconditions are in the SDP, which the UA does not read, and with
+// them the change waits for the user, so 487 is right. No node of this
+// project cancels a re-INVITE.
 func (r *InDialogRequest) watchCancel() {
 	select {
 	case <-r.st.Cancelled():
