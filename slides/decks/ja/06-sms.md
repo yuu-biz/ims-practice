@@ -1800,7 +1800,7 @@ steps:
     title: SC が SMS-DELIVER を作る
     only: [sc-make]
     focus: [sc]
-    text: SMS-SUBMIT の TP-DA に代わって、TP-OA に送信者の番号が入ります。TP-SCTS が増えます。
+    text: SMS-SUBMIT の TP-DA に代わって、TP-OA に送信者の番号が入ります。TP-SCTS が新しく付きます。
   - id: srr
     title: 配達する SMS-GMSC として尋ねる（SRR）
     show: [srr2]
@@ -1830,7 +1830,7 @@ steps:
 | --- | --- |
 | TFR | サービスセンタが SMS-DELIVER を SGd で IP-SM-GW へ転送する。受信者は IMSI で表す。 |
 
-- SMS-SUBMIT と SMS-DELIVER を比べます。TP-DA が TP-OA になり、TP-SCTS が増えています。
+- SMS-SUBMIT と SMS-DELIVER を比べます。TP-DA が TP-OA になり、TP-SCTS が新しく付いています。
 - TFR は宛先のノードを必ず Destination-Host に書きます。SRA が返した IP-SM-GW です。
 
 > 手順書 [8](../../../docs/guide/ja/sms.md#8-sc-がメッセージを転送しip-sm-gw-が配達するtfr-と-sms-deliver)。TS 23.040 8.1.1。TS 29.338 6.2.2、6.3.1.2。
@@ -2165,7 +2165,7 @@ steps:
     hide: [a7-alr]
     show: [a8-srr]
     zoom: [ipsmgw, sc, hss]
-    text: A4 のあいだと違い、UNRI はもう落ちています。
+    text: A4 のあととは違い、UNRI はもう落ちています。
   - id: sra
     title: また IP-SM-GW が返る（SRA と ALA）
     show: [a8-sra, a7-ala]
