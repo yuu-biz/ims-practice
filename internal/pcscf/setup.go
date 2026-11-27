@@ -41,6 +41,11 @@ type setup struct {
 	offered    []byte
 	authorized []byte
 	session    policy.SessionID
+	// storedSession is the policy session that the Dialog in the Store
+	// holds, as remember last wrote it. It differs from session once the
+	// PCRF has opened session for an answer whose dialog remember then
+	// found released, or could not write.
+	storedSession policy.SessionID
 	// key is the key of the Dialog once stored is true.
 	key    DialogKey
 	stored bool
@@ -261,7 +266,9 @@ func releasedFor(cause ReleaseCause) error {
 //
 // What a released dialog held is freed, so its answer goes neither to
 // the relay nor to the PCRF. remember checks once more, as one step with
-// its change of the dialog, since the release may come in between.
+// its change of the dialog, since the release may come in between. A
+// policy session that the answer opened meanwhile is then in no Dialog,
+// and end frees it.
 func (s *setup) response(resp *sip.Message) error {
 	s.p.ueResponse(s.leg, s.invite, resp)
 	if err := s.released(); err != nil {
@@ -456,6 +463,7 @@ func (s *setup) remember(resp *sip.Message) error {
 		case confirmed:
 			s.p.measurements.sessions.SetUp(role)
 		}
+		s.storedSession = s.session
 		return nil
 	}
 	d := Dialog{Originating: s.leg == originating, Relay: s.relay, ICID: s.icid}
@@ -471,6 +479,7 @@ func (s *setup) remember(resp *sip.Message) error {
 	if err := s.p.store.PutDialog(ctx, d); err != nil {
 		return err
 	}
+	s.storedSession = s.session
 	if confirmed {
 		s.p.measurements.sessions.SetUp(role)
 	}
@@ -520,7 +529,10 @@ func (p *PCSCF) abortSetup(d Dialog) bool {
 // A call whose dialog the P-CSCF released has freed them already: this
 // instance with the abort, which it closed, or another one, whose mark a
 // response found (foundReleased). Either says so, in case the Store
-// fails and endDialog has only holds to go by.
+// fails and endDialog has only holds to go by. A policy session that
+// the PCRF opened for an answer whose dialog remember then found
+// released, or could not write, is in no Dialog, so neither the release
+// nor endDialog frees it: end does.
 func (s *setup) end() {
 	s.ended.Do(func() {
 		holds := Dialog{Relay: s.relay, PolicySession: s.session, Released: s.foundReleased}
@@ -530,6 +542,10 @@ func (s *setup) end() {
 		default:
 		}
 		if s.stored {
+			if s.session != s.storedSession {
+				s.p.free(Dialog{PolicySession: s.session}, s.log)
+				holds.PolicySession = s.storedSession
+			}
 			s.p.endDialog(s.key, holds, s.log)
 			return
 		}
