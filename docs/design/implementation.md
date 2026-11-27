@@ -77,7 +77,7 @@ SIP のスタックは re-INVITE でも、最初の INVITE と同じく RFC 3262
 - `OnProvisional` は、スタックが受け取った暫定応答を、届いた順に 1 つずつ受け取ります。再送と、順番の外れたものは渡しません。UE は保留の re-INVITE で、ここからアンサーを読みます。
 - `ManualPRACK` は、信頼できる暫定応答への PRACK を利用者に任せます。利用者は `CallDialog.PRACK` で、本文を付けて送ります。オファーのある暫定応答への PRACK は、`ManualPRACK` が無くても利用者が送ります。アンサーを持つのは利用者だけだからです。
 
-この 2 つは、B2BUA が re-INVITE の暫定応答を中継するときに使う口です。中継では、`OnProvisional` で受けた暫定応答を、もう一方のレグから受けた re-INVITE の `Progress`（次の節）で、そのレグに送ります。その re-INVITE に 100rel が無ければ、暫定応答は信頼できない形で届きます。`RelayPRACK` を呼んでおけば、そのレグから届いた PRACK を本文ごと受け取れるので、その本文で `CallDialog.PRACK` を呼びます。今の B2BUA は暫定応答を中継しないので、`ManualPRACK` を使いません。`OnProvisional` は、信頼できる暫定応答が運んだアンサーを、re-INVITE を送ってきた側に返す 2xx に入れるためだけに使います。
+この 2 つは、B2BUA が re-INVITE の暫定応答を中継するときに使う口です。中継では、`OnProvisional` で受けた暫定応答を、もう一方のレグから受けた re-INVITE の `Progress`（次の節）で、そのレグに送ります。その re-INVITE に 100rel が無ければ、暫定応答は信頼できない形で届きます。`RelayPRACK` を呼んでおけば、そのレグから届いた PRACK を本文ごと受け取れるので、その本文で `CallDialog.PRACK` を呼びます。ただし、今の B2BUA は暫定応答を中継しないので、`ManualPRACK` を使いません。`OnProvisional` は、信頼できる暫定応答が運んだアンサーを、re-INVITE を送ってきた側に返す 2xx に入れるためだけに使います。
 
 オファーの無い re-INVITE を `ReInvite` で送り、相手が信頼できる暫定応答でオファーを返すと、その暫定応答に PRACK を返す者がいません。PRACK にはアンサーを入れますが、利用者は暫定応答を受け取らず、スタックはアンサーを作らないからです。このときスタックは PRACK を送らず、警告をログに書きます。UAS は暫定応答を 64*T1 のあいだ送り直したあと、re-INVITE を 5xx で断ります（RFC 3262 3）。スタックがアンサーを作らないのは、SDP を読まないスタックが作ったアンサーは、利用者の持つセッションと食い違うからです。今、オファーの無い re-INVITE を送るのは、受けた re-INVITE を中継するノード（B2BUA と、会議の参加者の re-INVITE を MRFC に渡す MMTel AS）だけです。MRFC は re-INVITE にすぐ 200 で答えるので、この形になるのは、B2BUA の先の相手が信頼できる暫定応答でオファーを返したときに限られます。オファーの無い re-INVITE を送る利用者は、`ReInviteWith` に `OnProvisional` を渡し、オファーのある暫定応答を受け取ったら、アンサーを付けて `CallDialog.PRACK` を呼びます。
 
