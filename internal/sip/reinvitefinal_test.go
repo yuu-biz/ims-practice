@@ -234,3 +234,52 @@ func TestRejectOfAReINVITEDoesNotWaitForThePRACK(t *testing.T) {
 		t.Errorf("Progress: %v, want ErrRequestAnswered", err)
 	}
 }
+
+// RFC 3262 3: a reliable provisional response that has no PRACK when its
+// re-INVITE fails still waits for one after the next re-INVITE has come,
+// as each INVITE has responses of its own. Its PRACK, found by the CSeq
+// in its RAck, gets 200, and the re-INVITE in progress goes on.
+func TestPRACKOfAnEarlierReINVITEAfterTheNextOne(t *testing.T) {
+	reject := make(chan struct{})
+	next := make(chan *InDialogRequest, 1)
+	_, p := rawCall(t, slowTimers, func(r *InDialogRequest) {
+		if r.Request.Get("CSeq") != "2 INVITE" {
+			next <- r
+			return
+		}
+		go r.Progress(180, Body{})
+		<-reject
+		r.Reject(488)
+	})
+	first := reInviteFrom(p, holdOffer, supports100rel)
+	prov := readProvisional(t, p)
+	close(reject)
+	if final := readFinal(t, p, first.Get("CSeq")); final.StatusCode != 488 {
+		t.Fatalf("first re-INVITE got %s, want 488", startLine(final))
+	}
+	ackNonOK(t, p, first)
+	second := reInviteFrom(p, offer2, supports100rel)
+	var r *InDialogRequest
+	select {
+	case r = <-next:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the user did not get the second re-INVITE")
+	}
+
+	prack := prackFrom(p, prov, Body{})
+	if resp := readFinal(t, p, prack.Get("CSeq")); resp.StatusCode != 200 {
+		t.Errorf("PRACK of the 180 to the first re-INVITE got %s, want 200", startLine(resp))
+	}
+	accepted := make(chan reinviteResult, 1)
+	go func() {
+		ack, err := r.Accept(answer2)
+		accepted <- reinviteResult{ack, err}
+	}()
+	if ok := readFinal(t, p, second.Get("CSeq")); ok.StatusCode != 200 || string(ok.Body) != string(answer2.Content) {
+		t.Fatalf("second re-INVITE got %s with body %q, want 200 with the answer", startLine(ok), ok.Body)
+	}
+	ackFrom(p, second)
+	if a := acceptedWithin(t, accepted); a.err != nil || a.ack == nil {
+		t.Errorf("Accept returned %v, %v; want the ACK", a.ack, a.err)
+	}
+}
