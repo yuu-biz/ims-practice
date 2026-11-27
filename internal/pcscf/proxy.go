@@ -160,6 +160,24 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					acknowledge(resp, "a retransmission of a 2xx that went no further")
 					continue
 				}
+				if answered {
+					// The 2xx of another dialog of a forked INVITE, after the
+					// caller has the 2xx of the first. TS 24.229 names no
+					// procedure for it. A proxy forwards every 2xx to an
+					// INVITE (RFC 3261 16.7 step 5), but the call has one
+					// relay context and one policy session, and they serve
+					// the dialog that the caller has: the answer of this
+					// dialog cannot go through them without moving the media
+					// of that call, and as it came it would lead the caller
+					// past the relay. A 2xx that goes no further comes again
+					// until the callee gives up waiting for its ACK, and the
+					// callee then ends the dialog itself (RFC 3261
+					// 13.3.1.4). So the P-CSCF ends it at once: it
+					// acknowledges the 2xx in the caller's name and sends a
+					// BYE, as for a 2xx that crossed the CANCEL.
+					acknowledge(resp, "the caller has the 2xx of another dialog")
+					continue
+				}
 				refused := call.response(resp)
 				if !call.settle() {
 					// The session was aborted just before its 2xx came.
@@ -167,25 +185,12 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					continue
 				}
 				switch {
-				case !answered && errors.Is(refused, errStore):
+				case errors.Is(refused, errStore):
 					// The callee has answered, but the caller gets no 2xx
 					// for a dialog that the P-CSCF cannot release. Its
 					// next retransmission is acknowledged, and the callee
 					// gets a BYE, as for a 2xx that crossed the CANCEL.
 					giveUp(refused)
-					continue
-				case answered && (errors.Is(refused, errStore) || errors.Is(refused, errRelay) || errors.Is(refused, errReleased)):
-					// The 2xx of another dialog of a forked INVITE, after the
-					// caller has the 2xx of the first. TS 24.229 names no
-					// procedure for it. A proxy forwards every 2xx to an
-					// INVITE (RFC 3261 16.7 step 5), but this one would lead
-					// the caller past the relay. A 2xx that goes no further
-					// comes again until the callee gives up waiting for its
-					// ACK, and the callee then ends the dialog itself (RFC
-					// 3261 13.3.1.4). So the P-CSCF ends it at once: it
-					// acknowledges the 2xx in the caller's name and sends a
-					// BYE, as for a 2xx that crossed the CANCEL.
-					acknowledge(resp, "the caller has the 2xx of another dialog")
 					continue
 				case errors.Is(refused, errRelay) || errors.Is(refused, errReleased):
 					// The callee has answered, but the caller gets 500 in
@@ -203,9 +208,7 @@ func (p *PCSCF) proxyInvite(st *sip.ServerTransaction, out *sip.Message, targets
 					go call.end()
 					continue
 				}
-				if !answered {
-					p.measurements.sessions.Answered(role, call.leg.direction())
-				}
+				p.measurements.sessions.Answered(role, call.leg.direction())
 				answered = true
 				sent2xx[tag] = resp.Clone()
 				timerC.Stop()

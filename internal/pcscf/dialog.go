@@ -30,7 +30,10 @@ import (
 //
 // SIMPLIFIED: TS 29.214 A.3. The early dialogs of a forked INVITE are
 // not told apart: the dialog of the calling UE follows the To tag of
-// the response seen last. The S-CSCF of this project does not fork.
+// the response seen last, and its relay context and policy session take
+// the SDP answer of that response. A 2xx without SDP leaves them with
+// that answer, also when it came in another early dialog. The S-CSCF of
+// this project does not fork.
 type Dialog struct {
 	Key DialogKey
 	// Originating is true when the served UE is the caller, and false
