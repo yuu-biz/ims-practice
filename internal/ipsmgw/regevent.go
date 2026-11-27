@@ -204,9 +204,7 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 			log.Warn("reg event refresh failed", "status", statusOf(final), "error", errorText(err))
 			return
 		}
-		// The notifier no longer has the subscription. The IP-SM-GW no
-		// longer hears of the user, so it no longer claims the user's
-		// short messages; the next third-party REGISTER subscribes anew.
+		// The notifier no longer has the subscription.
 		log.Warn("reg event subscription ended by its refresh", "status", final.StatusCode)
 		unlock, err := g.users.Lock(ctx, sub.PublicIdentity)
 		if err != nil {
@@ -224,15 +222,23 @@ func (g *IPSMGW) refreshRegEvent(sub RegSubscription, expires time.Duration, log
 		if !ok {
 			return
 		}
-		if err := g.store.DeleteRegSubscription(ctx, callID); err != nil {
-			// The subscription stays until it expires; the HSS learns all
-			// the same that the user takes no short messages here.
-			log.Warn("ended reg event subscription not removed: the store failed", "error", err.Error())
-		}
-		if current.Available {
-			g.updateHSS(&current, false, log)
-		}
+		g.endRegSubscription(ctx, current, log)
 	}()
+}
+
+// endRegSubscription forgets sub, a subscription that the notifier no
+// longer has. The IP-SM-GW no longer hears of the user, so it no longer
+// claims the user's short messages; the next third-party REGISTER
+// subscribes anew. The lock of the user is held.
+func (g *IPSMGW) endRegSubscription(ctx context.Context, sub RegSubscription, log *slog.Logger) {
+	if err := g.store.DeleteRegSubscription(ctx, sub.Dialog.ID.CallID); err != nil {
+		// The subscription stays until it expires; the HSS learns all
+		// the same that the user takes no short messages here.
+		log.Warn("ended reg event subscription not removed: the store failed", "error", err.Error())
+	}
+	if sub.Available {
+		g.updateHSS(&sub, false, log)
+	}
 }
 
 // receiveRegEvent is a NOTIFY of a subscription of the IP-SM-GW (TS
