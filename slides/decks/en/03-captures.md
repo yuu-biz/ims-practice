@@ -2,6 +2,87 @@
 title: Reading a capture, and the Lab
 footer: ims-practice study session 3. Captures and the Lab
 lang: en
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: ue, label: UE, role: the phone, at: [0, 1]}
+  - {id: pcscf, label: P-CSCF, role: its first hop, at: [1, 1]}
+  - {id: icscf, label: I-CSCF, role: entry of the network, at: [1, 0]}
+  - {id: scscf, label: S-CSCF, role: "registers, starts services", at: [2, 1]}
+  - {id: hss, label: HSS, role: subscriber data, at: [2, 0]}
+  - {id: bridge, label: ims0, role: the Docker bridge, at: [1, 2]}
+  - {id: capture, label: capture, role: tcpdump, at: [0, 2]}
+  - {id: pcap, label: pcap, role: a file in captures/, at: [0, 3]}
+  - {id: lab, label: Lab, role: takes the HEP copies, at: [2, 2]}
+  - {id: ue-a, label: UE 1, role: the caller, at: [0, 3]}
+  - {id: as-o, label: MMTel AS, role: AS of the caller, at: [1, 3]}
+  - {id: as-t, label: MMTel AS, role: AS of the callee, at: [2, 3]}
+  - {id: ue-b, label: UE 2, role: the callee, at: [3, 3]}
+events:
+  # One network, one file
+  - {id: ue-on, rel: attached, from: ue, to: bridge}
+  - {id: pcscf-on, rel: attached, from: pcscf, to: bridge}
+  - {id: scscf-on, rel: attached, from: scscf, to: bridge}
+  - {id: hss-on, rel: attached, from: hss, to: bridge}
+  - {id: listens, rel: listens, from: capture, to: bridge}
+  - {id: writes, rel: writes, from: capture, to: pcap}
+  # The HEP copies
+  - id: invite
+    msg: INVITE
+    from: pcscf
+    to: scscf
+    proto: SIP
+  - id: copy-sent
+    msg: HEP
+    from: pcscf
+    to: lab
+    proto: UDP 9060
+    note: (copy of the sender)
+  - id: copy-received
+    msg: HEP
+    from: scscf
+    to: lab
+    proto: UDP 9060
+    note: (copy of the receiver)
+  - id: join
+    do: makes one arrow of them
+    at: lab
+    fields:
+      - when: the same source, destination and content
+      - another arrow: a retransmission of the very same content
+  # What the Lab infers
+  - id: register
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+  - id: mar
+    msg: MAR
+    from: scscf
+    to: hss
+    proto: Cx
+    fields:
+      - Session-Id: unrelated to the Call-ID of SIP
+  - id: link
+    do: links Cx to SIP
+    at: lab
+    fields:
+      - Cx: the last SIP request for the same user that the same node received within 2 seconds
+      - Rx: the last message with SDP, or REGISTER, that the P-CSCF received from that address
+  # One call, several dialogs
+  - {id: dialog-1, rel: dialog 1, from: ue-a, to: as-o, proto: SIP}
+  - {id: dialog-2, rel: dialog 2, from: as-o, to: as-t, proto: SIP}
+  - {id: dialog-3, rel: dialog 3, from: as-t, to: ue-b, proto: SIP}
+  - id: one-call
+    do: makes one call by icid-value
+    at: lab
+    fields:
+      - icid-value: the same in all three dialogs
+      - Dialogs: 3
+```
+
 ---
 
 # Reading a capture, and the Lab
@@ -28,6 +109,29 @@ To begin: both tools show the same signaling. Why open a capture at all, when th
 ---
 
 ## One network, one file
+
+```ims-scene
+id: one-file
+nodes: [ue, pcscf, scscf, hss, bridge, capture, pcap]
+lead: All nodes are attached to one bridge, so everything between them goes into one file.
+steps:
+  - id: bridge
+    title: All nodes are on one network
+    show: [ue-on, pcscf-on, scscf-on, hss-on]
+    focus: [bridge]
+    text: One Docker network (172.28.0.0/24). The picture draws four of the nodes.
+  - id: listen
+    title: capture listens on the bridge
+    show: [listens]
+    focus: [capture, bridge]
+    text: The capture container starts first and the nodes after it, so the first message of each node is in the file too.
+  - id: file
+    title: A new file at each start
+    show: [writes]
+    focus: [capture, pcap]
+    text: The file is named after the time of the start. In session 10 there are three bridges, each with its capture and its file.
+```
+
 
 ```text
             captures/ims-<start time in UTC>.pcap
@@ -123,6 +227,27 @@ docker compose stop scscf
 
 ## The copies in the file
 
+```ims-scene
+id: copies
+nodes: [pcscf, scscf, lab]
+lead: What the Lab knows is only the copies that the nodes send it.
+steps:
+  - id: message
+    title: A message from node to node
+    show: [invite]
+    text: The capture holds this message once.
+  - id: sent
+    title: The sender sends a copy
+    show: [copy-sent]
+    text: A node with an `hep` section in its settings sends a copy of each SIP and Diameter message it sends or receives to the Lab, over UDP port 9060.
+  - id: received
+    title: The receiver sends a copy too
+    show: [copy-received]
+    checkpoint: true
+    text: The copies are in the capture as UDP to port 9060 as well. `not udp.port == 9060` hides them.
+```
+
+
 - A node can send a copy of every SIP and Diameter message it sends or receives to the Lab, which listens on UDP port 9060. The copies use HEP version 3.
 - A node sends them when its configuration has a `hep` section. The UE simulator sends them with `-hep lab:9060`. Without either, nothing is sent.
 - The copies are in the capture too, as UDP packets to port 9060. Wireshark has no HEP dissector of its own, so hide them with `not udp.port == 9060`.
@@ -167,6 +292,24 @@ docker compose up -d --build
 
 ## How the ladder is built: two copies, one arrow
 
+```ims-scene
+id: one-arrow
+nodes: [pcscf, scscf, lab]
+lead: One arrow is one message on the network.
+steps:
+  - id: two
+    title: Two copies of one message
+    only: [invite, copy-sent, copy-received]
+    active: copy-received
+    text: They come from both the sender and the receiver.
+  - id: join
+    title: The Lab makes one arrow of them
+    show: [join]
+    focus: [lab]
+    text: The same source, destination and content make one arrow. A retransmission of the very same content is another arrow.
+```
+
+
 ```text
   the sender's copy    ---+
                           +--> one arrow, when source, destination and content agree
@@ -183,6 +326,29 @@ docker compose up -d --build
 
 ## What the Lab infers: Cx and Rx
 
+```ims-scene
+id: infer
+nodes: [icscf, scscf, hss, lab]
+lead: A Cx message does not say which SIP request it was sent for. The Lab links them by a rule of the procedure.
+steps:
+  - id: register
+    title: The S-CSCF receives a REGISTER
+    show: [register]
+    text: A SIP request has a Call-ID.
+  - id: mar
+    title: The S-CSCF sends a MAR
+    show: [mar]
+    text: The Session-Id of Diameter is unrelated to the Call-ID of SIP.
+  - id: link
+    title: The Lab links them
+    show: [link]
+    focus: [lab]
+    text: |
+      The link is not written in the messages; the Lab infers it.
+      Pick the arrow and the details show it under **Link to this ladder**.
+```
+
+
 - A Cx message carries nothing that names the SIP request it was sent for. The Session-Id of Diameter and the Call-ID of SIP are unrelated.
 - The Lab links them by the rule of the procedures. A Cx request belongs to the SIP request that the same node received last, at most 2 seconds before, and that names the same user.
 - An Rx session links the same way (TS 29.214 A.1, A.4). Its first AAR names the UE only by its address, so it goes with the last message with SDP, or the REGISTER, that the P-CSCF had from that address.
@@ -193,6 +359,30 @@ docker compose up -d --build
 ---
 
 ## One call, several dialogs
+
+```ims-scene
+id: dialogs
+nodes: [ue-a, as-o, as-t, ue-b, lab]
+lead: The MMTel AS is a routeing B2BUA, so a call between two people is three dialogs. The CSCFs on the way are left out of the picture.
+steps:
+  - id: first
+    title: The dialog of UE 1 and the AS of the caller
+    show: [dialog-1]
+    text: The AS answers the INVITE that the S-CSCF brought it itself.
+  - id: more
+    title: The AS sends a new INVITE with a Call-ID of its own
+    show: [dialog-2, dialog-3]
+    checkpoint: true
+    text: The AS of the callee does the same. There are three dialogs.
+  - id: icid
+    title: The Lab makes one call of them by icid-value
+    show: [one-call]
+    focus: [lab]
+    text: |
+      In the network every dialog has the same icid-value, which the P-CSCF of the caller put in.
+      The Lab shows the count in the column Dialogs and draws them all in one ladder.
+```
+
 
 ```text
   UE 1 --- dialog 1 --- MMTel AS --- dialog 2 --- MMTel AS --- dialog 3 --- UE 2
