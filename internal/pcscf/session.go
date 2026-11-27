@@ -588,7 +588,13 @@ func (p *PCSCF) goBack(rc *RelayContext, side agw.TerminationID, offered netip.A
 //     4), so the reliable response stays unacknowledged, and the UAS
 //     ends the INVITE with a 5xx after 64*T1 (RFC 3262 3). The P-CSCF
 //     ends it now, as for a refused answer in the early dialog (TS
-//     24.229 5.2.8.1.1).
+//     24.229 5.2.8.1.1). The PRACK gets the 500 too, not the 2xx that
+//     RFC 3262 3 asks for a PRACK that matches its reliable response:
+//     every INVITE whose call goes through the relay has the offer, and
+//     once the UAS has answered it, no response to the INVITE carries an
+//     offer (RFC 3261 13.2.1). The SDP of a PRACK in the early dialog is
+//     then a new offer, and a 2xx to it would have to carry the answer
+//     (RFC 3262 5), which the P-CSCF does not have.
 func (p *PCSCF) notRelayed(st *sip.ServerTransaction, d Dialog, err error, log *slog.Logger) {
 	resp := refusalOf(st.Request, err, "")
 	keep := !mediaGone(err) && (errors.Is(err, errBody) || errors.Is(err, agw.ErrRejected))
