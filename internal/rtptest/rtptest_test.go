@@ -46,7 +46,7 @@ func TestQueuedReturnsWhatCameBeforeInOrder(t *testing.T) {
 func TestReadPCMUReadsTheCountGiven(t *testing.T) {
 	from, to := socket(t), socket(t)
 	sendPCMU(t, from, to, []byte("a"), []byte("b"), []byte("c"))
-	if got := ReadPCMU(t, to, 2, time.Second); len(got) != 2 || string(got[1]) != "b" {
+	if got := ReadPCMU(t, to, PCMU, 2, time.Second); len(got) != 2 || string(got[1]) != "b" {
 		t.Fatalf("ReadPCMU = %q, want a and b", got)
 	}
 	if rest := Queued(t, to); len(rest) != 1 || string(rest[0].Payload) != "c" {
@@ -62,7 +62,7 @@ func TestHeardSkipsMixesWithoutEveryTone(t *testing.T) {
 		both[i] = low[i] + high[i]
 	}
 	sendPCMU(t, from, to, g711.Encode(low), g711.Encode(both), g711.Encode(both), g711.Encode(low))
-	samples := Heard(t, to, []float64{400, 1000}, 2, time.Second)
+	samples := Heard(t, to, PCMU, []float64{400, 1000}, 2, time.Second)
 	if want := append(g711.Decode(g711.Encode(both)), g711.Decode(g711.Encode(both))...); !bytes.Equal(g711.Encode(samples), g711.Encode(want)) {
 		t.Error("Heard did not start at the first frame with both tones")
 	}

@@ -65,7 +65,7 @@ func TestConferenceGivesEachTheMixOfTheOthers(t *testing.T) {
 				others = append(others, f)
 			}
 		}
-		samples := rtptest.Heard(t, conn, others, 30, 10*time.Second)
+		samples := rtptest.Heard(t, conn, rtptest.PCMU, others, 30, 10*time.Second)
 		for other, f := range hz {
 			p := rtptest.Power(samples, f)
 			switch {

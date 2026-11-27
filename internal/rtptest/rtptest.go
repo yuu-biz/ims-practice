@@ -79,16 +79,17 @@ func Next(t testing.TB, c *net.UDPConn, limit time.Duration, what string) rtp.Pa
 }
 
 // ReadPCMU returns the payloads of the next n packets that reach c,
-// which must all be PCMU. It fails the test when they have not all come
+// which must all be PCMU under payload type pt, the one that the SDP of
+// the party gives it. It fails the test when they have not all come
 // within limit.
-func ReadPCMU(t testing.TB, c *net.UDPConn, n int, limit time.Duration) [][]byte {
+func ReadPCMU(t testing.TB, c *net.UDPConn, pt uint8, n int, limit time.Duration) [][]byte {
 	t.Helper()
 	deadline := time.Now().Add(limit)
 	got := make([][]byte, 0, n)
 	for len(got) < n {
 		p := Next(t, c, time.Until(deadline), fmt.Sprintf("packet %d of %d", len(got)+1, n))
-		if p.PayloadType != PCMU {
-			t.Fatalf("packet %d has payload type %d, want PCMU", len(got)+1, p.PayloadType)
+		if p.PayloadType != pt {
+			t.Fatalf("packet %d has payload type %d, want %d", len(got)+1, p.PayloadType, pt)
 		}
 		got = append(got, p.Payload)
 	}
@@ -160,20 +161,21 @@ func Power(samples []int16, hz float64) float64 {
 	return (s1*s1 + s2*s2 - k*s1*s2) / (n * n)
 }
 
-// Heard returns the decoded samples of n PCMU packets from c, starting
+// Heard returns the decoded samples of n PCMU packets from c, under
+// payload type pt, starting
 // with the first packet that holds every tone of hz. A mixer mixes what
 // has reached it, so the first mixes of a conference hold only the
 // parties whose packets came first; the test skips those, however long
 // they last, instead of guessing how long. It fails the test when the n
 // packets have not come within limit.
-func Heard(t testing.TB, c *net.UDPConn, hz []float64, n int, limit time.Duration) []int16 {
+func Heard(t testing.TB, c *net.UDPConn, pt uint8, hz []float64, n int, limit time.Duration) []int16 {
 	t.Helper()
 	deadline := time.Now().Add(limit)
 	var samples []int16
 	for got := 0; got < n; {
 		p := Next(t, c, time.Until(deadline), fmt.Sprintf("packet %d of %d of the mix", got+1, n))
-		if p.PayloadType != PCMU {
-			t.Fatalf("a packet of the mix has payload type %d, want PCMU", p.PayloadType)
+		if p.PayloadType != pt {
+			t.Fatalf("a packet of the mix has payload type %d, want %d", p.PayloadType, pt)
 		}
 		frame := g711.Decode(p.Payload)
 		if got == 0 && !holdsAll(frame, hz) {
