@@ -10,6 +10,15 @@ import "github.com/yuu-biz/ims-practice/internal/sip"
 // see each other's reliable 183 and PRACK, and the UPDATE that tells
 // that the resources are reserved can follow (RFC 3312 13.1, TS 24.229
 // 6.1.4.2 item b).
+//
+// SIMPLIFIED: RFC 3261 9.1 and RFC 6141 3.3. A CANCEL for a re-INVITE
+// that the Call relays ends on the leg it came on, and the Call sends
+// none on the other leg. The UA answers the re-INVITE with 487 while no
+// reliable provisional response has carried its session description, and
+// leaves it to the final response of the other leg once one has
+// (sip.InDialogRequest.Cancelled); the far end answers it as it would
+// have without the CANCEL, so the two ends can end up with different
+// sessions. No UE of this project cancels a re-INVITE.
 
 // reInviteRelay is one re-INVITE that crosses the B2BUA, from its
 // arrival to its final response. The Call finds it by the CSeq number
