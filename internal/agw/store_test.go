@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/rtptest"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
 
 func TestMemoryContextStore(t *testing.T) {
@@ -626,14 +627,15 @@ func TestANewContextAvoidsWhatTheRelayOpenedAgain(t *testing.T) {
 // TestARecreatedMRFPGoesOnMixingAConference: the contexts of the MRFP
 // are those of the same relay, so a conference whose terminations were
 // opened again is mixed on, and each party gets the mix without a word
-// from the MRFC.
+// from the MRFC, under the payload type that its SDP gave PCMU.
 func TestARecreatedMRFPGoesOnMixingAConference(t *testing.T) {
 	store := NewMemoryContextStore()
 	minPort, maxPort := rtptest.PortRange(t, 20)
 	first := relayOn(t, minPort, maxPort, store)
 	a, b, c := udp(t), udp(t), udp(t)
+	dynamic := Media{Codecs: []sdp.Codec{{PayloadType: 96, Name: sdp.NamePCMU, ClockRate: 8000}}}
 	conference, err := first.Add(
-		TerminationRequest{ID: "a", Remote: addr(a)},
+		TerminationRequest{ID: "a", Remote: addr(a), LocalMedia: dynamic, RemoteMedia: dynamic},
 		TerminationRequest{ID: "b", Remote: addr(b)},
 		TerminationRequest{ID: "c", Remote: addr(c)})
 	if err != nil {
@@ -652,7 +654,9 @@ func TestARecreatedMRFPGoesOnMixingAConference(t *testing.T) {
 	if got := again.Contexts(); len(got) != 1 || got[0].ID != conference.ID || len(got[0].Terminations) != 3 {
 		t.Fatalf("the relay created again holds %+v, want the conference %s with its three terminations", got, conference.ID)
 	}
-	if _, ok := readRTP(t, a, 2*time.Second); !ok {
+	if p, ok := readRTP(t, a, 2*time.Second); !ok {
 		t.Error("the conference that was opened again sends nothing: the mixer has no party")
+	} else if p.PayloadType != 96 {
+		t.Errorf("the conference that was opened again sends a payload type %d, want 96", p.PayloadType)
 	}
 }

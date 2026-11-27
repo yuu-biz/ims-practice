@@ -18,14 +18,14 @@ const (
 // Codec is one RTP payload format of a media description: a payload
 // type with its a=rtpmap and a=fmtp lines (RFC 8866 6.6 and 6.15).
 type Codec struct {
-	PayloadType int
-	Name        string // the encoding name, such as "AMR-WB"
-	ClockRate   int
+	PayloadType int    `json:"payload_type"`
+	Name        string `json:"name"` // the encoding name, such as "AMR-WB"
+	ClockRate   int    `json:"clock_rate"`
 	// Channels is the encoding parameter of a=rtpmap, or 0 when the line
 	// leaves it out, which means one channel.
-	Channels int
+	Channels int `json:"channels,omitempty"`
 	// Fmtp is the value of a=fmtp after the payload type, or "".
-	Fmtp string
+	Fmtp string `json:"fmtp,omitempty"`
 }
 
 // Rtpmap is the value of the a=rtpmap line.

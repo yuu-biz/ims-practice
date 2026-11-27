@@ -13,7 +13,6 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/mixer"
 	"github.com/yuu-biz/ims-practice/internal/rtp"
-	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
 
 // Announcements are the announcements provisioned in an MRFP, by name.
@@ -241,18 +240,19 @@ func newSource() *source {
 	return &source{ssrc: rand.Uint32(), seq: uint16(rand.Uint32()), timestamp: rand.Uint32(), talkspurt: true}
 }
 
-// packet carries one 20 ms PCMU payload, sent in the tick now.
+// packet carries one 20 ms PCMU payload under payload type pt, sent in
+// the tick now.
 //
 // The timestamp counts the frames of the sampling clock, whether the
 // source sent them or not (RFC 3550 5.1). After silence it goes on by
 // the ticks that the silence lasted: the packets are made one a tick,
 // and the nominal sampling instant is what counts, not the time of day
 // at which a tick came.
-func (s *source) packet(payload []byte, now uint64) []byte {
+func (s *source) packet(pt uint8, payload []byte, now uint64) []byte {
 	if s.talkspurt && s.sent != 0 && now-s.sent > 1 {
 		s.timestamp += uint32(now-s.sent-1) * mixer.FrameSize
 	}
-	p := rtp.Packet{Marker: s.talkspurt, PayloadType: sdp.PCMU, SequenceNumber: s.seq, Timestamp: s.timestamp, SSRC: s.ssrc, Payload: payload}
+	p := rtp.Packet{Marker: s.talkspurt, PayloadType: pt, SequenceNumber: s.seq, Timestamp: s.timestamp, SSRC: s.ssrc, Payload: payload}
 	s.seq++
 	s.timestamp += uint32(len(payload))
 	s.sent = now

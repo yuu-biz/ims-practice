@@ -41,7 +41,9 @@ func TestOpenAPI(t *testing.T) {
 	}
 
 	var c Context
-	if err := json.Unmarshal(send("POST", "/contexts", `{"terminations": [{"id": "access", "mode": "sendrecv", "remote": "192.0.2.10:4000"}]}`, 200), &c); err != nil {
+	if err := json.Unmarshal(send("POST", "/contexts", `{"terminations": [{"id": "access", "mode": "sendrecv", "remote": "192.0.2.10:4000",
+		"local_media": {"codecs": [{"payload_type": 96, "name": "PCMU", "clock_rate": 8000}]},
+		"remote_media": {"codecs": [{"payload_type": 96, "name": "PCMU", "clock_rate": 8000}], "bandwidth": 80}}]}`, 200), &c); err != nil {
 		t.Fatal(err)
 	}
 	send("POST", "/contexts", `{"terminations": [{"remote": "nowhere"}]}`, 400)

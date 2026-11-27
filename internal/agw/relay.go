@@ -131,14 +131,14 @@ type TerminationRequest struct {
 	// LocalMedia, on Add, describes the stream that the termination is
 	// to receive, as the Local descriptor does besides the address,
 	// which the node chooses.
-	LocalMedia Media `json:"-"`
+	LocalMedia Media `json:"local_media,omitzero"`
 	// Remote is where the termination sends RTP, as the SDP of the party
 	// it faces gives it: the Remote descriptor. RTCP goes to the port
 	// above.
 	Remote netip.AddrPort `json:"remote,omitzero"`
 	// RemoteMedia describes the stream that the termination sends to
 	// Remote, as the Remote descriptor does besides the address.
-	RemoteMedia Media `json:"-"`
+	RemoteMedia Media `json:"remote_media,omitzero"`
 	// Latch is the latching. An Add without one gives NAPTLatch, where
 	// H.248 would leave latching off (H.248.37 (06/2008) 6.6.1); a
 	// Modify without one keeps it.
@@ -153,17 +153,27 @@ type TerminationRequest struct {
 // Media is what the SDP of a Local or a Remote descriptor says of an
 // audio stream besides its address: the payload formats of the m= line
 // and the bandwidth of the b= line (TS 29.334 5.15). The relay does not
-// transcode and passes every payload type as it is, so the HTTP API
-// does not carry it; the H.248 Controller of internal/h248/mediactl
-// writes it into its descriptors.
+// transcode, and passes the packets of a context of two as they are.
+// What it plays and mixes itself is PCMU, which it receives and sends
+// under the payload type that Media gives PCMU (pcmu).
 type Media struct {
 	// Codecs are the payload formats of the m= line, with their
 	// a=rtpmap and a=fmtp lines, most preferred first. With none, the
 	// m= line carries "-": no resources for a particular format are
 	// reserved (TS 29.334 5.15, Table 5.15.1).
-	Codecs []sdp.Codec
+	Codecs []sdp.Codec `json:"codecs,omitempty"`
 	// Bandwidth is the b=AS value in kbit/s, or 0 for none.
-	Bandwidth int
+	Bandwidth int `json:"bandwidth,omitempty"`
+}
+
+// pcmu is the payload type that m gives G.711 PCMU, if m has it.
+func (m Media) pcmu() (uint8, bool) {
+	for _, c := range m.Codecs {
+		if c.Is(sdp.NamePCMU) && c.ClockRate == 8000 {
+			return uint8(c.PayloadType), true
+		}
+	}
+	return 0, false
 }
 
 // Termination is one end of a context as the API shows it: a pair of

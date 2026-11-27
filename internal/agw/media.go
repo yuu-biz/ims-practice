@@ -13,7 +13,6 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/mixer"
 	"github.com/yuu-biz/ims-practice/internal/rtp"
-	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
 
 // relayContext is a context and its terminations. mu guards terms,
@@ -65,6 +64,14 @@ type relayTermination struct {
 	playback *mixer.Playback
 	// own is the RTP source of what the node sends itself.
 	own *source
+	// receivePT and sendPT are the payload types of PCMU in what the
+	// termination receives and in what it sends: those of its own SDP,
+	// the Local descriptor, and of its party's SDP, the Remote
+	// descriptor. Each side of a session receives with the payload types
+	// of its own SDP, and sends with those of the other side's (RFC 3264
+	// 5.1, 6.1). Until a descriptor says otherwise, PCMU has its static
+	// payload type 0 (RFC 3551 6).
+	receivePT, sendPT uint8
 	// heard holds the PCMU payloads that arrived since the last tick of
 	// a conference, oldest first.
 	heard [][]byte
@@ -133,6 +140,7 @@ func (rc *relayContext) add(req TerminationRequest) (*relayTermination, error) {
 	}
 	t := &relayTermination{id: id, ctx: rc, rtp: rtp, rtcp: rtcp, mode: mode, events: req.Events, own: newSource()}
 	t.setSignals(req.Signals, playback)
+	t.setPayloadTypes(req.LocalMedia, req.RemoteMedia)
 	t.setRemote(req.Remote)
 	t.setLatch(latch)
 	t.latchOff = latch == NAPTOff || latch == StopLatching
@@ -160,7 +168,8 @@ func (rc *relayContext) reopen(saved SavedTermination) error {
 	if err != nil {
 		return err
 	}
-	t := &relayTermination{id: saved.ID, ctx: rc, rtp: rtp, rtcp: rtcp, mode: saved.Mode, own: newSource(), latchOff: saved.Latch == NAPTOff}
+	t := &relayTermination{id: saved.ID, ctx: rc, rtp: rtp, rtcp: rtcp, mode: saved.Mode, own: newSource(), latchOff: saved.Latch == NAPTOff,
+		receivePT: saved.ReceivePT, sendPT: saved.SendPT}
 	t.setRemote(saved.Remote)
 	if t.latchOff {
 		t.setLatch(NAPTOff)
@@ -232,6 +241,7 @@ func (t *relayTermination) modify(req TerminationRequest) error {
 	if req.Signals != nil {
 		t.setSignals(req.Signals, playback)
 	}
+	t.setPayloadTypes(req.LocalMedia, req.RemoteMedia)
 	t.setRemote(req.Remote)
 	t.setLatch(req.Latch)
 	switch req.Latch {
@@ -252,6 +262,18 @@ func (t *relayTermination) setSignals(s *Signals, playback *mixer.Playback) {
 	if playback != nil {
 		t.signals = s
 		t.own.talkspurt = true
+	}
+}
+
+// setPayloadTypes takes the payload types of PCMU from the media of the
+// Local and the Remote descriptor. Media without PCMU keeps what the
+// termination has. ctx.mu is held.
+func (t *relayTermination) setPayloadTypes(local, remote Media) {
+	if pt, ok := local.pcmu(); ok {
+		t.receivePT = pt
+	}
+	if pt, ok := remote.pcmu(); ok {
+		t.sendPT = pt
 	}
 }
 
@@ -385,7 +407,7 @@ const tick = mixer.Ptime * time.Millisecond
 // ctx.mu is held.
 func (t *relayTermination) hear(packet []byte) {
 	p, err := rtp.Unmarshal(packet)
-	if err != nil || p.PayloadType != sdp.PCMU || len(p.Payload) != mixer.FrameSize {
+	if err != nil || p.PayloadType != t.receivePT || len(p.Payload) != mixer.FrameSize {
 		return
 	}
 	if len(t.heard) == heardFrames {
@@ -484,7 +506,7 @@ func (rc *relayContext) step() bool {
 			continue
 		}
 		if t.mode.sends() {
-			packets = append(packets, outgoing{t.rtp, t.own.packet(payload, now)})
+			packets = append(packets, outgoing{t.rtp, t.own.packet(t.sendPT, payload, now)})
 		}
 	}
 	packets = append(packets, rc.mixTick(now)...)
@@ -588,7 +610,7 @@ func (rc *relayContext) mixTick(now uint64) []outgoing {
 	var packets []outgoing
 	for id, t := range rc.terms {
 		if t.playback == nil && t.mode.sends() {
-			packets = append(packets, outgoing{t.rtp, t.own.packet(mixed[string(id)], now)})
+			packets = append(packets, outgoing{t.rtp, t.own.packet(t.sendPT, mixed[string(id)], now)})
 		}
 	}
 	return packets
@@ -620,14 +642,15 @@ func (rc *relayContext) view() Context {
 // termination IDs. Of each termination it holds what a relay created
 // again under the same name needs to carry the media on: its ports, its
 // mode, and the address it sends to now, which is the one it latched
-// onto once it has, and whether it latches. What a termination plays is
+// onto once it has, whether it latches, and the payload types of PCMU
+// in what it receives and sends. What a termination plays is
 // not kept (see restore).
 // rc.mu is held.
 func (rc *relayContext) saved() SavedContext {
 	c := SavedContext{ID: rc.id, Terminations: make([]SavedTermination, 0, len(rc.terms))}
 	for id, t := range rc.terms {
 		_, remote, _, _, _ := t.rtp.view()
-		saved := SavedTermination{ID: id, LocalRTP: t.rtp.local.Port(), Remote: remote, Mode: t.mode}
+		saved := SavedTermination{ID: id, LocalRTP: t.rtp.local.Port(), Remote: remote, Mode: t.mode, ReceivePT: t.receivePT, SendPT: t.sendPT}
 		if t.latchOff {
 			saved.Latch = NAPTOff
 		}

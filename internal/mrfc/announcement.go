@@ -44,7 +44,8 @@ func (m *MRFC) announce(c *sip.IncomingCall, u sip.URI, a netann.Announcement, l
 	if hasOffer {
 		direction = announcementDirection(o.direction)
 	}
-	p, found, cx, refusal := m.reserve(c.Request.Get("Call-ID"), name, agw.TerminationRequest{Mode: agw.Mode(direction), Remote: o.remote}, log)
+	req := o.request(direction)
+	p, found, cx, refusal := m.reserve(c.Request.Get("Call-ID"), name, req, log)
 	if refusal != nil {
 		m.refuse(c, u, refusal, log)
 		return
@@ -53,7 +54,7 @@ func (m *MRFC) announce(c *sip.IncomingCall, u sip.URI, a netann.Announcement, l
 	for _, only := range cx.Terminations {
 		t = *only
 	}
-	l := newLeg(p, cx.ID, t, log)
+	l := newLeg(p, cx.ID, t, req.LocalMedia.Codecs[0], log)
 	defer l.release()
 	c.Handle(m.handle(l, announcementDirection))
 
