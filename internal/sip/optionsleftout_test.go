@@ -138,3 +138,13 @@ func TestWithoutOptions(t *testing.T) {
 		t.Error("withoutOptions copied a message that lists none of the tags")
 	}
 }
+
+// TestWithoutOptionsIgnoresCase: option tags are tokens, which compare
+// without regard to case (RFC 3261 7.3.1).
+func TestWithoutOptionsIgnoresCase(t *testing.T) {
+	m := &Message{Method: INVITE}
+	m.Add("Supported", "100REL, Timer")
+	if got := withoutOptions(m, []string{Option100rel}).Get("Supported"); got != "Timer" {
+		t.Errorf("Supported is %q without 100rel, want %q", got, "Timer")
+	}
+}
