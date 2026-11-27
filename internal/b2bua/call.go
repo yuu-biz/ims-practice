@@ -612,10 +612,12 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 // reInvite sends m, a re-INVITE that crosses the B2BUA, on in to, and
 // returns its final response. The other side may answer an offer of m in
 // a reliable provisional response, which the UA of to acknowledges with
-// a PRACK, and then send a 2xx without SDP (RFC 3261 13.2.1, RFC 3262 5).
-// The side that sent m gets no provisional response of the other side's,
-// so the answer would be lost on the way: the 2xx that goes back carries
-// the answer of that provisional response instead.
+// a PRACK. The UA of to takes that answer, and no SDP that comes after
+// it, such as one of the 2xx (RFC 3261 13.2.1, RFC 3262 5). The side
+// that sent m gets no provisional response of the other side's, so the
+// answer would be lost on the way: the 2xx that goes back carries the
+// answer of that provisional response instead of its own SDP, and both
+// sides have the same answer.
 func reInvite(to leg, m Message) (*sip.Message, error) {
 	var answered *sip.Message
 	re := sip.ReInvitation{Body: m.Body, Headers: m.Headers}
@@ -627,7 +629,7 @@ func reInvite(to leg, m Message) (*sip.Message, error) {
 		}
 	}
 	resp, err := to.ReInviteWith(re)
-	if err == nil && resp.StatusCode < 300 && answered != nil && !sip.HasSessionDescription(resp) {
+	if err == nil && resp.StatusCode < 300 && answered != nil {
 		resp = resp.Clone()
 		resp.Set("Content-Type", answered.Get("Content-Type"))
 		resp.Body = answered.Body

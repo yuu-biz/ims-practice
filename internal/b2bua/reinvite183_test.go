@@ -10,8 +10,9 @@ import (
 // writes, so that it answers a re-INVITE in a reliable 183 as the UA of
 // package sip cannot. It answers the INVITE with 200 and the answer, and
 // a re-INVITE with a reliable 183 that carries the answer, a 200 to the
-// PRACK of that 183, and then a 200 without SDP (RFC 3261 13.2.1).
-func reliableCallee(t *testing.T) *sip.Stack {
+// PRACK of that 183, and then a 200 with late, which is no body for a
+// callee that sends no SDP after the 183.
+func reliableCallee(t *testing.T, late sip.Body) *sip.Stack {
 	t.Helper()
 	tl, err := sip.Listen("127.0.0.1:0", discard)
 	if err != nil {
@@ -45,6 +46,10 @@ func reliableCallee(t *testing.T) *sip.Stack {
 			reinvite := <-pending
 			ok := sip.NewResponse(reinvite.Request, 200, tag)
 			ok.Add("Contact", contact)
+			if len(late.Content) > 0 {
+				ok.Add("Content-Type", late.Type)
+				ok.Body = late.Content
+			}
 			reinvite.Respond(ok)
 		default:
 			st.Respond(sip.NewResponse(st.Request, 200, ""))
@@ -72,7 +77,20 @@ func tagOfTo(m *sip.Message) string {
 // still gets a 200 with that answer: the B2BUA keeps the answer of the
 // 183 for the 2xx that it gives the caller.
 func TestReINVITEAnsweredInAReliable183ReachesTheCaller(t *testing.T) {
-	callee := reliableCallee(t)
+	reInviteAnsweredInAReliable183(t, sip.Body{})
+}
+
+// TestSDPOfThe2xxAfterAReliable183DoesNotReachTheCaller: the 200 that
+// follows the 183 with the answer carries SDP of its own. The UA of the
+// callee's leg took the answer of the 183 and ignores any later SDP
+// (RFC 3261 13.2.1), so the caller gets the answer of the 183 too, and
+// both legs have the same session.
+func TestSDPOfThe2xxAfterAReliable183DoesNotReachTheCaller(t *testing.T) {
+	reInviteAnsweredInAReliable183(t, answer2)
+}
+
+func reInviteAnsweredInAReliable183(t *testing.T, late sip.Body) {
+	callee := reliableCallee(t, late)
 	b2b := newB2BUA(t, &hooks{}, "sip:callee@"+callee.LocalAddr().String())
 	caller := newUA(t, "caller", func(in *sip.IncomingCall) { in.Reject(480) })
 	out, err := caller.Invite(invitation(t, b2b, nil))
