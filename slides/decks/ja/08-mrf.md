@@ -2,6 +2,316 @@
 title: MRF による音声ガイダンス、呼び出し音、会議
 footer: ims-practice 勉強会 8. MRF
 lang: ja
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: dns, label: DNS, role: 名前を引く, at: [1, 0]}
+  - {id: hss, label: HSS, role: 加入者のデータ, at: [2, 0]}
+  - {id: focus, label: MMTel AS, role: 会議のフォーカス, at: [3, 0]}
+  - {id: scscf, label: S-CSCF, role: 登録とサービス, at: [1, 1]}
+  - {id: mmtel, label: MMTel AS, role: 利用者のサービス, at: [2, 1]}
+  - {id: mrfc, label: MRFC, role: MRF の SIP の側, at: [3, 1]}
+  - {id: ue1, label: UE 1, role: 発信者, at: [0, 2]}
+  - {id: pcscf, label: P-CSCF, role: 最初の中継点, at: [1, 2]}
+  - {id: ue2, label: UE 2, role: 着信者, at: [0, 3]}
+  - {id: agw, label: IMS-AGW, role: メディア中継ノード, at: [1, 3]}
+  - {id: mrfp, label: MRFP, role: 音声を作る, at: [3, 3]}
+  - {id: phone1, label: phone1, role: 会議を作る, at: [0, 2]}
+  - {id: phone2, label: phone2, role: 招かれる, at: [0, 3]}
+  - {id: phone3, label: phone3, role: 招かれる, at: [0, 4]}
+events:
+  # 参照点
+  - {id: gm, rel: Gm, from: ue1, to: pcscf, proto: SIP}
+  - {id: mw, rel: Mw, from: pcscf, to: scscf, proto: SIP}
+  - {id: isc, rel: ISC, from: scscf, to: mmtel, proto: SIP}
+  - {id: mr, rel: "Mr'", from: mmtel, to: mrfc, proto: SIP}
+  - {id: mp, rel: Mp, from: mrfc, to: mrfp, proto: HTTP}
+  - {id: media-ue, rel: RTP, from: ue1, to: agw, proto: RTP}
+  - {id: media-mrfp, rel: RTP, from: agw, to: mrfp, proto: RTP}
+  # 通話を断る前の音声ガイダンス
+  - id: an-inv-ue-p
+    msg: INVITE
+    from: ue1
+    to: pcscf
+    proto: SIP
+    note: (C1)
+    fields:
+      - Request-URI: "`tel:+12025550102`"
+  - {id: an-inv-p-s, msg: INVITE, from: pcscf, to: scscf, proto: SIP}
+  - {id: an-inv-s-as, msg: INVITE, from: scscf, to: mmtel, proto: SIP}
+  - id: an-ocb
+    do: 発信規制を当てる
+    at: mmtel
+    fields:
+      - 発信規制: "UE 1 は `baoc` を設定している。通話を断る（TS 24.611 4.5.2.4.1）"
+      - 断る前: "`notice` を流す（TS 24.628 4.2.4）"
+  - id: an-annc
+    msg: INVITE
+    from: mmtel
+    to: mrfc
+    proto: SIP
+    note: (M)
+    fields:
+      - Request-URI: "`sip:annc@mrfc...;play=/provisioned/notice`"
+      - SDP: 付けない
+  - id: an-annc-200
+    msg: 200 OK
+    from: mrfc
+    to: mmtel
+    proto: SIP
+    fields:
+      - SDP: "MRFP（172.28.0.86）の offer。PCMU、`sendonly`"
+  - {id: an-183-as-s, msg: "183", from: mmtel, to: scscf, proto: SIP}
+  - {id: an-183-s-p, msg: "183", from: scscf, to: pcscf, proto: SIP}
+  - id: an-183-p-ue
+    msg: "183"
+    from: pcscf
+    to: ue1
+    proto: SIP
+    note: (C1)
+    fields:
+      - Require: "`100rel`"
+      - P-Early-Media: "`sendonly`。early media を認める（RFC 5009）"
+      - SDP: UE 1 の offer への、MRFP の SDP の answer
+  - {id: an-prack-ue-p, msg: PRACK, from: ue1, to: pcscf, proto: SIP}
+  - {id: an-prack-p-s, msg: PRACK, from: pcscf, to: scscf, proto: SIP}
+  - {id: an-prack-s-as, msg: PRACK, from: scscf, to: mmtel, proto: SIP}
+  - id: an-ack
+    msg: ACK
+    from: mmtel
+    to: mrfc
+    proto: SIP
+    note: (M)
+    fields:
+      - SDP: "answer。UE 1 のメディアで `recvonly`"
+  - id: an-play
+    do: notice を流し始める
+    at: mrfp
+    fields:
+      - きっかけ: MRFC が受けた ACK（TS 24.229 5.8.2.2.1）
+      - 符号化: PCMU
+  - {id: an-rtp-p-agw, msg: RTP, from: mrfp, to: agw, proto: RTP}
+  - id: an-rtp-agw-ue
+    msg: RTP
+    from: agw
+    to: ue1
+    proto: RTP
+    fields:
+      - 中身: "`notice`。UE 1 は自分の呼び出し音の代わりにこれを流す（TS 24.628 4.7.2.1）"
+  - id: an-bye
+    msg: BYE
+    from: mrfc
+    to: mmtel
+    proto: SIP
+    note: (M)
+    fields:
+      - いつ: "ACK から 1.08 秒。`notice` の WAV ファイルの長さ（TS 24.229 5.8.3.2.1）"
+  - {id: an-603-as-s, msg: "603", from: mmtel, to: scscf, proto: SIP}
+  - {id: an-603-s-p, msg: "603", from: scscf, to: pcscf, proto: SIP}
+  - id: an-603-p-ue
+    msg: "603"
+    from: pcscf
+    to: ue1
+    proto: SIP
+    note: (C1)
+    fields:
+      - Reason: '`SIP;cause=603;text="Decline"`'
+  # CAT
+  - id: cat-inv-s-as
+    msg: INVITE
+    from: scscf
+    to: mmtel
+    proto: SIP
+    note: (着信側)
+    fields:
+      - 宛先: "UE 2（`tel:+12025550102`）"
+  - id: cat-udr
+    msg: UDR
+    from: mmtel
+    to: hss
+    proto: Sh
+    fields:
+      - Service-Indication: "`Customized-Alerting-Tone`"
+  - id: cat-uda
+    msg: UDA
+    from: hss
+    to: mmtel
+    proto: Sh
+    fields:
+      - 中身: "加入者 2 の呼び出し音の設定（`cat1`）"
+  - id: cat-annc
+    msg: INVITE
+    from: mmtel
+    to: mrfc
+    proto: SIP
+    note: (M)
+    fields:
+      - Request-URI: "`sip:annc@mrfc...;play=/provisioned/cat1;repeat=forever`"
+  - id: cat-annc-200
+    msg: 200 OK
+    from: mrfc
+    to: mmtel
+    proto: SIP
+    fields:
+      - SDP: MRFP の offer
+  - {id: cat-inv-as-s, msg: INVITE, from: mmtel, to: scscf, proto: SIP}
+  - {id: cat-inv-s-p, msg: INVITE, from: scscf, to: pcscf, proto: SIP}
+  - {id: cat-inv-p-ue, msg: INVITE, from: pcscf, to: ue2, proto: SIP, note: (C3)}
+  - {id: cat-180-ue-p, msg: "180", from: ue2, to: pcscf, proto: SIP}
+  - {id: cat-180-p-s, msg: "180", from: pcscf, to: scscf, proto: SIP}
+  - {id: cat-180-s-as, msg: "180", from: scscf, to: mmtel, proto: SIP}
+  - {id: cat-update-as-s, msg: UPDATE, from: mmtel, to: scscf, proto: SIP}
+  - {id: cat-update-s-p, msg: UPDATE, from: scscf, to: pcscf, proto: SIP}
+  - id: cat-update-p-ue
+    msg: UPDATE
+    from: pcscf
+    to: ue1
+    proto: SIP
+    note: (C1)
+    fields:
+      - P-Early-Media: "`sendonly`"
+      - SDP: "MRFP の SDP。`sendonly` と `a=content:g.3gpp.cat`（RFC 4796）"
+  - {id: cat-ack, msg: ACK, from: mmtel, to: mrfc, proto: SIP, note: (M)}
+  - {id: cat-rtp-p-agw, msg: RTP, from: mrfp, to: agw, proto: RTP}
+  - id: cat-rtp-agw-ue
+    msg: RTP
+    from: agw
+    to: ue1
+    proto: RTP
+    fields:
+      - 中身: "`cat1`。最初の 1 秒は、MRFP が PCMU に符号化した `cat1.wav` と 1 バイトも違わない"
+  - {id: cat-200-ue-p, msg: 200 OK, from: ue2, to: pcscf, proto: SIP}
+  - {id: cat-200-p-s, msg: 200 OK, from: pcscf, to: scscf, proto: SIP}
+  - {id: cat-200-s-as, msg: 200 OK, from: scscf, to: mmtel, proto: SIP}
+  - {id: cat-bye, msg: BYE, from: mmtel, to: mrfc, proto: SIP, note: (M)}
+  - {id: cat-move-as-s, msg: UPDATE, from: mmtel, to: scscf, proto: SIP}
+  - {id: cat-move-s-p, msg: UPDATE, from: scscf, to: pcscf, proto: SIP}
+  - id: cat-move-p-ue
+    msg: UPDATE
+    from: pcscf
+    to: ue1
+    proto: SIP
+    note: (C1)
+    fields:
+      - SDP: UE 2 の SDP。UE 1 のメディアが UE 2 へ移る
+  # 会議の URI は PSI
+  - id: psi-sub-ue-p
+    msg: SUBSCRIBE
+    from: phone1
+    to: pcscf
+    proto: SIP
+    fields:
+      - Request-URI: "`sip:conf-o47ha7ifxyni@conf.ims.mnc001.mcc001.3gppnetwork.org`"
+      - Event: "`conference`"
+  - {id: psi-sub-p-s, msg: SUBSCRIBE, from: pcscf, to: scscf, proto: SIP}
+  - id: psi-naptr
+    msg: NAPTR
+    from: scscf
+    to: dns
+    proto: DNS
+    note: (問い合わせ)
+    fields:
+      - 名前: "`conf.ims.mnc001.mcc001.3gppnetwork.org`"
+  - {id: psi-naptr-ans, msg: NAPTR, from: dns, to: scscf, proto: DNS, note: (答え)}
+  - {id: psi-srv, msg: SRV, from: scscf, to: dns, proto: DNS, note: (問い合わせ)}
+  - id: psi-srv-ans
+    msg: SRV
+    from: dns
+    to: scscf
+    proto: DNS
+    note: (答え)
+    fields:
+      - 答え: "`mmtel.ims.mnc001.mcc001.3gppnetwork.org` の 5060 番"
+  - {id: psi-sub-s-f, msg: SUBSCRIBE, from: scscf, to: focus, proto: SIP}
+  # フォーカスと混ぜ合わせ
+  - id: mix-conf
+    msg: INVITE
+    from: focus
+    to: mrfc
+    proto: SIP
+    note: (参加者ごと)
+    fields:
+      - Request-URI: "`sip:conf=conf-o47ha7ifxyni@mrfc...`"
+      - 最初の INVITE: 混ぜ合わせを作る
+      - そのあとの INVITE: ターミネーションを足す
+  - {id: mix-up-1, msg: RTP, from: phone1, to: agw, proto: RTP}
+  - {id: mix-up-2, msg: RTP, from: phone2, to: agw, proto: RTP}
+  - {id: mix-up-3, msg: RTP, from: phone3, to: agw, proto: RTP}
+  - {id: mix-up-agw, msg: RTP, from: agw, to: mrfp, proto: RTP, note: (3 本)}
+  - id: mix-sum
+    do: 参加者ごとに和を作る
+    at: mrfp
+    fields:
+      - phone1 へ: phone2 と phone3 の音声の和
+      - phone2 へ: phone1 と phone3 の音声の和
+      - phone3 へ: phone1 と phone2 の音声の和
+  - {id: mix-down-agw, msg: RTP, from: mrfp, to: agw, proto: RTP, note: (3 本)}
+  - {id: mix-down-1, msg: RTP, from: agw, to: phone1, proto: RTP}
+  - {id: mix-down-2, msg: RTP, from: agw, to: phone2, proto: RTP}
+  - {id: mix-down-3, msg: RTP, from: agw, to: phone3, proto: RTP}
+  # 会議に戻る
+  - id: rj-inv-ue-p
+    msg: INVITE
+    from: phone2
+    to: pcscf
+    proto: SIP
+    fields:
+      - Request-URI: "`sip:conf-o47ha7ifxyni@conf...`。フォーカスの Contact で知った会議の URI"
+  - {id: rj-inv-p-s, msg: INVITE, from: pcscf, to: scscf, proto: SIP}
+  - id: rj-inv-s-as
+    msg: INVITE
+    from: scscf
+    to: mmtel
+    proto: SIP
+    fields:
+      - P-Served-User: "`phone2;sescase=orig`"
+  - id: rj-inv-as-s
+    msg: INVITE
+    from: mmtel
+    to: scscf
+    proto: SIP
+    note: (B2BUA)
+    fields:
+      - Request-URI: 同じ会議の URI
+  - id: rj-inv-s-f
+    msg: INVITE
+    from: scscf
+    to: focus
+    proto: SIP
+    fields:
+      - 送り先: DNS で見つけたフォーカス
+      - P-Served-User: 無い
+  - id: rj-tell
+    do: フォーカス宛てと見分ける
+    at: focus
+    fields:
+      - 見るもの: P-Served-User の有無。Request-URI はどちらも同じ
+      - 無いとき: フォーカス宛て。フィルタ条件で届いたものではない
+  - id: rj-conf
+    msg: INVITE
+    from: focus
+    to: mrfc
+    proto: SIP
+    fields:
+      - Request-URI: "`sip:conf=conf-o47ha7ifxyni@mrfc...`"
+      - SDP: phone2 の offer
+  - {id: rj-conf-200, msg: 200 OK, from: mrfc, to: focus, proto: SIP}
+  - id: rj-200-f-s
+    msg: 200 OK
+    from: focus
+    to: scscf
+    proto: SIP
+    fields:
+      - Contact: "`<sip:conf-o47ha7ifxyni@conf...>;isfocus`"
+      - SDP: MRFP の answer
+  - {id: rj-200-s-as, msg: 200 OK, from: scscf, to: mmtel, proto: SIP}
+  - {id: rj-200-as-s, msg: 200 OK, from: mmtel, to: scscf, proto: SIP}
+  - {id: rj-200-s-p, msg: 200 OK, from: scscf, to: pcscf, proto: SIP}
+  - {id: rj-200-p-ue, msg: 200 OK, from: pcscf, to: phone2, proto: SIP}
+```
+
 ---
 
 # MRF による音声ガイダンス、呼び出し音、会議
@@ -28,6 +338,32 @@ ims-practice 勉強会 第 8 回（MRFC と MRFP、音声ガイダンス、着�
 ---
 
 ## MRF とは
+
+```ims-scene
+id: roles
+nodes: [scscf, mmtel, mrfc, ue1, pcscf, agw, mrfp]
+lead: 何を流すかを決めるのは AS で、音声を作るのは MRF です。MRF は SIP の側の MRFC と、RTP の側の MRFP に分かれます。
+steps:
+  - id: route
+    title: CSCF は経路を決め、AS は通話を変える
+    show: [gm, mw, isc]
+    text: どちらも音声は作りません。IMS の中で自分からメディアを作るノードが MRF です（TS 23.228 4.7）。
+  - id: mrfc
+    title: MRFC は SIP を話す
+    show: [mr]
+    focus: [mrfc]
+    text: AS が Mr' の INVITE でサービスを頼むと、MRFC はそれに要るメディアの資源を決めます。
+  - id: mrfp
+    title: MRFC は Mp で MRFP を動かす
+    show: [mp]
+    focus: [mrfp]
+    text: MRFP はターミネーションに音声を流し、複数のターミネーションの音声を足し合わせます（TS 23.333 6.2.9）。
+  - id: media
+    title: UE と MRFP の RTP は IMS-AGW を通る
+    show: [media-ue, media-mrfp]
+    focus: [agw, mrfp]
+    text: MRFP は IMS-AGW と同じ中継に、音声ガイダンスと混ぜ合わせを加えたものです。
+```
 
 - CSCF は経路を決め、前の回の AS は通話を変えます。どちらも音声は作りません。IMS の中で自分からメディアを作るノードが MRF です（TS 23.228 4.7）。音声ガイダンス、トーン、会議の混ぜ合わせた音声を作ります。
 - **MRFC** は SIP を話します。AS が INVITE でサービスを頼むと、MRFC はそれに要るメディアの資源を決めます。
@@ -98,6 +434,54 @@ ims-practice 勉強会 第 8 回（MRFC と MRFP、音声ガイダンス、着�
 
 ## 応答より前に届く音声
 
+```ims-scene
+id: early
+nodes: [ue1, pcscf, scscf, mmtel, mrfc, agw, mrfp]
+lead: AS は MRFP の SDP で発信者に答え、ACK を送る時機で再生の始まりを決めます。
+steps:
+  - id: invite
+    title: UE 1 の INVITE が AS に届く
+    show: [an-inv-ue-p, an-inv-p-s, an-inv-s-as]
+    active: an-inv-s-as
+    detail: [an-inv-ue-p]
+    text: UE 1 の発信は、ほかの通話と同じ道で UE 1 の AS に届きます。
+  - id: ask
+    title: AS が SDP なしで MRFC に頼む
+    show: [an-annc]
+    text: 音声ガイダンスを頼む INVITE には SDP が付きません。
+  - id: offer
+    title: MRFC が MRFP の offer を返す
+    show: [an-annc-200]
+    checkpoint: true
+    text: MRFC は MRFP のターミネーションの offer を 200 に入れて返します。
+  - id: early
+    title: AS が発信者の offer に MRFP の SDP で答える
+    show: [an-183-as-s, an-183-s-p, an-183-p-ue]
+    active: an-183-p-ue
+    checkpoint: true
+    text: |
+      通話に応答する前に音声を届けるため、AS は自分から答え、early media を認めます。
+      TS 24.628 Annex G のゲートウェイのモデルです。
+  - id: ack
+    title: ACK を受けて MRFP が流し始める
+    show: [an-ack, an-play]
+    active: an-play
+    detail: [an-ack, an-play]
+    text: AS は answer を ACK に入れます。MRFP は ACK のあとで流し始めます。
+  - id: rtp
+    title: 音声は IMS-AGW を通って UE 1 に届く
+    show: [an-rtp-p-agw, an-rtp-agw-ue]
+    active: an-rtp-agw-ue
+    checkpoint: true
+    text: UE 1 は自分の呼び出し音の代わりに、届いた音声を流します。
+  - id: bye
+    title: 流し終えたら MRFC が BYE を送る
+    show: [an-bye]
+    text: |
+      終わりのある再生が済むと、MRFC が BYE でダイアログを終えます。
+      こうして AS は、発信者が受け取れるようになってから再生を始められます。
+```
+
 - 音声ガイダンスを頼む INVITE には SDP が付きません。そのため MRFC は MRFP のターミネーションの offer を 200 に入れて返し、AS は answer を ACK に入れます。
 - MRFP は ACK を受けてから流し始め（TS 24.229 5.8.2.2.1）、終わりのある再生が済むと MRFC が BYE でダイアログを終えます（5.8.3.2.1）。こうして AS は、発信者が受け取れるようになってから再生を始められます。
 - 通話に応答する前に発信者へ音声を届けるため、AS は発信者の offer に MRFP の SDP で自分から答え、`P-Early-Media: sendonly` で early media を認めます（RFC 5009）。TS 24.628 Annex G のゲートウェイのモデルです。
@@ -146,6 +530,53 @@ docker compose --profile phones up -d phone1 phone2 phone3
 
 ## 通話を断る前の音声ガイダンス
 
+```ims-scene
+id: announce
+view: ladder
+nodes: [ue1, pcscf, scscf, mmtel, mrfc]
+lead: AS は通話を断る前に音声ガイダンスを流し、PRACK を待ってから再生を始めさせます。
+steps:
+  - id: invite
+    title: UE 1 が UE 2 にかける
+    show: [an-inv-ue-p, an-inv-p-s, an-inv-s-as]
+    detail: []
+    text: UE 1 の INVITE が UE 1 の AS に届きます。
+  - id: decide
+    title: AS が発信規制を当てる
+    show: [an-ocb]
+    text: UE 1 は自分の発信を規制しているので、AS は通話を断ります。その前に `notice` を流します。
+  - id: annc
+    title: AS が MRFC に音声ガイダンスを頼む
+    show: [an-annc, an-annc-200]
+    detail: []
+    text: SDP の無い INVITE に、MRFC が MRFP の offer で応答します。
+  - id: early
+    title: 183 で MRFP の SDP が UE 1 に届く
+    show: [an-183-as-s, an-183-s-p, an-183-p-ue]
+    detail: []
+    checkpoint: true
+    text: "183 には `P-Early-Media: sendonly` が付き、高信頼の応答なので PRACK を求めます。"
+  - id: prack
+    title: UE 1 の PRACK が AS に届く
+    show: [an-prack-ue-p, an-prack-p-s, an-prack-s-as]
+    detail: []
+    text: UE 1 が SDP を受け取ったことが、これで AS に分かります。
+  - id: ack
+    title: AS が ACK を送り、再生が始まる
+    show: [an-ack]
+    text: AS は PRACK を待ってから ACK を送ります。UE 1 が SDP を受け取る前に、音声ガイダンスのフレームが失われないようにするためです。
+  - id: bye
+    title: 流し終えた MRFC が BYE を送る
+    show: [an-bye]
+    checkpoint: true
+    text: ACK から BYE までを測ります。1.08 秒で、WAV ファイルの長さと同じです。
+  - id: reject
+    title: AS が 603 で通話を断る
+    show: [an-603-as-s, an-603-s-p, an-603-p-ue]
+    active: an-603-p-ue
+    text: 音声ガイダンスを流し終えてから、AS は UE 1 の通話を断ります。
+```
+
 ```ladder
 UE 1, P-CSCF, MMTel AS, MRFC
 UE 1 -> P-CSCF -> MMTel AS: INVITE // C1
@@ -167,6 +598,70 @@ UE 1 <-- P-CSCF <-- MMTel AS: 603、Reason cause=603
 ---
 
 ## CAT。着信側の利用者が選ぶ呼び出し音
+
+```ims-scene
+id: cat
+nodes: [ue1, pcscf, scscf, mmtel, hss, mrfc, ue2, agw, mrfp]
+lead: 呼び出し音を決めるのは着信側の AS です。着信のたびに HSS から設定を読み、UE 2 を呼び出す前に MRFC に頼みます。
+steps:
+  - id: arrive
+    title: 着信側の AS に INVITE が届く
+    only: [cat-inv-s-as]
+    text: UE 1 からの INVITE が、UE 2 のサービスのために AS に届きます。
+  - id: read
+    title: AS が Sh で呼び出し音の設定を読む
+    show: [cat-udr, cat-uda]
+    active: cat-udr
+    detail: [cat-udr, cat-uda]
+    text: |
+      利用者の呼び出し音は、事業者が HSS に設定します（TS 24.182 4.5.2）。ここではラボが設定します。
+      AS は着信のたびに読みます。
+  - id: ask
+    title: UE 2 を呼び出す前に MRFC に頼む
+    show: [cat-annc, cat-annc-200]
+    active: cat-annc
+    detail: [cat-annc]
+    checkpoint: true
+    text: AS は UE 2 への INVITE より前に MRFC に頼みます（4.5.5.3.7）。`repeat=forever` なので、MRF は AS がダイアログを終えるまで流し続けます。
+  - id: call
+    title: AS が UE 2 を呼び出す
+    only: [cat-inv-as-s, cat-inv-s-p, cat-inv-p-ue]
+    active: cat-inv-p-ue
+    detail: []
+    text: INVITE は S-CSCF と P-CSCF を通って UE 2 に届きます。
+  - id: alert
+    title: UE 2 が呼び出しを始める
+    only: [cat-180-ue-p, cat-180-p-s, cat-180-s-as]
+    active: cat-180-s-as
+    detail: []
+    text: UE 2 の 180 が AS に届きます。
+  - id: tone
+    title: UPDATE で呼び出し音の SDP が UE 1 に届く
+    show: [cat-update-as-s, cat-update-s-p, cat-update-p-ue]
+    active: cat-update-p-ue
+    checkpoint: true
+    text: |
+      UE 1 はプリコンディションを使うので、呼び出し音は UE 2 が呼び出しを始めたあとの UPDATE で届きます（4.5.5.3.7 b 1）。
+      プリコンディションを使わない発信者には、18x そのものに入ります。
+  - id: play
+    title: ACK を受けて MRFP が呼び出し音を流す
+    only: [cat-ack, cat-rtp-p-agw, cat-rtp-agw-ue]
+    active: cat-rtp-agw-ue
+    checkpoint: true
+    text: MRFP の音声が、応答より前に IMS-AGW を通って UE 1 に届きます。
+  - id: answer
+    title: UE 2 が応答し、AS が呼び出し音を止める
+    only: [cat-200-ue-p, cat-200-p-s, cat-200-s-as, cat-bye]
+    active: cat-bye
+    detail: []
+    checkpoint: true
+    text: UE 2 の 200 が届くと、AS は MRFC への BYE で呼び出し音を止めます。
+  - id: move
+    title: UE 1 のメディアを UE 2 へ移す
+    only: [cat-move-as-s, cat-move-s-p, cat-move-p-ue]
+    active: cat-move-p-ue
+    text: AS は UE 1 に 200 を送る前に、UE 2 の SDP を入れた UPDATE を送ります。
+```
 
 | 見るもの | 見どころ |
 | --- | --- |
@@ -243,6 +738,33 @@ phone1 は応答済みの通話を 2 つ持っていて、**Merge** を押しま
 
 ## 会議の URI は PSI
 
+```ims-scene
+id: psi
+nodes: [phone1, pcscf, scscf, dns, focus]
+lead: 会議の URI はノードの名前を含みません。S-CSCF はほかのホストと同じく DNS でフォーカスを見つけます。
+steps:
+  - id: subscribe
+    title: phone1 が会議の URI を SUBSCRIBE する
+    show: [psi-sub-ue-p, psi-sub-p-s]
+    active: psi-sub-ue-p
+    text: 会議の URI はホーム網の PSI で、ドメインは事業者が決めます。ポート番号は付けません。
+  - id: naptr
+    title: S-CSCF がサブドメインの NAPTR を引く
+    show: [psi-naptr, psi-naptr-ans]
+    active: psi-naptr
+    text: サブドメインの `conf` は、AS が受け持つ会議の全体を表します。
+  - id: srv
+    title: SRV の答えが会議を受け持つ AS を指す
+    show: [psi-srv, psi-srv-ans]
+    active: psi-srv-ans
+    checkpoint: true
+    text: S-CSCF は RFC 3263 でフォーカスを見つけます。TS 23.228 5.4.12.3 のサブドメインを使う方法です。
+  - id: deliver
+    title: SUBSCRIBE がフォーカスに届く
+    show: [psi-sub-s-f]
+    text: S-CSCF は HSS に問い合わせません。ほかの網からの要求も、I-CSCF が HSS に問い合わせずに DNS で送ります（TS 24.229 5.3.2.1 step 3）。
+```
+
 - 会議の URI は、ホーム網の公開サービス識別子（PSI）です（TS 23.228 4.3.6）。形は `sip:conf-<id>@conf.ims.mnc001.mcc001.3gppnetwork.org` で、ドメインは事業者が決めます。ノードの名前は含まず、ポート番号も付けません。網の外に出る可能性がある PSI には、ポート番号を付けないほうがよいためです（TS 23.003 13.5）。
 - このサブドメインの NAPTR と SRV のレコードが、会議を受け持つ AS を指します。S-CSCF はほかのホストと同じく RFC 3263 でフォーカスを見つけます。TS 23.228 5.4.12.3 のサブドメインを使う方法です。
 - ほかの網からの要求は I-CSCF から入ります。I-CSCF はこのサブドメインを知っていて、HSS に問い合わせずに、やはり DNS で送ります（TS 24.229 5.3.2.1 step 3）。
@@ -255,6 +777,34 @@ phone1 は応答済みの通話を 2 つ持っていて、**Merge** を押しま
 ---
 
 ## フォーカスと混ぜ合わせ
+
+```ims-scene
+id: mix
+nodes: [phone1, phone2, phone3, agw, mrfp, mrfc, focus]
+lead: MRFP はそれぞれの参加者に、ほかの参加者の音声の和を送ります。
+steps:
+  - id: ask
+    title: フォーカスが参加者ごとに MRFC に頼む
+    show: [mix-conf]
+    text: 参加者のメディアのために、フォーカスは参加者ごとに MRFC とのダイアログを持ちます。
+  - id: send
+    title: 参加者がそれぞれ自分の音声を送る
+    show: [mix-up-1, mix-up-2, mix-up-3, mix-up-agw]
+    active: mix-up-agw
+    detail: []
+    text: RTP は IMS-AGW を通って MRFP に届きます。
+  - id: sum
+    title: MRFP が参加者ごとに和を作る
+    show: [mix-sum]
+    checkpoint: true
+    text: 自分の音声は自分に返しません（TS 23.333 6.2.9）。
+  - id: back
+    title: 和がそれぞれの参加者に届く
+    show: [mix-down-agw, mix-down-1, mix-down-2, mix-down-3]
+    active: mix-down-agw
+    detail: []
+    text: キャプチャでは、MRFP から IMS-AGW への 3 つのストリームと、その逆の 3 つが見えます。
+```
 
 - AS は会議のフォーカスであり、通知サービスでもあります（TS 24.147 4）。参加者それぞれとダイアログを持ち、参加者のメディアのための MRFC とのダイアログも持ちます。
 - MRFC は最初の `conf=` の INVITE で混ぜ合わせを作り、そのあとの INVITE ごとにターミネーションを足します。MRFP は、それぞれの参加者にほかの参加者の音声の和を送ります（TS 23.333 6.2.9）。
@@ -286,6 +836,43 @@ phone1 は応答済みの通話を 2 つ持っていて、**Merge** を押しま
 ---
 
 ## 会議に戻る
+
+```ims-scene
+id: rejoin
+view: ladder
+nodes: [phone2, pcscf, scscf, mmtel, focus, mrfc]
+lead: 同じ Request-URI の INVITE が AS に 2 回届きます。AS は P-Served-User の有無で、どちらがフォーカス宛てかを見分けます。
+steps:
+  - id: out
+    title: phone2 が会議の URI に発信する
+    show: [rj-inv-ue-p, rj-inv-p-s, rj-inv-s-as]
+    active: rj-inv-s-as
+    detail: [rj-inv-ue-p, rj-inv-s-as]
+    text: S-CSCF は phone2 の発信側のサービスのために、この INVITE を AS に渡します。
+  - id: back
+    title: AS が同じ URI に INVITE を返し、S-CSCF が DNS でフォーカスを見つける
+    show: [rj-inv-as-s, rj-inv-s-f]
+    active: rj-inv-s-f
+    detail: [rj-inv-s-f]
+    text: B2BUA である AS は、同じ URI に宛てた新しい INVITE を S-CSCF に返します。
+  - id: tell
+    title: フォーカスが自分宛ての INVITE だと見分ける
+    show: [rj-tell]
+    checkpoint: true
+    text: フォーカスに INVITE を届けるのはフィルタ条件ではないので、P-Served-User がありません。
+  - id: mix
+    title: フォーカスが MRFC にターミネーションを頼む
+    show: [rj-conf, rj-conf-200]
+    active: rj-conf
+    detail: [rj-conf]
+    text: 作った人と同じやり方で迎え入れます（TS 24.147 5.3.2.4.1）。
+  - id: answer
+    title: isfocus の Contact を付けた 200 が phone2 に届く
+    show: [rj-200-f-s, rj-200-s-as, rj-200-as-s, rj-200-s-p, rj-200-p-ue]
+    active: rj-200-p-ue
+    detail: [rj-200-f-s]
+    text: NOTIFY はその参加者を再び `connected` として並べ、joining-method は `dialed-in` になります。
+```
 
 - 会議を抜けた参加者は、会議が続いているあいだなら戻れます。フォーカスの Contact で知った会議の URI に INVITE を送ります（TS 24.147 5.3.1.4.1）。
 - この INVITE は、その利用者のほかの発信と同じ道を通ります。S-CSCF が発信側のサービスのために AS に渡し、AS が同じ URI に宛てた新しい INVITE を返すと、S-CSCF は DNS でフォーカスを見つけます。
