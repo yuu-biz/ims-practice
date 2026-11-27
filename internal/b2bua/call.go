@@ -193,31 +193,39 @@ func (c *Call) RelayProvisional(out *sip.OutgoingCall, resp *sip.Message) {
 		c.release()
 		return
 	}
+	// RFC 3262 3: the copy goes reliably when resp came reliably and the
+	// caller's INVITE offered 100rel, and only then does the caller send
+	// a PRACK for it. A resp that came without 100rel is copied
+	// unreliably: a session description in it is no answer, and a
+	// reliable copy would have the caller take it for the answer and
+	// leave the answer in the 2xx unread (RFC 3261 13.2.1, RFC 3262 5).
+	// A caller that requires 100rel gets every copy reliably (RFC 3262
+	// 3).
+	toCallerReliably := reliable && c.in.Request.Supports(sip.Option100rel) || c.in.Request.Requires(sip.Option100rel)
 	c.mu.Lock()
 	// RFC 3262 5: after an INVITE without an offer, the first reliable
 	// response with a body has the callee's offer, and the PRACK the
 	// caller's answer.
 	offer := reliable && len(m.Body.Content) > 0 && len(c.in.Request.Body) == 0 && !c.sessionToCaller
-	if reliable && len(m.Body.Content) > 0 {
+	if toCallerReliably && len(m.Body.Content) > 0 {
 		c.sessionToCaller = true
 	}
-	// RFC 3262 3: the copy goes reliably when the caller's INVITE
-	// offered 100rel, whichever way resp came, and only then does the
-	// caller send a PRACK for it.
 	var sent *copied
-	if c.in.Request.Supports(sip.Option100rel) {
+	if toCallerReliably {
 		sent = &copied{}
 		if reliable {
 			sent.of = resp
 		}
 	}
 	c.mu.Unlock()
+	send := c.in.ProgressUnreliably
 	if sent != nil {
 		c.copies.sent(sent)
+		send = c.in.Progress
 	}
 	c.setContact(resp)
 	c.sentToCaller(m.Body)
-	if err := c.in.Progress(resp.StatusCode, m.Body, m.Headers...); err != nil {
+	if err := send(resp.StatusCode, m.Body, m.Headers...); err != nil {
 		c.log.Info("provisional response not relayed", "status", resp.StatusCode, "error", err.Error())
 		// No PRACK comes for a copy that did not go.
 		c.copies.dropped(sent)
