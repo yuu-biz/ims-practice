@@ -92,10 +92,9 @@ func (s *setup) toUE() bool { return s.leg == terminating }
 //
 // SIMPLIFIED: RFC 3264 6. Only the first audio stream with a port goes
 // through the relay, even when the answer accepts another one instead.
-// The other streams get no termination, but the session-level address
-// now names the relay, so one without an address of its own points at
-// the relay with its original port, where nothing listens. The UE
-// simulator offers a single stream.
+// The other streams get no termination and keep the address they were
+// offered with, which the other side sees. The UE simulator offers a
+// single stream.
 func (s *setup) offer(out *sip.Message) error {
 	if len(out.Body) == 0 {
 		return nil
