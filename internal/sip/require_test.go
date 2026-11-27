@@ -38,16 +38,24 @@ func acceptAll(arrived chan<- *InDialogRequest) func(*InDialogRequest) {
 // the UA does not understand gets 420 (Bad Extension) with an
 // Unsupported that lists just those of its option tags, and as a
 // rejected request it changes nothing in the dialog: no remote sequence
-// number, no remote target, nothing for the user of the call.
+// number, no remote target, nothing for the user of the call. A BYE
+// refused this way leaves the call up.
 func TestRequestWithinADialogRequiringAnUnknownExtension(t *testing.T) {
+	event := HeaderField{Name: "Event", Value: "conference"}
 	for _, tc := range []struct {
-		method Method
-		body   Body
+		method  Method
+		body    Body
+		headers []HeaderField
 	}{
-		{INVITE, holdOffer},
-		{UPDATE, offer2},
-		{"INFO", Body{}},
-		{MESSAGE, Body{Type: "text/plain", Content: []byte("hello")}},
+		{INVITE, holdOffer, nil},
+		{UPDATE, offer2, nil},
+		{"INFO", Body{}, nil},
+		{MESSAGE, Body{Type: "text/plain", Content: []byte("hello")}, nil},
+		{BYE, Body{}, nil},
+		{OPTIONS, Body{}, nil},
+		{NOTIFY, Body{}, []HeaderField{event, {Name: "Subscription-State", Value: "active;expires=60"}}},
+		{REFER, Body{}, []HeaderField{{Name: "Refer-To", Value: "<sip:other@example.org>"}}},
+		{SUBSCRIBE, Body{}, []HeaderField{event, {Name: "Expires", Value: "600"}}},
 	} {
 		t.Run(string(tc.method), func(t *testing.T) {
 			arrived := make(chan *InDialogRequest, 2)
@@ -57,9 +65,9 @@ func TestRequestWithinADialogRequiringAnUnknownExtension(t *testing.T) {
 			moved := "sip:moved@" + addrOf(p.peer).String()
 
 			// This UA lists timer but neither of the other two.
-			req := p.request(tc.method, tc.body,
+			req := p.request(tc.method, tc.body, append(slices.Clone(tc.headers),
 				HeaderField{Name: "Contact", Value: "<" + moved + ">"},
-				HeaderField{Name: "Require", Value: "foo, " + OptionPrecondition + ", " + OptionTimer})
+				HeaderField{Name: "Require", Value: "foo, " + OptionPrecondition + ", " + OptionTimer})...)
 			resp := readSkippingTrying(t, p.peer)
 			if tc.method == INVITE {
 				send(t, p.peer, newMatchingRequest(req, ACK, resp.Get("To")), callerUA.Stack())
@@ -81,6 +89,11 @@ func TestRequestWithinADialogRequiringAnUnknownExtension(t *testing.T) {
 			}
 			if ok := readSkippingTrying(t, p.peer); ok.StatusCode != 200 {
 				t.Errorf("the INFO got %s, want 200", startLine(ok))
+			}
+			select {
+			case <-out.Done():
+				t.Errorf("the call ended with %v", out.Err())
+			default:
 			}
 		})
 	}
@@ -143,6 +156,73 @@ func TestRequestWithinADialogOfAMethodNotTakenAndAnUnknownExtension(t *testing.T
 			}
 		})
 	}
+}
+
+// A PRACK at the UAS goes through the same check: one that requires an
+// unknown extension gets 420 and acknowledges nothing, so the reliable
+// 183 still waits for the PRACK that the next one is.
+func TestPRACKRequiringAnUnknownExtension(t *testing.T) {
+	progress := make(chan error, 1)
+	calleeUA := newUA(t, testTimers, callee, func(c *IncomingCall) {
+		progress <- c.Progress(183, answer)
+	})
+	peer := rawSocket(t)
+	invite := rawINVITE(peer)
+	invite.Add("Supported", Option100rel)
+	send(t, peer, invite, calleeUA.Stack())
+	prov := readSkippingTrying(t, peer)
+	if prov.StatusCode != 183 || prov.Get("RSeq") == "" {
+		t.Fatalf("got %s with RSeq %q, want a reliable 183", startLine(prov), prov.Get("RSeq"))
+	}
+
+	refused := rawPRACK(t, peer, invite, prov, 2)
+	refused.Add("Require", "foo")
+	send(t, peer, refused, calleeUA.Stack())
+	if resp := readSkipping183(t, peer); resp.StatusCode != 420 || resp.Get("CSeq") != "2 PRACK" || resp.Get("Unsupported") != "foo" {
+		t.Fatalf("PRACK with Require foo got %s with CSeq %q and Unsupported %q, want 420 with foo",
+			startLine(resp), resp.Get("CSeq"), resp.Get("Unsupported"))
+	}
+	select {
+	case err := <-progress:
+		t.Fatalf("Progress returned %v after the refused PRACK, want it to wait", err)
+	default:
+	}
+
+	// RFC 3261 12.2.2: the refused PRACK left the remote sequence number
+	// as it was, so its CSeq is in order once more.
+	send(t, peer, rawPRACK(t, peer, invite, prov, 2), calleeUA.Stack())
+	if resp := readSkipping183(t, peer); resp.StatusCode != 200 || resp.Get("CSeq") != "2 PRACK" {
+		t.Fatalf("PRACK got %s with CSeq %q, want 200", startLine(resp), resp.Get("CSeq"))
+	}
+	select {
+	case err := <-progress:
+		if err != nil {
+			t.Errorf("Progress: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Progress did not return after the PRACK")
+	}
+}
+
+// Once a BYE has ended the session, a request of the session finds no
+// usage in the dialog, which the subscription keeps: it gets the 481, or
+// a REFER the 603, of the ended session, whatever its Require lists.
+func TestRequestOfAnEndedSessionRequiringAnUnknownExtension(t *testing.T) {
+	s := subscribeWithinTheCall(t)
+	if err := s.out.Bye(); err != nil {
+		t.Fatal(err)
+	}
+	waitDone(t, s.in.Done(), "callee")
+	uac, _ := s.out.Dialog()
+	for method, want := range map[Method]int{"INFO": 481, REFER: 603} {
+		req := uac.NewRequest(method)
+		req.Add("Require", "foo")
+		if resp := sendInDialog(t, s.established, req); resp.StatusCode != want {
+			t.Errorf("%s after the BYE got %s, want %d", method, startLine(resp), want)
+		}
+	}
+	s.calleeEnds()
+	s.callerEnds()
 }
 
 // RFC 3261 8.2.2.3: Require is ignored in a CANCEL. The CANCEL of a
