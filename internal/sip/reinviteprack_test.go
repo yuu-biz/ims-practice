@@ -578,3 +578,56 @@ func TestOfferInAReliableResponseThatTheUserDoesNotTakeIsLogged(t *testing.T) {
 		t.Fatalf("ReInvite returned %v, %v; want the 500", r.resp, r.err)
 	}
 }
+
+// RFC 3262 3 and 4: a UAS sends no new reliable provisional response
+// after the final response, and the UAC keeps the RSeq numbers of a
+// re-INVITE only until then. A reliable 183 that comes after the 200
+// gets no PRACK.
+func TestReliableResponseAfterTheFinalResponseOfAReINVITEGetsNoPRACK(t *testing.T) {
+	callerUA := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	done := reInvite(out, holdOffer)
+	reinvite := readDatagram(t, p.peer)
+	acceptReInvite(t, p, reinvite, holdAnswer)
+	if r := finalOf(t, done); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("ReInvite returned %v, %v; want the 200", r.resp, r.err)
+	}
+	send(t, p.peer, reliable(reinvite, 183, 1, p.target), callerUA.Stack())
+	expectSilence(t, p.peer, 3*slowTimers.T1, "no PRACK for a reliable response after the 200")
+}
+
+// RFC 6141 4.3: the remote target that a reliable provisional response
+// refreshed stays refreshed when the re-INVITE then fails, unlike the
+// rest of what the re-INVITE asked to change. The next request within
+// the dialog goes to the new target.
+func TestTargetOfAReliableResponseStaysAfterTheReINVITEFails(t *testing.T) {
+	callerUA := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	moved := "sip:moved@" + addrOf(p.peer).String()
+	done := reInvite(out, holdOffer)
+	reinvite := readDatagram(t, p.peer)
+	send(t, p.peer, reliable(reinvite, 180, 1, moved), callerUA.Stack())
+	p.respond(readPRACK(t, p, "1 2 INVITE", "3 PRACK"), 200, Body{})
+	p.respond(reinvite, 500, Body{})
+	if r := finalOf(t, done); r.resp == nil || r.resp.StatusCode != 500 {
+		t.Fatalf("ReInvite returned %v, %v; want the 500", r.resp, r.err)
+	}
+	updated := make(chan error, 1)
+	go func() {
+		_, err := out.Update(Body{})
+		updated <- err
+	}()
+	for {
+		// The ACK of the 500 may come first (RFC 3261 17.1.1.3).
+		if m := readDatagram(t, p.peer); m.Method == UPDATE {
+			if m.RequestURI != moved {
+				t.Errorf("UPDATE after the failed re-INVITE goes to %s, want %s", m.RequestURI, moved)
+			}
+			p.respond(m, 200, Body{}, HeaderField{Name: "Contact", Value: "<" + moved + ">"})
+			break
+		}
+	}
+	if err := <-updated; err != nil {
+		t.Errorf("Update after the failed re-INVITE: %v", err)
+	}
+}
