@@ -162,6 +162,7 @@ func load(dir string) ([]laidOut, []error) {
 		problems = append(problems, overflows...)
 		problems = append(problems, deck.CheckLinks(d)...)
 		problems = append(problems, deck.CheckExcerpts(d)...)
+		problems = append(problems, deck.CheckHeadings(d)...)
 		problems = append(problems, repository.Check(d)...)
 		out = append(out, laidOut{deck: d, pages: pages})
 	}
