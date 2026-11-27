@@ -277,9 +277,15 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 		sip.AddRecordRoute(out, own)
 	}
 	// Only the dialogs of INVITEs are kept, so a request of another
-	// dialog, such as a NOTIFY, finds none.
+	// dialog, such as a NOTIFY, finds none. A request of another dialog
+	// of a forked INVITE finds the Dialog of the dialog that its 2xx
+	// confirmed, and changes nothing of it (ofAnotherDialog).
 	key := subsequentKey(st.Request, toUE)
-	d, known, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) { d.noteRequest(st.Request, toUE) })
+	d, known, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
+		if !d.ofAnotherDialog(st.Request, toUE) {
+			d.noteRequest(st.Request, toUE)
+		}
+	})
 	if err != nil {
 		// Without the Dialog the P-CSCF could not release the session
 		// with the right CSeq, nor end what it holds after a BYE.
@@ -308,8 +314,22 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 			p.chargeRequest(out, d.ICID)
 		}
 	}
+	other := known && d.ofAnotherDialog(st.Request, toUE)
+	if other && carriesSDP(out, d.Relay) {
+		// The relay context and the policy session of the Dialog serve
+		// the dialog that the 2xx confirmed. This SDP cannot go through
+		// them without moving the media of that call, and as it came it
+		// would take the media past the relay. So the P-CSCF answers the
+		// request itself, as for an SDP that the relay does not take
+		// (notRelayed), with 500 (RFC 3261 21.5.1), and leaves the
+		// Dialog as it is.
+		log.Warn("an SDP within another dialog of the forked INVITE: the request goes no further")
+		st.Respond(sip.NewResponse(st.Request, 500, ""))
+		return
+	}
+	kept := known && !other
 	answer, answered := func(*sip.Message) {}, func(*sip.Message, error) {}
-	if known && carriesSDP(out, d.Relay) {
+	if kept && carriesSDP(out, d.Relay) {
 		ue := st.Source.Addr.Addr()
 		if toUE {
 			ue = targets[0].Addr.Addr()
@@ -320,7 +340,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 			return
 		}
 	}
-	if known && isTargetRefresh(out.Method) {
+	if kept && isTargetRefresh(out.Method) {
 		renegotiated := answer
 		answer = func(resp *sip.Message) {
 			if resp.StatusCode < 300 {
@@ -349,7 +369,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 	}
 	ims.Finish(st, final, err)
 	answered(final, err)
-	if out.Method == sip.BYE && byeEndsDialog(final, err) {
+	if kept && out.Method == sip.BYE && byeEndsDialog(final, err) {
 		p.endDialog(key, d, log)
 	}
 }

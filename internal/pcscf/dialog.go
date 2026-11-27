@@ -114,7 +114,8 @@ func (c ReleaseCause) err() error {
 // request to the UE has it in To, so every request of the dialog leads
 // to its Dialog with one keyed read. The tag of the other
 // party is left out of the key: the calling UE's dialog has a key before
-// the first response names that tag.
+// the first response names that tag. So every dialog of a forked INVITE
+// has the key of the calling UE's Dialog (ofAnotherDialog).
 //
 // When this P-CSCF serves both the caller and the callee, the dialog
 // passes it twice and has two Dialogs, one per UE.
@@ -196,6 +197,21 @@ func (d *Dialog) parties(toUE bool) (sender, receiver *Party) {
 		return d.remote(), d.ue()
 	}
 	return d.ue(), d.remote()
+}
+
+// ofAnotherDialog reports whether req, a request within a dialog whose
+// key leads to d, belongs to another dialog of the same forked INVITE.
+// The key has the tag of the served UE alone, so every dialog of the
+// INVITE leads to d. Once a 2xx has confirmed d, a request of d carries
+// the tag of its other party, and one with another tag belongs to
+// another dialog. Before that 2xx the early dialogs are not told apart
+// (Dialog). toUE tells which way req passes the P-CSCF.
+func (d *Dialog) ofAnotherDialog(req *sip.Message, toUE bool) bool {
+	header := "To"
+	if toUE {
+		header = "From"
+	}
+	return d.Confirmed && tagOf(req.Get(header)) != tagOf(d.remote().NameAddr)
 }
 
 // noteRequest keeps the CSeq of the party that sent req, a request
