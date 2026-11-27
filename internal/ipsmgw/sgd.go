@@ -40,9 +40,11 @@ import (
 // has a duplicate get the answer of the original and change nothing that
 // the original set, so the delivery that a TFR begins is kept in the
 // Store under the name of the request (BeginTFR). A copy begins no
-// delivery of its own: it waits for the outcome of the first copy's
-// delivery and answers with it, whether that delivery is still under way
-// or has ended. Every TFR is checked, whether it has the T flag or not,
+// delivery of its own and raises no UNRI: it waits for the outcome of
+// the first copy's delivery and answers with it, whether that delivery
+// is still under way or has ended (answerToCopy). The copy is looked for
+// before the user is, since the UE may have deregistered after the first
+// copy. Every TFR is checked, whether it has the T flag or not,
 // since the first copy may arrive after the second (RFC 6733 Appendix
 // C).
 //
@@ -116,6 +118,19 @@ func (g *IPSMGW) mtForwardShortMessage(ctx context.Context, r sgd.MTForwardShort
 	g.userArrived()
 	defer g.userQuit()
 
+	// A copy is answered with the first copy's delivery before anything
+	// that depends on the user as the IP-SM-GW holds it now: the UE may
+	// have deregistered since, and a refusal would have the SC deliver
+	// the short message again.
+	request := diameter.DuplicateKey(r.OriginHost, r.EndToEndID)
+	switch first, ok, err := g.store.TFR(ctx, request, time.Now()); {
+	case err != nil:
+		log.Warn("the TFR was not told from a copy: the store failed", "error", err.Error())
+		return answer(diameter.Base(diameter.DiameterUnableToComply))
+	case ok:
+		return g.answerToCopy(ctx, r, first, log)
+	}
+
 	sub, ok, err := g.store.RegSubscriptionOfIMSI(ctx, r.UserName)
 	switch {
 	case err != nil:
@@ -152,32 +167,27 @@ func (g *IPSMGW) mtForwardShortMessage(ctx context.Context, r sgd.MTForwardShort
 	// delivery and never for the outcome of an earlier one. A copy of the
 	// TFR waits for the delivery of the first copy instead.
 	reference := r.SessionID + ";" + sip.NewTag()
-	deadline := time.Now().Add(g.outcomeWait())
-	request := diameter.DuplicateKey(r.OriginHost, r.EndToEndID)
 	now := time.Now()
-	first, err := g.store.BeginTFR(ctx, request, reference, now, now.Add(diameter.DuplicateWindow))
-	switch {
+	deadline := now.Add(g.outcomeWait())
+	switch first, err := g.store.BeginTFR(ctx, request, reference, now, now.Add(diameter.DuplicateWindow)); {
 	case err != nil:
 		log.Warn("the short message was not delivered: the store failed", "error", err.Error())
 		return answer(diameter.Base(diameter.DiameterUnableToComply))
 	case first != reference:
-		log.Info("TFR sent again: it waits for the delivery of the first copy", "origin_host", r.OriginHost,
-			"end_to_end", r.EndToEndID, "reference", first)
-		reference = first
-	default:
-		g.Deliver(Delivery{
-			Reference:     reference,
-			Recipient:     recipientOf(sub),
-			TPDU:          tpdu,
-			ServiceCentre: sms.InternationalNumber("+" + r.SCAddress),
-			OverSGd:       true,
-		})
+		// A copy that another instance began in the meantime.
+		return g.answerToCopy(ctx, r, first, log)
 	}
+	g.Deliver(Delivery{
+		Reference:     reference,
+		Recipient:     recipientOf(sub),
+		TPDU:          tpdu,
+		ServiceCentre: sms.InternationalNumber("+" + r.SCAddress),
+		OverSGd:       true,
+	})
 	outcome, err := g.awaitOutcome(ctx, reference, deadline, log)
 	if err != nil {
-		// Only a Store that failed gets here, or a copy of a TFR whose first
-		// instance stopped before the delivery began: every delivery ends,
-		// at the latest when TR1N runs out (deliver.go).
+		// Only a Store that failed gets here: every delivery ends, at the
+		// latest when TR1N runs out (deliver.go).
 		log.Warn("the short message is answered without an outcome", "error", err.Error())
 		return answer(diameter.Base(diameter.DiameterUnableToComply))
 	}
@@ -186,6 +196,26 @@ func (g *IPSMGW) mtForwardShortMessage(ctx context.Context, r sgd.MTForwardShort
 	}
 	a := answerOf(outcome)
 	log.Info("short message answered", "outcome", outcome.String(), "result", a.Result.String())
+	return a
+}
+
+// answerToCopy answers a copy of a TFR with the outcome of the delivery
+// that the first copy began, reference (RFC 6733 3). It changes nothing
+// that the first copy set: it begins no delivery, and leaves the
+// IP-SM-GW's own UNRI to the first copy, which raised it if the UE was
+// absent and which a sign of life from the UE may have cleared since.
+func (g *IPSMGW) answerToCopy(ctx context.Context, r sgd.MTForwardShortMessageRequest, reference string, log *slog.Logger) sgd.MTForwardShortMessageAnswer {
+	log = log.With("origin_host", r.OriginHost, "end_to_end", r.EndToEndID, "reference", reference)
+	log.Info("TFR sent again: it waits for the delivery of the first copy")
+	outcome, err := g.awaitOutcome(ctx, reference, time.Now().Add(g.outcomeWait()), log)
+	if err != nil {
+		// A Store that failed gets here, or a copy whose first instance
+		// stopped before the delivery began.
+		log.Warn("the copy of the TFR is answered without an outcome", "error", err.Error())
+		return answer(diameter.Base(diameter.DiameterUnableToComply))
+	}
+	a := answerOf(outcome)
+	log.Info("TFR sent again: answered as the first copy was", "outcome", outcome.String(), "result", a.Result.String())
 	return a
 }
 

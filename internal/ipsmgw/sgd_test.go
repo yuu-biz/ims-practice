@@ -204,18 +204,7 @@ func TestTFRSentAgainToAnotherInstance(t *testing.T) {
 	h := newHarness(t, store, time.Minute, answerOK)
 	other, _ := h.start("ipsmgw-2."+domain, store, time.Minute, ipsmgw.Config{}, h.sc, h.hss)
 	h.registered()
-	if err := sgd.LoadDictionary(); err != nil {
-		t.Fatal(err)
-	}
-	tfr := overTheWire(t, sgd.MTForwardShortMessageRequest{
-		Header: diameter.Header{SessionID: scDiameterHost + ";1;1", OriginHost: scDiameterHost, OriginRealm: domain,
-			DestinationHost: gwDiameterHost, DestinationRealm: domain},
-		UserName:  aliceIMSI,
-		SCAddress: scNumber,
-		SMRPUI:    marshal(t, deliver),
-	}.Message())
-	again := overTheWire(t, tfr)
-	again.Header.CommandFlags |= diam.RetransmittedFlag
+	tfr, again := sentTwice(t)
 
 	first := handling(h.g, tfr)
 	mt := h.next()
@@ -241,6 +230,115 @@ func TestTFRSentAgainToAnotherInstance(t *testing.T) {
 		t.Errorf("the copy of the TFR delivered the short message again: %s", m)
 	case <-time.After(100 * time.Millisecond):
 	}
+}
+
+// TestTFRSentAgainAfterTheUEDeregistered is RFC 6733 3: a copy of a TFR
+// gets the answer of the first copy, also when the UE has deregistered
+// in between. The copy is not refused for a user the IP-SM-GW no longer
+// serves, which would have the SC deliver the short message again.
+func TestTFRSentAgainAfterTheUEDeregistered(t *testing.T) {
+	h := newHarness(t, ipsmgw.NewMemoryStore(), time.Minute, answerOK)
+	subscribe := h.registered()
+	tfr, again := sentTwice(t)
+
+	first := handling(h.g, tfr)
+	mt := h.next()
+	data := parseRP(t, mt).(sms.RPDataNetworkToMS)
+	h.send(deliveryReport(t, mt, sms.RPAck{Direction: sms.MSToNetwork, MessageReference: data.MessageReference,
+		UserData: marshal(t, sms.DeliverReport{})}))
+	if tfa := tfaOf(t, first); tfa.Result != success {
+		t.Fatalf("TFA = %+v, want DIAMETER_SUCCESS", tfa)
+	}
+	h.send(notify(subscribe, 2, "terminated;reason=noresource", regDoc(reginfo.Terminated, reginfo.Terminated)))
+	if got := h.nextUpdate(); got != unregistered {
+		t.Fatalf("PUR = %+v, want %+v", got, unregistered)
+	}
+
+	if tfa := tfaOf(t, handling(h.g, again)); tfa.Result != success || tfa.SMDeliveryFailureCause != nil {
+		t.Errorf("TFA to the copy = %+v, want DIAMETER_SUCCESS alone, the answer to the first", tfa)
+	}
+}
+
+// TestTFRSentAgainLeavesUNRIAlone: a copy of a TFR whose first copy found
+// the UE absent gets the same answer, and does not raise the IP-SM-GW's
+// own UNRI again (RFC 6733 3). The first copy raised it, and a sign of
+// life from the UE may have cleared it since. That holds also for a copy
+// that looked for the first one just before the first one began.
+func TestTFRSentAgainLeavesUNRIAlone(t *testing.T) {
+	absent := diameter.Experimental(sgd.DiameterErrorAbsentUser)
+	for _, tt := range []struct {
+		name string
+		// storeOfCopy is the Store of the instance that the copy reaches.
+		storeOfCopy func(ipsmgw.Store) ipsmgw.Store
+	}{
+		{"after the first copy began", func(s ipsmgw.Store) ipsmgw.Store { return s }},
+		{"while the first copy begins", func(s ipsmgw.Store) ipsmgw.Store { return copyBeforeTheFirstBegan{s} }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			store := ipsmgw.NewMemoryStore()
+			h := newHarness(t, store, time.Minute, func(m *sip.Message) int {
+				if m.Method == sip.MESSAGE {
+					return 480
+				}
+				return 200
+			})
+			h.registered()
+			other, _ := h.start("ipsmgw-2."+domain, tt.storeOfCopy(store), time.Minute, ipsmgw.Config{}, h.sc, h.hss)
+			tfr, again := sentTwice(t)
+
+			first := handling(h.g, tfr)
+			h.next()
+			if tfa := tfaOf(t, first); tfa.Result != absent {
+				t.Fatalf("TFA = %+v, want DIAMETER_ERROR_ABSENT_USER", tfa)
+			}
+			// The UE shows a sign of life, which takes the flag.
+			if set, err := store.TakeNotReachable(t.Context(), alice); err != nil || !set {
+				t.Fatalf("the first copy did not mark the user unreachable: %v, %v", set, err)
+			}
+
+			if tfa := tfaOf(t, handling(other, again)); tfa.Result != absent {
+				t.Errorf("TFA to the copy = %+v, want DIAMETER_ERROR_ABSENT_USER, the answer to the first", tfa)
+			}
+			if set, err := store.TakeNotReachable(t.Context(), alice); err != nil || set {
+				t.Errorf("the copy marked the user unreachable again: %v, %v", set, err)
+			}
+			select {
+			case m := <-h.received:
+				t.Errorf("the copy of the TFR delivered the short message again: %s", m)
+			case <-time.After(50 * time.Millisecond):
+			}
+		})
+	}
+}
+
+// copyBeforeTheFirstBegan is the Store of an instance that a copy of a
+// TFR reaches while the first copy is between its own look for a record
+// and BeginTFR: the copy finds no record, and finds the first copy's
+// delivery only when it begins its own.
+type copyBeforeTheFirstBegan struct{ ipsmgw.Store }
+
+func (copyBeforeTheFirstBegan) TFR(context.Context, string, time.Time) (string, bool, error) {
+	return "", false, nil
+}
+
+// sentTwice is a TFR for Alice as the IP-SM-GW reads it, and the copy
+// that an SC sends after it got no TFA in time: the same Origin-Host and
+// End-to-End Identifier, and the T flag set (RFC 6733 3).
+func sentTwice(t *testing.T) (tfr, again *diam.Message) {
+	t.Helper()
+	if err := sgd.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	tfr = overTheWire(t, sgd.MTForwardShortMessageRequest{
+		Header: diameter.Header{SessionID: scDiameterHost + ";1;1", OriginHost: scDiameterHost, OriginRealm: domain,
+			DestinationHost: gwDiameterHost, DestinationRealm: domain},
+		UserName:  aliceIMSI,
+		SCAddress: scNumber,
+		SMRPUI:    marshal(t, deliver),
+	}.Message())
+	again = overTheWire(t, tfr)
+	again.Header.CommandFlags |= diam.RetransmittedFlag
+	return tfr, again
 }
 
 // overTheWire is m as a Diameter node reads it off a connection.

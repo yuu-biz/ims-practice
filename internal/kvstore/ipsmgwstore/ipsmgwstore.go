@@ -203,6 +203,13 @@ func (s *Store) BeginTFR(ctx context.Context, request, reference string, now, ex
 	return "", errors.New("ipsmgwstore: the record of the TFR kept changing while it was begun")
 }
 
+func (s *Store) TFR(ctx context.Context, request string, now time.Time) (string, bool, error) {
+	var first tfr
+	_, err := kvjson.Read(ctx, s.c, s.c.Key("tfr", request), &first)
+	got, ok, err := live(first, first.Expires, now, err)
+	return got.Reference, ok, err
+}
+
 // notReachable is the item of the IP-SM-GW's own UNRI for one user. It
 // is an item rather than a field of the subscription, so that taking it
 // is one step that only one instance wins (TakeNotReachable), whatever
