@@ -37,6 +37,11 @@ type relayedSubscription struct {
 // 4.2.1.4), which may take a transaction's time to cross.
 var expiryGrace = 64 * sip.DefaultTimers().T1
 
+// errRefused is what relayed gets for a request of a subscription that
+// the role refused (Hooks.Request), and that got no response of the
+// other leg.
+var errRefused = errors.New("b2bua: the role refused the request")
+
 // ofSubscription reports whether a request of method m belongs to a
 // subscription, not to the session (RFC 5057 5.3).
 func ofSubscription(m sip.Method) bool { return m == sip.SUBSCRIBE || m == sip.NOTIFY }
@@ -110,7 +115,10 @@ func (c *Call) relayed(req *sip.Message, created bool, resp *sip.Message, err er
 	case sip.NOTIFY:
 		state, perr := sip.ParseSubscriptionState(req.Get("Subscription-State"))
 		switch {
-		case perr == nil && state.State == sip.SubscriptionTerminated, sip.NotifyEndsSubscription(resp, err):
+		case perr == nil && state.State == sip.SubscriptionTerminated, sip.NotifyEndsSubscription(resp, err), errors.Is(err, sip.ErrCallEnded):
+			// The notifier has ended the subscription, whatever became of
+			// the NOTIFY that says so; or the subscriber has lost it, or
+			// the leg toward it is gone.
 			c.endSubscription(key)
 		case perr == nil && state.Expires > 0:
 			// RFC 6665 4.1.3: how long the subscription has left.
@@ -121,10 +129,10 @@ func (c *Call) relayed(req *sip.Message, created bool, resp *sip.Message, err er
 
 // refreshEnds reports whether the failure of a SUBSCRIBE that refreshes
 // a subscription ends it: a response that says so (RFC 6665 4.1.2.2),
-// or none at all (RFC 5057 4.2).
+// none at all (RFC 5057 4.2), or a leg toward the notifier that is gone.
 func refreshEnds(resp *sip.Message, err error) bool {
 	if err != nil {
-		return errors.Is(err, sip.ErrTimeout)
+		return errors.Is(err, sip.ErrTimeout) || errors.Is(err, sip.ErrCallEnded)
 	}
 	return sip.EndsSubscription(resp.StatusCode)
 }

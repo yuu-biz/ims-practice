@@ -4,21 +4,29 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/b2bua"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
 var conferenceEvent = sip.HeaderField{Name: "Event", Value: "conference"}
 
-// TestASubscriptionWithinTheDialogsOutlivesTheBYE is RFC 5057 5.5 and
-// RFC 6665 4.5.2 at a B2BUA: a subscription that a SUBSCRIBE within the
-// dialogs created shares both dialogs with the session, and the BYE of
-// the caller ends the session only. The B2BUA sends the callee the BYE
-// as ever, but keeps both legs, so that the NOTIFY that ends the
-// subscription still reaches the caller, in its dialog, and the
-// caller's 200 the callee. Once that NOTIFY has its response, the B2BUA
-// no longer knows the dialogs (RFC 5057 4): a request within the
-// callee's gets 481 (RFC 3261 12.2.2).
-func TestASubscriptionWithinTheDialogsOutlivesTheBYE(t *testing.T) {
+// relayedSubscription is a call through a B2BUA in whose dialogs the
+// caller has subscribed to the callee, and has then hung up: the B2BUA
+// has sent the callee its BYE. Both ends keep their dialog for the
+// subscription until the test ends their usages.
+type relayedSubscription struct {
+	b2b, callee    *sip.UA
+	in             *sip.IncomingCall
+	callerDialog   sip.Dialog
+	calleeDialog   sip.Dialog
+	atCaller       <-chan *sip.InDialogRequest
+	subscriberEnds func()
+	notifierEnds   func()
+}
+
+func subscribeThroughTheB2BUAAndHangUp(t *testing.T, h *hooks) relayedSubscription {
+	t.Helper()
+	h.crossing = true
 	calls := make(chan *sip.IncomingCall, 1)
 	notifierEnds := make(chan func(), 1)
 	callee := newUA(t, "callee", func(in *sip.IncomingCall) {
@@ -39,7 +47,7 @@ func TestASubscriptionWithinTheDialogsOutlivesTheBYE(t *testing.T) {
 		calls <- in
 		in.Accept(answer)
 	})
-	b2b := newB2BUA(t, &hooks{crossing: true}, contactOf(t, callee))
+	b2b := newB2BUA(t, h, contactOf(t, callee))
 	atCaller := make(chan *sip.InDialogRequest, 4)
 	caller := newUA(t, "caller", func(in *sip.IncomingCall) { in.Reject(480) })
 	out, err := caller.Invite(invitation(t, b2b, func(r *sip.InDialogRequest) { atCaller <- r }))
@@ -55,33 +63,62 @@ func TestASubscriptionWithinTheDialogsOutlivesTheBYE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer subscriberEnds()
+	t.Cleanup(subscriberEnds)
 	if resp, err := out.Send(sip.SUBSCRIBE, sip.Body{}, conferenceEvent, sip.HeaderField{Name: "Expires", Value: "600"}); err != nil || resp.StatusCode != 200 {
 		t.Fatalf("SUBSCRIBE within the dialog got %v, %v; want 200", resp, err)
 	}
 	endAtTheNotifier := within(t, "SUBSCRIBE at the callee", notifierEnds)
-	defer endAtTheNotifier()
+	t.Cleanup(endAtTheNotifier)
 
-	d, _ := out.Dialog()
+	callerDialog, _ := out.Dialog()
 	if err := out.Bye(); err != nil {
 		t.Fatal(err)
 	}
 	waitClosed(t, in.Done(), "BYE of the B2BUA at the callee")
 	calleeDialog, _ := in.Dialog()
+	return relayedSubscription{b2b: b2b, callee: callee, in: in, callerDialog: callerDialog, calleeDialog: calleeDialog,
+		atCaller: atCaller, subscriberEnds: subscriberEnds, notifierEnds: endAtTheNotifier}
+}
 
+// notify sends a NOTIFY of the subscription from the callee with
+// Subscription-State state, and returns where its final response comes.
+func (s relayedSubscription) notify(t *testing.T, state string) <-chan *sip.Message {
 	notified := make(chan *sip.Message, 1)
 	go func() {
-		resp, err := in.Send(sip.NOTIFY, sip.Body{}, conferenceEvent,
-			sip.HeaderField{Name: "Subscription-State", Value: "terminated;reason=noresource"})
+		resp, err := s.in.Send(sip.NOTIFY, sip.Body{}, conferenceEvent, sip.HeaderField{Name: "Subscription-State", Value: state})
 		if err != nil {
 			t.Errorf("the NOTIFY after the BYE: %v", err)
 		}
 		notified <- resp
 	}()
-	n := within(t, "NOTIFY at the caller after the BYE", atCaller)
-	if n.Request.Method != sip.NOTIFY || n.Request.Get("Call-ID") != d.ID.CallID || n.Request.Get("Subscription-State") != "terminated;reason=noresource" {
+	return notified
+}
+
+// forgotten checks that the B2BUA no longer knows the callee's dialog: a
+// request within it gets 481 (RFC 3261 12.2.2).
+func (s relayedSubscription) forgotten(t *testing.T) {
+	t.Helper()
+	if !until(5*time.Second, func() bool { return optionsStatus(t, s.callee, s.calleeDialog, s.b2b) == 481 }) {
+		t.Error("a request within the callee's dialog still finds it at the B2BUA once the subscription has ended, want 481")
+	}
+}
+
+// TestASubscriptionWithinTheDialogsOutlivesTheBYE is RFC 5057 5.5 and
+// RFC 6665 4.5.2 at a B2BUA: a subscription that a SUBSCRIBE within the
+// dialogs created shares both dialogs with the session, and the BYE of
+// the caller ends the session only. The B2BUA sends the callee the BYE
+// as ever, but keeps both legs, so that the NOTIFY that ends the
+// subscription still reaches the caller, in its dialog, and the
+// caller's 200 the callee. Once that NOTIFY has its response, the B2BUA
+// no longer knows the dialogs (RFC 5057 4): a request within the
+// callee's gets 481 (RFC 3261 12.2.2).
+func TestASubscriptionWithinTheDialogsOutlivesTheBYE(t *testing.T) {
+	s := subscribeThroughTheB2BUAAndHangUp(t, &hooks{})
+	notified := s.notify(t, "terminated;reason=noresource")
+	n := within(t, "NOTIFY at the caller after the BYE", s.atCaller)
+	if n.Request.Method != sip.NOTIFY || n.Request.Get("Call-ID") != s.callerDialog.ID.CallID || n.Request.Get("Subscription-State") != "terminated;reason=noresource" {
 		t.Errorf("the caller got %s in Call-ID %q with Subscription-State %q, want the NOTIFY that ends the subscription in %q",
-			n.Request.Method, n.Request.Get("Call-ID"), n.Request.Get("Subscription-State"), d.ID.CallID)
+			n.Request.Method, n.Request.Get("Call-ID"), n.Request.Get("Subscription-State"), s.callerDialog.ID.CallID)
 	}
 	if _, err := n.Accept(sip.Body{}); err != nil {
 		t.Fatal(err)
@@ -89,12 +126,44 @@ func TestASubscriptionWithinTheDialogsOutlivesTheBYE(t *testing.T) {
 	if resp := within(t, "response to the NOTIFY at the callee", notified); resp == nil || resp.StatusCode != 200 {
 		t.Fatalf("the NOTIFY after the BYE got %v, want the caller's 200", resp)
 	}
-	endAtTheNotifier()
-	subscriberEnds()
+	s.notifierEnds()
+	s.subscriberEnds()
+	s.forgotten(t)
+}
 
-	if !until(5*time.Second, func() bool { return optionsStatus(t, callee, calleeDialog, b2b) == 481 }) {
-		t.Error("a request within the callee's dialog still finds it at the B2BUA once the subscription has ended, want 481")
+// TestA481ToANOTIFYEndsTheRelayedSubscription is RFC 6665 4.2.2 with
+// RFC 5057 5.1 at a B2BUA: a subscriber that answers a NOTIFY with 481
+// has lost the subscription, and the B2BUA, which passes the 481 on to
+// the notifier, lets both legs go with it.
+func TestA481ToANOTIFYEndsTheRelayedSubscription(t *testing.T) {
+	s := subscribeThroughTheB2BUAAndHangUp(t, &hooks{})
+	notified := s.notify(t, "active;expires=600")
+	within(t, "NOTIFY at the caller after the BYE", s.atCaller).Reject(481)
+	if resp := within(t, "response to the NOTIFY at the callee", notified); resp == nil || resp.StatusCode != 481 {
+		t.Fatalf("the NOTIFY got %v, want the caller's 481", resp)
 	}
+	s.notifierEnds()
+	s.forgotten(t)
+}
+
+// TestARefusedLastNOTIFYStillEndsTheRelayedSubscription: a NOTIFY that
+// says terminated ends the subscription at the notifier, whatever its
+// response (RFC 6665 4.2.2), so the B2BUA lets both legs go even when
+// its role refuses to pass that NOTIFY on.
+func TestARefusedLastNOTIFYStillEndsTheRelayedSubscription(t *testing.T) {
+	h := &hooks{request: func(req *sip.Message, _ b2bua.Direction) *b2bua.Refusal {
+		if req.Method == sip.NOTIFY {
+			return &b2bua.Refusal{Status: 500}
+		}
+		return nil
+	}}
+	s := subscribeThroughTheB2BUAAndHangUp(t, h)
+	notified := s.notify(t, "terminated;reason=noresource")
+	if resp := within(t, "response to the NOTIFY at the callee", notified); resp == nil || resp.StatusCode != 500 {
+		t.Fatalf("the NOTIFY got %v, want the role's 500", resp)
+	}
+	s.notifierEnds()
+	s.forgotten(t)
 }
 
 // TestARefusedSubscriptionKeepsNoLeg: a SUBSCRIBE within the dialogs
