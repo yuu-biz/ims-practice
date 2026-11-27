@@ -2,6 +2,67 @@
 title: The package layout of this repository
 footer: ims-practice study session 1. Package layout
 lang: en
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: cmd-ims, label: cmd/ims, role: one node of the IMS, at: [2.5, 0]}
+  - {id: config, label: config, role: reads the settings, at: [1, 0]}
+  - {id: pcscf, label: pcscf, role: the role P-CSCF, at: [1, 1]}
+  - {id: icscf, label: icscf, role: the role I-CSCF, at: [2, 1]}
+  - {id: scscf, label: scscf, role: the role S-CSCF, at: [3, 1]}
+  - {id: hss, label: hss, role: the role HSS, at: [4, 1]}
+  - {id: cx, label: cx, role: the messages of Cx, at: [3.5, 2]}
+  - {id: sip, label: sip, role: SIP（RFC 3261）, at: [1.5, 3]}
+  - {id: diameter, label: diameter, role: Diameter（RFC 6733）, at: [3.5, 3]}
+  - {id: store, label: scscf.Store, role: holds the state, at: [3, 2]}
+  - {id: memory, label: MemoryStore, role: in the process, at: [2.5, 3]}
+  - {id: shared, label: scscfstore, role: on a shared store, at: [3.5, 3]}
+  - {id: valkey, label: Valkey, role: a shared store, at: [4.5, 3]}
+  - {id: relay, label: pcscf.Relay, role: controls the media node, at: [1, 2]}
+  - {id: agw-client, label: agw.Client, role: the HTTP API, at: [0.5, 3]}
+  - {id: mediactl, label: h248/mediactl, role: H.248（Iq）, at: [1.5, 3]}
+  - {id: ipsmgw, label: ipsmgw, role: the role IP-SM-GW, at: [3, 1]}
+  - {id: centre, label: ServiceCentre, role: the SC it calls, at: [3, 2]}
+  - {id: sc-stub, label: sc, role: a stub in the process, at: [2.5, 3]}
+  - {id: iwmsc, label: SMSIWMSC, role: to the sc node over SGd, at: [3.5, 3]}
+  - {id: ue, label: ue, role: the UE simulator, at: [0, 1]}
+events:
+  # One executable becomes any node
+  - {id: reads-roles, rel: reads roles, from: cmd-ims, to: config}
+  - {id: starts-scscf, rel: starts, from: cmd-ims, to: scscf}
+  - {id: starts-icscf, rel: starts, from: cmd-ims, to: icscf}
+  # The layers and the direction of import
+  - {id: pcscf-sip, rel: import, from: pcscf, to: sip}
+  - {id: icscf-sip, rel: import, from: icscf, to: sip}
+  - {id: scscf-sip, rel: import, from: scscf, to: sip}
+  - {id: icscf-cx, rel: import, from: icscf, to: cx}
+  - {id: scscf-cx, rel: import, from: scscf, to: cx}
+  - {id: hss-cx, rel: import, from: hss, to: cx}
+  - {id: cx-diameter, rel: import, from: cx, to: diameter}
+  # Where the state lives
+  - {id: uses-store, rel: reads and writes, from: scscf, to: store}
+  - {id: memory-is-store, rel: implements, from: memory, to: store}
+  - {id: shared-is-store, rel: implements, from: shared, to: store}
+  - {id: shared-valkey, rel: stores in, from: shared, to: valkey}
+  # The boundaries that can be replaced
+  - {id: uses-relay, rel: uses, from: pcscf, to: relay}
+  - {id: client-is-relay, rel: implements, from: agw-client, to: relay}
+  - {id: mediactl-is-relay, rel: implements, from: mediactl, to: relay}
+  - {id: uses-centre, rel: uses, from: ipsmgw, to: centre}
+  - {id: stub-is-centre, rel: implements, from: sc-stub, to: centre}
+  - {id: iwmsc-is-centre, rel: implements, from: iwmsc, to: centre}
+  # One REGISTER
+  - {id: reg-ue-p, msg: REGISTER, from: ue, to: pcscf, proto: SIP}
+  - {id: reg-p-i, msg: REGISTER, from: pcscf, to: icscf, proto: SIP}
+  - {id: uar, msg: UAR, from: icscf, to: hss, proto: Cx}
+  - {id: uaa, msg: UAA, from: hss, to: icscf, proto: Cx}
+  - {id: reg-i-s, msg: REGISTER, from: icscf, to: scscf, proto: SIP}
+  - {id: mar, msg: MAR, from: scscf, to: hss, proto: Cx}
+  - {id: maa, msg: MAA, from: hss, to: scscf, proto: Cx}
+```
+
 ---
 
 # The package layout of this repository
@@ -40,6 +101,30 @@ ims-practice study session 1 (where each node and each specification lives in th
 ---
 
 ## Three executables
+
+```ims-scene
+id: one-binary
+nodes: [cmd-ims, config, pcscf, icscf, scscf, hss]
+lead: Which node it becomes is decided by roles in the settings file, not by the code.
+steps:
+  - id: read
+    title: cmd/ims reads roles
+    show: [reads-roles]
+    focus: [cmd-ims, config]
+    text: Package `config` reads the settings file and refuses wrong settings at the start.
+  - id: one
+    title: With roles [scscf] it becomes an S-CSCF
+    show: [starts-scscf]
+    active: starts-scscf
+    checkpoint: true
+    text: The same image becomes another node with only another settings file.
+  - id: two
+    title: Two roles make one node do both
+    show: [starts-icscf]
+    focus: [cmd-ims, icscf, scscf]
+    text: 'With `roles: [icscf, scscf]` one process runs an I-CSCF and an S-CSCF. The code does not change.'
+```
+
 
 - `cmd/ims` is one IMS node. Which node it is comes from `roles` in its configuration file, so one image serves as every node.
 - `cmd/ue` is the UE simulator, with the subcommands `register`, `call`, `answer`, `serve`, `sms`, `xcap` and `ctl`.
@@ -82,6 +167,35 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 ---
 
 ## internal/ in layers
+
+```ims-scene
+id: layers
+nodes: [pcscf, icscf, scscf, hss, cx, sip, diameter]
+lead: An arrow points the way of an import. A role uses the layers below it, and a layer below knows nothing of those above.
+steps:
+  - id: sip
+    title: The SIP roles use sip
+    show: [pcscf-sip, icscf-sip, scscf-sip]
+    active: ''
+    focus: [sip]
+    text: RFC 3261 is in package `sip`, TS 24.229 in the role packages. The layers follow the documents of the specifications.
+  - id: cx
+    title: The roles of Cx use diameter through cx
+    only: [icscf-cx, scscf-cx, hss-cx, cx-diameter]
+    active: ''
+    focus: [cx, diameter]
+    checkpoint: true
+    text: '`cx` lays out the messages of Cx with their AVPs in the order of the specification; `diameter` is the base protocol.'
+  - id: down
+    title: A layer below knows nothing of those above
+    only: []
+    active: ''
+    focus: [sip, diameter]
+    text: |
+      `sip` imports no package of `internal/`. It is SIP that knows nothing of the IMS.
+      `pcscf` uses `sip`, never the other way round.
+```
+
 
 | Layer | Packages |
 | --- | --- |
@@ -170,6 +284,35 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 
 ## State lives in a Store
 
+```ims-scene
+id: state
+nodes: [scscf, store, memory, shared, valkey]
+lead: The state of the users can live outside the node. What a role reads and writes is only the interface Store.
+steps:
+  - id: uses
+    title: The S-CSCF reads and writes the registrations through Store
+    show: [uses-store]
+    active: ''
+    focus: [scscf, store]
+    text: It puts the registrations, the state of an authentication in progress and where an iFC evaluation is in Store.
+  - id: memory
+    title: MemoryStore in the Compose setup
+    show: [memory-is-store]
+    active: ''
+    focus: [memory, store]
+    checkpoint: true
+    text: The state is in the process.
+  - id: shared
+    title: A shared store in the redundant setup
+    show: [shared-is-store, shared-valkey]
+    active: ''
+    focus: [shared, valkey]
+    text: |
+      In the setup of `deploy/redundancy/`, `scscfstore` makes the same Store on top of Valkey.
+      The code of the S-CSCF does not change.
+```
+
+
 - A role reads and writes the state of its users through an interface called `Store`, so that the state can live outside the node.
 - The implementation in the Compose setup is `MemoryStore`, which keeps the state in the process.
 
@@ -189,6 +332,26 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 ---
 
 ## The boundaries that can be replaced
+
+```ims-scene
+id: boundaries
+nodes: [pcscf, relay, agw-client, mediactl, ipsmgw, centre, sc-stub, iwmsc]
+lead: Only where one part has two ways of working can it be replaced. The settings choose either way.
+steps:
+  - id: relay
+    title: The P-CSCF drives the media node through Relay
+    show: [uses-relay, client-is-relay, mediactl-is-relay]
+    active: ''
+    focus: [pcscf, relay]
+    text: There are two implementations. `agw.Client` talks to the HTTP API of the media node, `h248/mediactl` talks H.248 over Iq.
+  - id: centre
+    title: The IP-SM-GW calls the SC through ServiceCentre
+    show: [uses-centre, stub-is-centre, iwmsc-is-centre]
+    active: ''
+    focus: [ipsmgw, centre]
+    text: There are two implementations. The stub `sc` in the process, and `SMSIWMSC`, which reaches the service centre of the `sc` node over SGd.
+```
+
 
 Only the places where a stub stands for a real node, or where one part has two ways of doing its work, are interfaces.
 
@@ -221,6 +384,39 @@ grep -rn "SIMPLIFIED:" internal cmd
 ---
 
 ## Follow one REGISTER through the code
+
+```ims-scene
+id: trace
+view: ladder
+nodes: [ue, pcscf, icscf, scscf, hss]
+lead: Each arrow of a capture is sent by some code.
+steps:
+  - id: ue
+    title: The UE builds the REGISTER
+    show: [reg-ue-p]
+    text: "`internal/ue/ue.go`"
+  - id: pcscf
+    title: The P-CSCF adds Path and finds the I-CSCF in DNS
+    show: [reg-p-i]
+    text: "`internal/pcscf/pcscf.go`, `internal/sipdns/locate.go`"
+  - id: icscf
+    title: The I-CSCF sends the UAR
+    show: [uar, uaa, reg-i-s]
+    active: uar
+    checkpoint: true
+    text: "`internal/icscf/icscf.go`. The shape of the message is in `internal/cx/messages.go`."
+  - id: scscf
+    title: The S-CSCF sends MAR and SAR, and returns 401 and 200
+    show: [mar, maa]
+    active: mar
+    text: "`internal/scscf/scscf.go`. The SAR and the 200 OK come after the second REGISTER."
+  - id: hss
+    title: The HSS answers UAR, MAR and SAR
+    focus: [hss]
+    active: ''
+    text: "`internal/hss/hss.go`"
+```
+
 
 | Step | Node | File to open | What to find |
 | --- | --- | --- | --- |

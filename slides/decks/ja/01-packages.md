@@ -2,6 +2,67 @@
 title: このリポジトリのパッケージ構成
 footer: ims-practice 勉強会 1. パッケージ構成
 lang: ja
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: cmd-ims, label: cmd/ims, role: IMS のノード 1 台, at: [2.5, 0]}
+  - {id: config, label: config, role: 設定を読んで確かめる, at: [1, 0]}
+  - {id: pcscf, label: pcscf, role: P-CSCF の役割, at: [1, 1]}
+  - {id: icscf, label: icscf, role: I-CSCF の役割, at: [2, 1]}
+  - {id: scscf, label: scscf, role: S-CSCF の役割, at: [3, 1]}
+  - {id: hss, label: hss, role: HSS の役割, at: [4, 1]}
+  - {id: cx, label: cx, role: Cx のメッセージ, at: [3.5, 2]}
+  - {id: sip, label: sip, role: SIP（RFC 3261）, at: [1.5, 3]}
+  - {id: diameter, label: diameter, role: Diameter（RFC 6733）, at: [3.5, 3]}
+  - {id: store, label: scscf.Store, role: 状態の読み書きの口, at: [3, 2]}
+  - {id: memory, label: MemoryStore, role: プロセスの中, at: [2.5, 3]}
+  - {id: shared, label: scscfstore, role: 共有の保存先の上, at: [3.5, 3]}
+  - {id: valkey, label: Valkey, role: 共有の保存先, at: [4.5, 3]}
+  - {id: relay, label: pcscf.Relay, role: 中継ノードの制御の口, at: [1, 2]}
+  - {id: agw-client, label: agw.Client, role: HTTP の API, at: [0.5, 3]}
+  - {id: mediactl, label: h248/mediactl, role: H.248（Iq）, at: [1.5, 3]}
+  - {id: ipsmgw, label: ipsmgw, role: IP-SM-GW の役割, at: [3, 1]}
+  - {id: centre, label: ServiceCentre, role: SC の口, at: [3, 2]}
+  - {id: sc-stub, label: sc, role: プロセスの中のスタブ, at: [2.5, 3]}
+  - {id: iwmsc, label: SMSIWMSC, role: SGd で sc のノードへ, at: [3.5, 3]}
+  - {id: ue, label: ue, role: UE シミュレータ, at: [0, 1]}
+events:
+  # 1 つの実行ファイルが、どのノードにもなる
+  - {id: reads-roles, rel: roles を読む, from: cmd-ims, to: config}
+  - {id: starts-scscf, rel: 起動する, from: cmd-ims, to: scscf}
+  - {id: starts-icscf, rel: 起動する, from: cmd-ims, to: icscf}
+  # 層と import の向き
+  - {id: pcscf-sip, rel: import, from: pcscf, to: sip}
+  - {id: icscf-sip, rel: import, from: icscf, to: sip}
+  - {id: scscf-sip, rel: import, from: scscf, to: sip}
+  - {id: icscf-cx, rel: import, from: icscf, to: cx}
+  - {id: scscf-cx, rel: import, from: scscf, to: cx}
+  - {id: hss-cx, rel: import, from: hss, to: cx}
+  - {id: cx-diameter, rel: import, from: cx, to: diameter}
+  # 状態の置き場所
+  - {id: uses-store, rel: 読み書きする, from: scscf, to: store}
+  - {id: memory-is-store, rel: 実装する, from: memory, to: store}
+  - {id: shared-is-store, rel: 実装する, from: shared, to: store}
+  - {id: shared-valkey, rel: 保存する, from: shared, to: valkey}
+  # 差し替えられる境界
+  - {id: uses-relay, rel: 使う, from: pcscf, to: relay}
+  - {id: client-is-relay, rel: 実装する, from: agw-client, to: relay}
+  - {id: mediactl-is-relay, rel: 実装する, from: mediactl, to: relay}
+  - {id: uses-centre, rel: 使う, from: ipsmgw, to: centre}
+  - {id: stub-is-centre, rel: 実装する, from: sc-stub, to: centre}
+  - {id: iwmsc-is-centre, rel: 実装する, from: iwmsc, to: centre}
+  # 1 つの REGISTER
+  - {id: reg-ue-p, msg: REGISTER, from: ue, to: pcscf, proto: SIP}
+  - {id: reg-p-i, msg: REGISTER, from: pcscf, to: icscf, proto: SIP}
+  - {id: uar, msg: UAR, from: icscf, to: hss, proto: Cx}
+  - {id: uaa, msg: UAA, from: hss, to: icscf, proto: Cx}
+  - {id: reg-i-s, msg: REGISTER, from: icscf, to: scscf, proto: SIP}
+  - {id: mar, msg: MAR, from: scscf, to: hss, proto: Cx}
+  - {id: maa, msg: MAA, from: hss, to: scscf, proto: Cx}
+```
+
 ---
 
 # このリポジトリのパッケージ構成
@@ -40,6 +101,30 @@ ims-practice 勉強会 第 1 回（どのノードとどの仕様が、コード
 ---
 
 ## 実行ファイルは 3 つ
+
+```ims-scene
+id: one-binary
+nodes: [cmd-ims, config, pcscf, icscf, scscf, hss]
+lead: 何のノードになるかは、コードではなく設定ファイルの roles が決めます。
+steps:
+  - id: read
+    title: cmd/ims は roles を読む
+    show: [reads-roles]
+    focus: [cmd-ims, config]
+    text: パッケージ `config` が設定ファイルを読み、誤った設定は起動のときに断ります。
+  - id: one
+    title: roles が [scscf] なら S-CSCF になる
+    show: [starts-scscf]
+    active: starts-scscf
+    checkpoint: true
+    text: 同じイメージが、設定ファイルを替えるだけで別のノードになります。
+  - id: two
+    title: roles に 2 つ書けば、1 台が 2 つの役割を兼ねる
+    show: [starts-icscf]
+    focus: [cmd-ims, icscf, scscf]
+    text: '`roles: [icscf, scscf]` なら、1 つのプロセスで I-CSCF と S-CSCF が動きます。コードは変えません。'
+```
+
 
 - `cmd/ims` は IMS のノード 1 台です。何のノードになるかは、設定ファイルの `roles` で決まります。1 つのイメージが、どのノードにもなります。
 - `cmd/ue` は UE シミュレータです。`register`、`call`、`answer`、`serve`、`sms`、`xcap`、`ctl` のサブコマンドがあります。
@@ -82,6 +167,35 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 ---
 
 ## internal/ を層で見る
+
+```ims-scene
+id: layers
+nodes: [pcscf, icscf, scscf, hss, cx, sip, diameter]
+lead: 矢印は import の向きです。役割は下の層を使い、下の層は上の層を知りません。
+steps:
+  - id: sip
+    title: SIP の役割は sip を使う
+    show: [pcscf-sip, icscf-sip, scscf-sip]
+    active: ''
+    focus: [sip]
+    text: RFC 3261 はパッケージ `sip` に、TS 24.229 は役割のパッケージにあります。層は仕様の文書で分かれます。
+  - id: cx
+    title: Cx の役割は cx を通して diameter を使う
+    only: [icscf-cx, scscf-cx, hss-cx, cx-diameter]
+    active: ''
+    focus: [cx, diameter]
+    checkpoint: true
+    text: '`cx` は Cx のメッセージを仕様の AVP の順に並べ、`diameter` は基本プロトコルを受け持ちます。'
+  - id: down
+    title: 下の層は上の層を知らない
+    only: []
+    active: ''
+    focus: [sip, diameter]
+    text: |
+      `sip` は `internal/` のどのパッケージも import しません。IMS のことを何も知らない SIP です。
+      `pcscf` が `sip` を使い、逆はありません。
+```
+
 
 | 層 | パッケージ |
 | --- | --- |
@@ -170,6 +284,35 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 
 ## 状態は Store に置く
 
+```ims-scene
+id: state
+nodes: [scscf, store, memory, shared, valkey]
+lead: 利用者の状態はノードの外に置けます。役割が読み書きするのは Store というインタフェースだけです。
+steps:
+  - id: uses
+    title: S-CSCF は Store を通して登録を読み書きする
+    show: [uses-store]
+    active: ''
+    focus: [scscf, store]
+    text: 登録、認証の途中の状態、iFC の評価の続きを、Store に置きます。
+  - id: memory
+    title: Compose の構成では MemoryStore
+    show: [memory-is-store]
+    active: ''
+    focus: [memory, store]
+    checkpoint: true
+    text: 状態はプロセスの中にあります。
+  - id: shared
+    title: 冗長の構成では共有の保存先
+    show: [shared-is-store, shared-valkey]
+    active: ''
+    focus: [shared, valkey]
+    text: |
+      `deploy/redundancy/` の構成では、`scscfstore` が同じ Store を Valkey の上に作ります。
+      S-CSCF のコードは変わりません。
+```
+
+
 - 役割は、利用者の状態を `Store` というインタフェースを通して読み書きします。状態をノードの外に置けるようにするためです。
 - Compose の構成で使う実装は `MemoryStore` で、プロセスの中に置きます。
 
@@ -189,6 +332,26 @@ home_domain: ims.mnc001.mcc001.3gppnetwork.org
 ---
 
 ## 差し替えられる境界
+
+```ims-scene
+id: boundaries
+nodes: [pcscf, relay, agw-client, mediactl, ipsmgw, centre, sc-stub, iwmsc]
+lead: 差し替えられるのは、1 つの部品に 2 つのやり方がある所だけです。どちらも設定で選びます。
+steps:
+  - id: relay
+    title: P-CSCF はメディア中継ノードを Relay で動かす
+    show: [uses-relay, client-is-relay, mediactl-is-relay]
+    active: ''
+    focus: [pcscf, relay]
+    text: 実装は 2 つです。中継ノードの HTTP の API で話す `agw.Client` と、Iq の H.248 で話す `h248/mediactl` です。
+  - id: centre
+    title: IP-SM-GW は SC を ServiceCentre で呼ぶ
+    show: [uses-centre, stub-is-centre, iwmsc-is-centre]
+    active: ''
+    focus: [ipsmgw, centre]
+    text: 実装は 2 つです。プロセスの中のスタブ `sc` と、SGd で `sc` のノードのサービスセンタにつなぐ `SMSIWMSC` です。
+```
+
 
 インタフェースにしてあるのは、スタブが本物のノードの代わりをしている所と、1 つの部品に 2 つのやり方がある所だけです。
 
@@ -221,6 +384,39 @@ grep -rn "SIMPLIFIED:" internal cmd
 ---
 
 ## 1 つの REGISTER をコードで追う
+
+```ims-scene
+id: trace
+view: ladder
+nodes: [ue, pcscf, icscf, scscf, hss]
+lead: キャプチャの 1 本の矢印ごとに、それを送るコードがあります。
+steps:
+  - id: ue
+    title: UE が REGISTER を組み立てる
+    show: [reg-ue-p]
+    text: "`internal/ue/ue.go`"
+  - id: pcscf
+    title: P-CSCF が Path を付け、I-CSCF を DNS で探す
+    show: [reg-p-i]
+    text: "`internal/pcscf/pcscf.go`、`internal/sipdns/locate.go`"
+  - id: icscf
+    title: I-CSCF が UAR を送る
+    show: [uar, uaa, reg-i-s]
+    active: uar
+    checkpoint: true
+    text: "`internal/icscf/icscf.go`。メッセージの形は `internal/cx/messages.go` にあります。"
+  - id: scscf
+    title: S-CSCF が MAR と SAR を送り、401 と 200 を返す
+    show: [mar, maa]
+    active: mar
+    text: "`internal/scscf/scscf.go`。SAR と 200 OK は、2 回目の REGISTER のあとです。"
+  - id: hss
+    title: HSS が UAR、MAR、SAR に答える
+    focus: [hss]
+    active: ''
+    text: "`internal/hss/hss.go`"
+```
+
 
 | 順 | ノード | 開くファイル | 探すもの |
 | --- | --- | --- | --- |
