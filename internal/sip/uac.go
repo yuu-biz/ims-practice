@@ -518,23 +518,34 @@ func (d *CallDialog) autoPRACK(resp *Message) {
 	}
 }
 
-// PRACK sends the PRACK for resp, a reliable provisional response that
-// came on Responses, and returns the final response to the PRACK (RFC
-// 3262 4). It is for the responses that the UA leaves to the user: all
-// of them with Invitation.ManualPRACK, and otherwise those that carry
-// an offer, which body answers (RFC 3262 5). After an answer in resp,
-// body may be a new offer, which the 2xx to the PRACK answers.
+// PRACK is CallDialog.PRACK in the dialog that resp belongs to
+// (DialogOf), for a reliable provisional response that came on
+// Responses.
 func (c *OutgoingCall) PRACK(resp *Message, body Body, headers ...HeaderField) (*Message, error) {
-	c.mu.Lock()
-	d := c.dialogWith(tagOf(resp.Get("To")))
-	var seq *reliableSeq
-	if d != nil {
-		seq = d.reliableTo(resp)
+	d := c.DialogOf(resp)
+	if d == nil {
+		return nil, errNotReliable
 	}
+	return d.PRACK(resp, body, headers...)
+}
+
+var errNotReliable = errors.New("sip: not a reliable provisional response of this dialog")
+
+// PRACK sends the PRACK for resp, a reliable provisional response to an
+// INVITE of this UA within the dialog, and returns the final response to
+// the PRACK (RFC 3262 4). It is for the responses that the UA leaves to
+// the user: all of them with Invitation.ManualPRACK or
+// ReInvitation.ManualPRACK, and otherwise those that carry an offer,
+// which body answers (RFC 3262 5). After an answer in resp, body may be
+// a new offer, which the 2xx to the PRACK answers.
+func (d *CallDialog) PRACK(resp *Message, body Body, headers ...HeaderField) (*Message, error) {
+	c := d.c
+	c.mu.Lock()
+	seq := d.reliableTo(resp)
 	rseq, err := ParseRSeq(resp.Get("RSeq"))
 	switch {
-	case seq == nil || err != nil || !resp.Requires(Option100rel):
-		err = errors.New("sip: not a reliable provisional response of this call")
+	case seq == nil || err != nil || !resp.Requires(Option100rel) || tagOf(resp.Get("To")) != d.dialog.ID.RemoteTag:
+		err = errNotReliable
 	case rseq != seq.last || rseq == seq.pracked:
 		err = errors.New("sip: the response is not the one that waits for its PRACK")
 	default:
@@ -720,11 +731,17 @@ func (c *OutgoingCall) Ack(body Body, headers ...HeaderField) error {
 // ReInvite is CallDialog.ReInvite in the dialog that the call goes on
 // in (Dialogs).
 func (c *OutgoingCall) ReInvite(body Body, headers ...HeaderField) (*Message, error) {
+	return c.ReInviteWith(ReInvitation{Body: body, Headers: headers})
+}
+
+// ReInviteWith is CallDialog.ReInviteWith in the dialog that the call
+// goes on in (Dialogs).
+func (c *OutgoingCall) ReInviteWith(re ReInvitation) (*Message, error) {
 	d, err := c.currentDialog()
 	if err != nil {
 		return nil, err
 	}
-	return d.ReInvite(body, headers...)
+	return d.ReInviteWith(re)
 }
 
 // Update is CallDialog.Update in the dialog that the call goes on in

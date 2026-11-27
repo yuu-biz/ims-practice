@@ -571,11 +571,39 @@ func (d *CallDialog) respond(st *ServerTransaction, code int, headers ...HeaderF
 // transaction is in progress within the dialog (RFC 3261 14.1).
 var ErrInviteInProgress = errors.New("sip: an INVITE transaction is in progress within the dialog")
 
-// ReInvite sends an INVITE within the confirmed dialog and returns its
-// final response (RFC 3261 14.1). A re-INVITE changes the session: a
-// UE puts a call on hold with one whose offer makes the media sendonly,
-// and takes it back with the next. The offer is the whole session
-// description, not only what changes.
+// ReInvitation is what the user of a call puts in a re-INVITE, and how
+// it takes the provisional responses to it.
+type ReInvitation struct {
+	// Body is normally the offer. Without one, the re-INVITE asks the
+	// peer for an offer.
+	Body Body
+	// Headers are further header fields of the re-INVITE.
+	Headers []HeaderField
+	// OnProvisional, when set, is called with each provisional response
+	// other than 100 (Trying) that the UA takes, in the order they come:
+	// not a retransmission of a reliable one, nor one that comes out of
+	// order (RFC 3262 4). It runs in the goroutine of ReInviteWith, which
+	// reads the next response only once it returns, so it should hand
+	// any wait, such as for a PRACK of its own, to a goroutine. A B2BUA
+	// passes each response on to its other leg here.
+	OnProvisional func(*Message)
+	// ManualPRACK leaves the PRACK for each reliable provisional response
+	// to the user, who sends it with PRACK. A B2BUA sets it to relay the
+	// PRACK of its other leg, with its body.
+	ManualPRACK bool
+}
+
+// ReInvite is ReInviteWith for a re-INVITE with body and headers, whose
+// provisional responses the UA takes by itself.
+func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, error) {
+	return d.ReInviteWith(ReInvitation{Body: body, Headers: headers})
+}
+
+// ReInviteWith sends an INVITE within the confirmed dialog and returns
+// its final response (RFC 3261 14.1). A re-INVITE changes the session:
+// a UE puts a call on hold with one whose offer makes the media
+// sendonly, and takes it back with the next. The offer is the whole
+// session description, not only what changes.
 //
 // With a body, the re-INVITE carries the offer, the 2xx the answer, and
 // the UA sends the ACK itself. Without a body, the 2xx carries the
@@ -583,14 +611,16 @@ var ErrInviteInProgress = errors.New("sip: an INVITE transaction is in progress 
 //
 // The re-INVITE lists 100rel in Supported, as every request within the
 // dialog does, so the peer may send its provisional responses reliably.
-// Each one gets its PRACK (RFC 3262 4).
+// Each one gets its PRACK (RFC 3262 4). Without ManualPRACK the UA
+// sends it itself, without a body.
 //
 // A final response other than 2xx leaves the session as it was. After a
 // 491 (Request Pending), the re-INVITE crossed one of the peer; the
 // user may try again after GlareDelay.
-func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, error) {
+func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 	c := d.c
 	c.mu.Lock()
+	body, headers := re.Body, re.Headers
 	offers := len(body.Content) > 0
 	var err error
 	switch {
@@ -632,8 +662,8 @@ func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, erro
 				final = resp
 				break
 			}
-			if resp.StatusCode > 100 {
-				d.reInviteProvisional(resp)
+			if resp.StatusCode > 100 && d.reInviteProvisional(resp, re.ManualPRACK) && re.OnProvisional != nil {
+				re.OnProvisional(resp)
 			}
 		}
 		t.end()
@@ -668,16 +698,24 @@ func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, erro
 }
 
 // reInviteProvisional is RFC 3262 4 for resp, a 101-199 response to a
-// re-INVITE of this UA: a reliable one gets its PRACK, unless it is a
-// retransmission or comes out of order.
-func (d *CallDialog) reInviteProvisional(resp *Message) {
+// re-INVITE of this UA: a reliable one gets its PRACK, from the UA
+// unless manualPRACK leaves it to the user. A retransmission, or one
+// that comes out of order, is discarded. It reports whether to pass
+// resp on to the user.
+func (d *CallDialog) reInviteProvisional(resp *Message, manualPRACK bool) bool {
 	c := d.c
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !resp.Requires(Option100rel) || d.usable() != nil || !d.reliableInOrder(resp) {
-		return
+	if !resp.Requires(Option100rel) {
+		return true
 	}
-	d.autoPRACK(resp)
+	if d.usable() != nil || !d.reliableInOrder(resp) {
+		return false
+	}
+	if !manualPRACK {
+		d.autoPRACK(resp)
+	}
+	return true
 }
 
 // awaitsACK tells that a 2xx of this UA to an INVITE of the peer

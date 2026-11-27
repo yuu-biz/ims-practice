@@ -144,3 +144,88 @@ func TestPRACKOfAReINVITEThatGets481EndsTheCall(t *testing.T) {
 		t.Errorf("call ended with %v, want ErrDialogLost", out.Err())
 	}
 }
+
+// reInviteWith is reInvite for ReInviteWith.
+func reInviteWith(out *OutgoingCall, re ReInvitation) <-chan reInviteDone {
+	done := make(chan reInviteDone, 1)
+	go func() {
+		resp, err := out.ReInviteWith(re)
+		done <- reInviteDone{resp, err}
+	}()
+	return done
+}
+
+// prackResult is what PRACK returned.
+type prackResult struct {
+	final *Message
+	err   error
+}
+
+// prackOf sends the PRACK of the user for resp in a goroutine of its
+// own, so that the test can answer it from the raw callee meanwhile.
+func prackOf(out *OutgoingCall, resp *Message, body Body, headers ...HeaderField) <-chan prackResult {
+	pracked := make(chan prackResult, 1)
+	go func() {
+		final, err := out.PRACK(resp, body, headers...)
+		pracked <- prackResult{final, err}
+	}()
+	return pracked
+}
+
+// handed reads n responses that OnProvisional passed on to got.
+func handed(t *testing.T, got <-chan *Message, n int) []*Message {
+	t.Helper()
+	var ms []*Message
+	for range n {
+		select {
+		case m := <-got:
+			ms = append(ms, m)
+		case <-time.After(2 * time.Second):
+			t.Fatalf("OnProvisional got %d responses within 2s, want %d", len(ms), n)
+		}
+	}
+	return ms
+}
+
+// A B2BUA passes the provisional responses to a re-INVITE on to its
+// other leg, and the PRACK that comes back from there on to the UAS:
+// OnProvisional gets each response that the UA takes, and ManualPRACK
+// leaves the PRACK to the user.
+func TestReINVITEHandsItsProvisionalResponsesToTheUser(t *testing.T) {
+	callerUA := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	got := make(chan *Message, 4)
+	done := reInviteWith(out, ReInvitation{Body: holdOffer, ManualPRACK: true,
+		OnProvisional: func(resp *Message) { got <- resp }})
+	reinvite := readDatagram(t, p.peer)
+	send(t, p.peer, NewResponse(reinvite, 180, ""), callerUA.Stack())
+	progress := reliable(reinvite, 183, 1, p.target)
+	send(t, p.peer, progress, callerUA.Stack())
+	send(t, p.peer, progress, callerUA.Stack())
+	expectSilence(t, p.peer, 3*slowTimers.T1, "no PRACK of the UA's own with ManualPRACK")
+
+	ms := handed(t, got, 2)
+	if ms[0].StatusCode != 180 || ms[1].StatusCode != 183 {
+		t.Fatalf("OnProvisional got %d and %d, want 180 and 183", ms[0].StatusCode, ms[1].StatusCode)
+	}
+	pracked := prackOf(out, ms[1], Body{}, HeaderField{Name: "User-Agent", Value: "relay"})
+	prack := readPRACK(t, p, "1 2 INVITE", "3 PRACK")
+	if prack.Get("User-Agent") != "relay" {
+		t.Errorf("PRACK has User-Agent %q, want the one the user gave", prack.Get("User-Agent"))
+	}
+	p.respond(prack, 200, Body{})
+	if r := <-pracked; r.err != nil || r.final.StatusCode != 200 {
+		t.Fatalf("PRACK returned %v, %v; want the 200", r.final, r.err)
+	}
+	if _, err := out.PRACK(ms[1], Body{}); err == nil {
+		t.Error("a second PRACK for the same response went out")
+	}
+
+	acceptReInvite(t, p, reinvite, holdAnswer)
+	if r := finalOf(t, done); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("ReInviteWith returned %v, %v; want the 200", r.resp, r.err)
+	}
+	if len(got) > 0 {
+		t.Errorf("OnProvisional got %d more responses, such as the retransmitted 183", len(got))
+	}
+}
