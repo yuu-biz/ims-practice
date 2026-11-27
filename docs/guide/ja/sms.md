@@ -293,7 +293,9 @@ IP-SM-GW が PUR を送るのは、そのような連絡先があるかどうか
 
 ### 再登録と登録の解除
 
-再登録のたびに、第三者 REGISTER がまた届きます。IP-SM-GW はそのたびに、購読のダイアログの中で S-CSCF へ直接 SUBSCRIBE を送って購読を更新するので、自分のタイマーは要りません。状態が変わらない NOTIFY では PUR を送りません。再登録は、UE がそこにいることも示します。前にショートメッセージが届かなかったときは、これが意味を持ちます。[UE 2 が登録し直すだけのとき](#ue-2-が登録し直すだけのとき)を見てください。
+再登録のたびに、第三者 REGISTER がまた届きます。IP-SM-GW はそのたびに、購読のダイアログの中で S-CSCF へ直接 SUBSCRIBE を送って購読を更新するので、更新のためのタイマーは要りません。状態が変わらない NOTIFY では PUR を送りません。再登録は、UE がそこにいることも示します。前にショートメッセージが届かなかったときは、これが意味を持ちます。[UE 2 が登録し直すだけのとき](#ue-2-が登録し直すだけのとき)を見てください。
+
+S-CSCF が受け付けた SUBSCRIBE には、最初のものにも更新にも、Timer N のうちに NOTIFY が続かなければなりません。Timer N は 64*T1、つまり 32 秒です（RFC 6665 4.1.2.4）。NOTIFY は IP-SM-GW のどの台に届いてもよく、届いた台が保存先で待ちを解きます。SUBSCRIBE を送った台は、Timer N が切れたときに保存先を見ます。NOTIFY が来ていなければ、購読は失敗したことになります。更新のあとなら、購読は終わったことになります（RFC 6665 4.1.2.2）。IP-SM-GW はその購読を忘れます。その利用者のために HSS に自分を登録していたなら、`<IP-SM-GW-Number>` を空にした PUR で取り消します。次の第三者 REGISTER で、改めて購読します。
 
 UE が登録を解除すると、S-CSCF は Subscription-State が `terminated;reason=noresource` の NOTIFY で購読を終わらせます（TS 24.229 5.4.2.1.2）。IP-SM-GW は 200 OK を返し、`<IP-SM-GW-Number>` を空にした PUR を送ります。利用者を示すのは、ここでも MSISDN です。これで HSS から IP-SM-GW の登録が消えます。S-CSCF は Expires が 0 でボディの無い第三者 REGISTER も送り、IP-SM-GW は 200 OK を返すだけです。スクリプトのキャプチャでは、NOTIFY がこの REGISTER より先に来ています。
 
@@ -939,7 +941,6 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | 場所 | 省いたこと | 理由 |
 | --- | --- | --- |
 | IP-SM-GW、TS 24.229 5.7.1.1 と 5.7.3 | 第三者 REGISTER の icid-value と orig-ioi も、IP-SM-GW が自分で送る要求への応答の term-ioi も保存しない。 | どれも IP-SM-GW の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らない。 |
-| IP-SM-GW、RFC 6665 4.1.2.4 | Timer N を使わない。NOTIFY が来なかった SUBSCRIBE は、次の第三者 REGISTER のときに新しい購読に置き換える。 | S-CSCF は受け付けた SUBSCRIBE のすべてにすぐ NOTIFY を送る。 |
 | IP-SM-GW、TS 24.341 5.3.3.2 | service-info に MSISDN が無いとき、PUR では利用者を公開ユーザー識別子で示す。UE の REGISTER の IMSI は使わない。 | IMSI は message/sip のボディに入った UE の REGISTER から取るが、S-CSCF はそのボディを送らない。Sh は公開ユーザー識別子も受け付ける（TS 29.328 Table 7.6.1）。 |
 | IP-SM-GW、TS 24.341 5.3.3.4.1 | In-Reply-To の無い delivery report は捨てる。 | TS 24.341 5.3.2.4 は UE に In-Reply-To を付けさせている。RP-MR だけで配達を探すには、Store に 2 つ目のキーが要る。 |
 | IP-SM-GW、TS 23.204 6.4 step 5 と 6.5a | ドメインを選ばない。IMS だけに配達し、失敗したら CS や PS のドメインを試さずにそのまま報告する。 | このプロジェクトには IP-SM-GW から呼べる MSC、SGSN、MME、SMSF が無く、次に試すドメインが無い。 |

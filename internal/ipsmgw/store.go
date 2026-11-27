@@ -65,6 +65,11 @@ type RegSubscription struct {
 	// Available is what the HSS was last told: true when the IP-SM-GW has
 	// registered itself for the user's short messages.
 	Available bool
+	// NotifyDeadline is when Timer N runs out for the SUBSCRIBE that went
+	// last, the first or a refresh (RFC 6665 4.1.2.2, 4.1.2.4). Every
+	// NOTIFY clears it, at whichever instance it arrives, so one that is
+	// still set when it is past means that none followed that SUBSCRIBE.
+	NotifyDeadline time.Time
 	// Expires is when the subscription ends unless a refresh comes
 	// first. The Store forgets it then.
 	Expires time.Time

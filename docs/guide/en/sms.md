@@ -286,7 +286,9 @@ The IP-SM-GW sends a PUR only when a NOTIFY changes whether the user has such a 
 
 ### Re-registration and deregistration
 
-Each re-registration brings another third-party REGISTER. The IP-SM-GW then refreshes its subscription with a SUBSCRIBE within the dialog, straight to the S-CSCF, so it needs no timer of its own. A NOTIFY that shows no change sends no PUR. The re-registration also shows that the UE is there, which matters when a short message did not reach it before: see [UE 2 only registers again](#ue-2-only-registers-again).
+Each re-registration brings another third-party REGISTER. The IP-SM-GW then refreshes its subscription with a SUBSCRIBE within the dialog, straight to the S-CSCF, so it needs no refresh timer of its own. A NOTIFY that shows no change sends no PUR. The re-registration also shows that the UE is there, which matters when a short message did not reach it before: see [UE 2 only registers again](#ue-2-only-registers-again).
+
+A NOTIFY must follow each SUBSCRIBE that the S-CSCF accepts, the first one and every refresh, within Timer N: 64*T1, 32 seconds (RFC 6665 4.1.2.4). The NOTIFY may reach any instance of the IP-SM-GW, and the one it reaches clears the wait in the store. The instance that sent the SUBSCRIBE looks there when Timer N runs out. If no NOTIFY has come, the subscription has failed, or, after a refresh, ended (RFC 6665 4.1.2.2). The IP-SM-GW forgets it, and if it had registered itself in the HSS for the user, it takes that back with a PUR whose `<IP-SM-GW-Number>` is empty. The next third-party REGISTER subscribes anew.
 
 When the UE deregisters, the S-CSCF ends the subscription with a NOTIFY whose Subscription-State is `terminated;reason=noresource` (TS 24.229 5.4.2.1.2). The IP-SM-GW answers 200 OK and sends a PUR, again with the MSISDN, whose `<IP-SM-GW-Number>` is empty: this takes the IP-SM-GW out of the HSS. The S-CSCF also sends a third-party REGISTER with Expires 0 and no body, which the IP-SM-GW answers with 200 OK and nothing more. In the capture of the script, the NOTIFY comes before that REGISTER.
 
@@ -932,7 +934,6 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | Where | What is left out | Why |
 | --- | --- | --- |
 | IP-SM-GW, TS 24.229 5.7.1.1 and 5.7.3 | The icid-value and the orig-ioi of a third-party REGISTER, and the term-ioi of the responses to the IP-SM-GW's own requests, are not stored. | They are for the charging records of the IP-SM-GW, which no node of this project writes. |
-| IP-SM-GW, RFC 6665 4.1.2.4 | No Timer N. A SUBSCRIBE that no NOTIFY follows is replaced by a new one at the next third-party REGISTER. | The S-CSCF answers every SUBSCRIBE that it accepts with a NOTIFY at once. |
 | IP-SM-GW, TS 24.341 5.3.3.2 | Without an MSISDN in service-info, the PUR names the user by the public identity, not by the IMSI of the UE's REGISTER. | The IMSI would come from the UE's REGISTER in a message/sip body, which the S-CSCF does not send. Sh accepts a public identity (TS 29.328 Table 7.6.1). |
 | IP-SM-GW, TS 24.341 5.3.3.4.1 | A delivery report without In-Reply-To is dropped. | TS 24.341 5.3.2.4 has the UE send it. Finding the delivery by RP-MR alone would need a second key in the Store. |
 | IP-SM-GW, TS 23.204 6.4 step 5 and 6.5a | The IP-SM-GW selects no domain: it delivers over IMS and nowhere else, and reports a delivery that failed instead of trying the CS or PS domain next. | This project has no MSC, SGSN, MME or SMSF for the IP-SM-GW to reach, so there is no second domain to try. |

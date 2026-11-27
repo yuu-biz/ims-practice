@@ -665,3 +665,118 @@ func TestARegEventSubscriptionOutlivesTheStackThatStops(t *testing.T) {
 		t.Errorf("the subscription left the Store within %v of the stop of the stack", watch)
 	}
 }
+
+// timerN is Timer N of the IP-SM-GWs of the harness: 64*T1 (RFC 6665
+// 4.1.2.4).
+var timerN = 64 * fastTimers.T1
+
+// subscriptionGone tells whether the subscription of callID has left
+// store within d.
+func subscriptionGone(store ipsmgw.Store, callID string, d time.Duration) bool {
+	return came(d, func() bool {
+		_, ok, err := store.RegSubscription(context.Background(), callID)
+		return err == nil && !ok
+	})
+}
+
+// TestASubscribeThatNoNotifyFollowsFails is RFC 6665 4.1.2.4: the
+// S-CSCF accepts the SUBSCRIBE, but no NOTIFY follows it within Timer
+// N. The subscription never came about, so the IP-SM-GW forgets it, and
+// a NOTIFY that comes after that gets 481.
+func TestASubscribeThatNoNotifyFollowsFails(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	h.thirdPartyRegister(3600)
+	subscribe := h.subscribed()
+	if !subscriptionGone(store, subscribe.Get("Call-ID"), 5*time.Second) {
+		t.Fatal("the subscription that no NOTIFY followed is still in the Store")
+	}
+	if resp := h.send(notify(subscribe, 1, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip"))); resp.StatusCode != 481 {
+		t.Errorf("NOTIFY after Timer N answered %d, want 481", resp.StatusCode)
+	}
+	h.noUpdate()
+}
+
+// TestARefreshThatNoNotifyFollowsEndsTheSubscription is RFC 6665
+// 4.1.2.2: no NOTIFY follows the refresh within Timer N, so the
+// subscription has ended. The IP-SM-GW no longer hears of the user, and
+// takes its registration for her short messages out of the HSS.
+func TestARefreshThatNoNotifyFollowsEndsTheSubscription(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	h.thirdPartyRegister(3600)
+	subscribe := h.subscribed()
+	h.send(notify(subscribe, 1, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	if got := h.nextUpdate(); got != registered {
+		t.Fatalf("PUR = %+v, want %+v", got, registered)
+	}
+
+	h.thirdPartyRegister(1800)
+	select {
+	case <-h.atSCSCF:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no refresh reached the S-CSCF")
+	}
+	if got := h.nextUpdate(); got != unregistered {
+		t.Errorf("PUR = %+v, want %+v", got, unregistered)
+	}
+	if !subscriptionGone(store, subscribe.Get("Call-ID"), 5*time.Second) {
+		t.Error("the subscription whose refresh no NOTIFY followed is still in the Store")
+	}
+}
+
+// TestANotifyWithinTimerNKeepsTheSubscription: the NOTIFYs of the
+// S-CSCF follow the SUBSCRIBE and its refresh at once, so the
+// subscription outlives Timer N of both.
+func TestANotifyWithinTimerNKeepsTheSubscription(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	h.thirdPartyRegister(3600)
+	subscribe := h.subscribed()
+	h.send(notify(subscribe, 1, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	if got := h.nextUpdate(); got != registered {
+		t.Fatalf("PUR = %+v, want %+v", got, registered)
+	}
+	h.thirdPartyRegister(1800)
+	select {
+	case <-h.atSCSCF:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no refresh reached the S-CSCF")
+	}
+	h.send(notify(subscribe, 2, "active;expires=1961", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+
+	if subscriptionGone(store, subscribe.Get("Call-ID"), 2*timerN) {
+		t.Error("the subscription left the Store although its NOTIFYs came in time")
+	}
+	h.noUpdate()
+}
+
+// TestANotifyToAnotherIPSMGWStopsTimerN: two IP-SM-GWs share a Store
+// and the locks of the users, and the NOTIFYs of the subscription and
+// of its refresh, which the first one sent, reach the second. Timer N
+// of the first finds them in the Store and keeps the subscription.
+func TestANotifyToAnotherIPSMGWStopsTimerN(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	locks := ipsmgw.Config{UserLocks: &ims.UserLocks{}}
+	a := newHarnessWith(t, store, time.Minute, answerOK, locks)
+	b := newHarnessWith(t, store, time.Minute, answerOK, locks)
+	a.thirdPartyRegister(3600)
+	subscribe := a.subscribed()
+	b.send(notify(subscribe, 1, "active;expires=3761", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+	if got := b.nextUpdate(); got != registered {
+		t.Fatalf("PUR of the second IP-SM-GW = %+v, want %+v", got, registered)
+	}
+	a.thirdPartyRegister(1800)
+	select {
+	case <-a.atSCSCF:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no refresh reached the S-CSCF")
+	}
+	b.send(notify(subscribe, 2, "active;expires=1961", regDoc(reginfo.Active, reginfo.Active, "+g.3gpp.smsip")))
+
+	if subscriptionGone(store, subscribe.Get("Call-ID"), 2*timerN) {
+		t.Error("Timer N of the first IP-SM-GW removed the subscription that the second one had a NOTIFY for")
+	}
+	a.noUpdate()
+	b.noUpdate()
+}
