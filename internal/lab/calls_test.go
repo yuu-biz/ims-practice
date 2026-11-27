@@ -164,6 +164,101 @@ func TestCancelledCall(t *testing.T) {
 	h.wantCall(id, CallCancelled, 487)
 }
 
+// forkedCall sends an INVITE that a forking proxy has sent to two
+// callees, and the 180 of each, which creates an early dialog per To
+// tag (RFC 3261 12.1).
+func forkedCall(h *harness, id string) {
+	h.t.Helper()
+	h.along(toCallee, invite(id))
+	h.along(toCaller, response(id, 180, "Ringing", 1, "INVITE", "calleeA"))
+	h.along(toCaller, response(id, 180, "Ringing", 1, "INVITE", "calleeB"))
+	h.wantCall(id, CallEarly, 180)
+}
+
+// TestForkedCallIsConfirmedWhateverTheOrder: one branch ends with 487
+// and another answers with 200. Each To tag is a dialog of its own
+// (RFC 3261 13.2.2.4), and the call is confirmed whichever the Lab saw
+// first.
+func TestForkedCallIsConfirmedWhateverTheOrder(t *testing.T) {
+	t.Run("487 then 200", func(t *testing.T) {
+		h := newHarness(t, Config{})
+		const id = "fork-487-200@172.28.0.100"
+		forkedCall(h, id)
+		h.along(toCaller, response(id, 487, "Request Terminated", 1, "INVITE", "calleeA"))
+		h.wantCall(id, CallEarly, 180)
+		h.along(toCaller, response(id, 200, "OK", 1, "INVITE", "calleeB"))
+		h.wantCall(id, CallConfirmed, 200)
+	})
+	t.Run("200 then 487", func(t *testing.T) {
+		h := newHarness(t, Config{})
+		const id = "fork-200-487@172.28.0.100"
+		forkedCall(h, id)
+		h.along(toCaller, response(id, 200, "OK", 1, "INVITE", "calleeB"))
+		h.wantCall(id, CallConfirmed, 200)
+		h.along(toCaller, response(id, 487, "Request Terminated", 1, "INVITE", "calleeA"))
+		h.wantCall(id, CallConfirmed, 200)
+	})
+	t.Run("487 with no other branch known, then 200", func(t *testing.T) {
+		h := newHarness(t, Config{})
+		const id = "fork-late@172.28.0.100"
+		h.along(toCallee, invite(id))
+		h.along(toCaller, response(id, 487, "Request Terminated", 1, "INVITE", "calleeA"))
+		h.wantCall(id, CallCancelled, 487)
+		h.along(toCaller, response(id, 200, "OK", 1, "INVITE", "calleeB"))
+		h.wantCall(id, CallConfirmed, 200)
+	})
+}
+
+// TestForkedCallEndsWithItsLastBranch: a BYE ends the dialog it names,
+// from either side, and the call ends when no dialog is left.
+func TestForkedCallEndsWithItsLastBranch(t *testing.T) {
+	h := newHarness(t, Config{})
+	const id = "fork-bye@172.28.0.100"
+	forkedCall(h, id)
+	h.along(toCaller, response(id, 200, "OK", 1, "INVITE", "calleeB"))
+	h.along(toCaller, response(id, 487, "Request Terminated", 1, "INVITE", "calleeA"))
+	// The callee hangs up: its tag is in From and the caller's in To.
+	bye := strings.NewReplacer(
+		`From: "UE 1" <`+caller+`>;tag=caller1`, "From: <"+callee+">;tag=calleeB",
+		"To: <"+callee+">;tag=calleeB", `To: "UE 1" <`+caller+`>;tag=caller1`,
+	).Replace(request(id, "BYE", 1, "calleeB"))
+	h.along(toCaller, bye)
+	h.wantCall(id, CallTerminated, 200)
+}
+
+// TestForkedCallThatEveryBranchFails: the call shows how it ended once
+// no branch is left. It is cancelled only if the caller withdrew from
+// every branch, and failed if any branch got another failure response,
+// whichever order the Lab saw them in.
+func TestForkedCallThatEveryBranchFails(t *testing.T) {
+	t.Run("every branch cancelled", func(t *testing.T) {
+		h := newHarness(t, Config{})
+		const id = "fork-cancelled@172.28.0.100"
+		forkedCall(h, id)
+		h.along(toCallee, request(id, "CANCEL", 1, ""))
+		h.along(toCaller, response(id, 487, "Request Terminated", 1, "INVITE", "calleeA"))
+		h.wantCall(id, CallEarly, 180)
+		h.along(toCaller, response(id, 487, "Request Terminated", 1, "INVITE", "calleeB"))
+		h.wantCall(id, CallCancelled, 487)
+	})
+	t.Run("busy and cancelled", func(t *testing.T) {
+		h := newHarness(t, Config{})
+		const id = "fork-busy-487@172.28.0.100"
+		forkedCall(h, id)
+		h.along(toCaller, response(id, 486, "Busy Here", 1, "INVITE", "calleeA"))
+		h.along(toCaller, response(id, 487, "Request Terminated", 1, "INVITE", "calleeB"))
+		h.wantCall(id, CallFailed, 486)
+	})
+	t.Run("cancelled and busy", func(t *testing.T) {
+		h := newHarness(t, Config{})
+		const id = "fork-487-busy@172.28.0.100"
+		forkedCall(h, id)
+		h.along(toCaller, response(id, 487, "Request Terminated", 1, "INVITE", "calleeB"))
+		h.along(toCaller, response(id, 486, "Busy Here", 1, "INVITE", "calleeA"))
+		h.wantCall(id, CallFailed, 486)
+	})
+}
+
 func TestResponsesBeforeAnInviteMakeNoCall(t *testing.T) {
 	h := newHarness(t, Config{})
 	h.hop(pcscf, ue1, response("stray@172.28.0.100", 200, "OK", 1, "INVITE", "x"))
