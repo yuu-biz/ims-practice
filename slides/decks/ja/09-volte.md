@@ -1150,6 +1150,7 @@ steps:
     text: |
       イベントストリームに届きます。TFT の 4 つのフィルタは端末と中継ノードの間の RTP と RTCP です。
       default bearer は残り、音声の bearer がもう 1 本増えます。
+      スタブは AAA を返してから bearer を作るので、P-CSCF が 183 を先へ送るのと前後します。
   - id: reserved
     title: 端末が資源を確保したとみなす
     show: [ue12-reserved]
@@ -1168,11 +1169,11 @@ steps:
     show: [bearer-10, ue10-reserved]
     active: ue10-reserved
     checkpoint: true
-    text: フィルタの相手のアドレスはもう一方の端末ではなく中継ノードです。
+    text: フィルタの相手のアドレスはもう一方の端末ではなく中継ノードです。この bearer と次の 183 は、どちらが先に端末に届くこともあります。
   - id: forward
-    title: そのあとで 183 が発信側に届く
+    title: AAA が返ると 183 が発信側に届く
     show: [r183-p-10]
-    text: P-CSCF は AAR に答えが返るまで 183 を渡しません。資源が無ければ、通話をここで終わらせます。
+    text: P-CSCF は AAR に答えが返るまで 183 を渡しません。待つのは AAA だけで、bearer ができるのは待ちません。許可されなければ、通話をここで終わらせます。
 ```
 
 両側の P-CSCF は、SDP の answer がそろうと AAR を送ります。着信側は volte12 からの 183、発信側は volte10 に向かう 183 がきっかけです。
@@ -1247,11 +1248,11 @@ steps:
       着信側は発信側の区間も mandatory に上げ、資源がそろったら知らせてほしいと求めます。
       自分の資源はまだ `none` です。
   - id: resources
-    title: 両側の資源がそろってから 183 が進む
+    title: AAA が返ると 183 が先へ進む
     show: [r183-p-10]
     text: |
-      このあいだに、前のシーンの 2 つの AAR と 2 本の bearer が入ります。
-      発信側に 183 が届くのはそのあとです。
+      このあいだに、前のシーンの 2 つの AAR が入ります。P-CSCF が待つのは AAA だけで、bearer ができるのは待ちません。
+      発信側の資源がそろったことは、このあとの UPDATE で伝えます。
   - id: prack
     title: PRACK で 183 を確かめる
     show: [prack, prack-ok]

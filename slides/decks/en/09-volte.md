@@ -1150,6 +1150,7 @@ steps:
     text: |
       It arrives on the event stream. The four filters of the TFT are the RTP and the RTCP between the phone and the relay.
       The default bearer stays: one more bearer, for the voice, comes up beside it.
+      The stub sets up the bearer after it sends the AAA, so it may come before or after the P-CSCF sends the 183 on.
   - id: reserved
     title: The phone takes its resources as reserved
     show: [ue12-reserved]
@@ -1168,11 +1169,11 @@ steps:
     show: [bearer-10, ue10-reserved]
     active: ue10-reserved
     checkpoint: true
-    text: The far address of the filters is the relay, not the other phone.
+    text: The far address of the filters is the relay, not the other phone. This bearer and the next 183 may reach the phone in either order.
   - id: forward
-    title: Only then does the 183 reach the caller
+    title: Once the AAA is back, the 183 reaches the caller
     show: [r183-p-10]
-    text: The P-CSCF holds the 183 until the AAR has its answer. Without resources it ends the call here.
+    text: The P-CSCF holds the 183 until the AAR has its answer. It waits for the AAA only, not for the bearer. If the AAR is refused, it ends the call here.
 ```
 
 The P-CSCF of each side sends an AAR once it has the SDP answer: the callee's side on the 183 from volte12, the caller's side on the 183 on its way to volte10.
@@ -1247,11 +1248,11 @@ steps:
       The callee raises the caller's segment to mandatory and asks to be told once those resources are there.
       Its own are still `none`.
   - id: resources
-    title: The 183 moves on once both sides have resources
+    title: The 183 moves on once the AAA is back
     show: [r183-p-10]
     text: |
-      In between come the two AARs and the two bearers of the previous scene.
-      Only after them does the 183 reach the caller.
+      In between come the two AARs of the previous scene. The P-CSCF waits for the AAA only, not for the bearer.
+      The caller tells that its resources are there in the UPDATE that follows.
   - id: prack
     title: The PRACK acknowledges the 183
     show: [prack, prack-ok]
