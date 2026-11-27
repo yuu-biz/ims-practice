@@ -13,6 +13,10 @@ type Deck struct {
 	Title  string
 	Footer string
 	Lang   string
+	// Format is "" for a deck of slides only, FormatVisual for a deck
+	// with a model and scenes.
+	Format string
+	Model  *Model
 	Slides []Slide
 }
 
@@ -28,6 +32,9 @@ const (
 	LayoutExercise   Layout = "exercise"
 	LayoutAnswers    Layout = "answers"
 	LayoutSummary    Layout = "summary"
+	// LayoutScene is a slide with a scene. It is not named in a layout
+	// line: a scene block at the top of the body makes it.
+	LayoutScene Layout = "scene"
 )
 
 // Layouts lists the layouts that a "[layout: ...]" line may name.
@@ -44,6 +51,9 @@ type Slide struct {
 	Layout  Layout
 	Title   []Span
 	Columns [][]Block
+	// Scene is the diagram of the slide, in a visual deck. Columns then
+	// hold the longer explanation of the scene.
+	Scene *Scene
 }
 
 // Span is a run of text with one style. Href is set for a link.

@@ -23,7 +23,7 @@ func CheckExcerpts(d *Deck) []error {
 	var problems []error
 	files := map[string][]string{}
 	for _, slide := range d.Slides {
-		for _, column := range slide.Columns {
+		for _, column := range d.Sections(slide) {
 			target, info := "", ""
 			for _, b := range column {
 				switch b := b.(type) {

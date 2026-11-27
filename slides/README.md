@@ -2,7 +2,9 @@
 
 [日本語](README.ja.md)
 
-The decks for study sessions on this repository. Each deck is a text file in a small Markdown-like format. A generator of this repository, [cmd/slides](cmd/slides/main.go), lays out every slide and writes two files of it: a pptx to hand out and to edit in PowerPoint, and an HTML page to present from. Both draw the same boxes at the same places, so a slide looks the same in each.
+The decks for study sessions on this repository. Each deck is a text file in a small Markdown-like format. A generator of this repository, [cmd/slides](cmd/slides/main.go), lays out every slide and writes two files of it: a pptx to hand out and to edit in PowerPoint, and an HTML page to present from and to study with.
+
+A slide is either a page of text, tables and code, or a scene: a diagram of the network or of the code that the learner steps through. A scene follows a signal one hop at a time, moves in on the node that handles it, shows the values it received and what it decided, and draws the next signal that follows from it. The HTML steps through a scene; the pptx keeps the states of it that a still page can explain, with the text of the steps written out beside the diagram.
 
 The decks do not repeat the guides. Each slide says what to look at in the capture and links to the step of the guide in [docs/guide/](../docs/guide/), where the full ladder diagram and the explanation are.
 
@@ -79,9 +81,12 @@ The pptx is an ordinary PowerPoint file. Everything on a slide is a native objec
 | Tables | Tables (`a:tbl`), with a header row. |
 | Code blocks | Text boxes in a monospace font, on a grey fill. |
 | Ladder diagrams | One group of shapes: a box and a line for each participant, an arrow (a connector with an arrowhead) and a text box for each message, a box for each note. Ungroup it to edit a part. |
+| The diagram of a scene | One group of shapes named after what they show: a rounded box with its text for each node (`node icscf`), a connector with an arrowhead for each message (`event uar1`) and a text box for its label (`label uar1`), a box for each processing step in a node. The names show in PowerPoint's selection pane. |
 | Links to the guides | Hyperlinks. The package keeps their addresses as URIs, so a Japanese anchor is percent-encoded (`%E7%99%BB...`). |
 
 There are no pictures, and there are no speaker notes.
+
+A scene gives a page for each of its checkpoints, the states that its source marks to keep, and the last step of the scene is always one. The page draws the diagram as the checkpoint leaves it, numbers each message with the step that sends it, and writes out, beside or below the diagram, the title and the text of every step since the checkpoint before, with the fields of their messages in a table. A page that the learner reads without stepping through the scene so says what the HTML shows one step at a time. The longer explanation of the scene follows on a page of its own with the tag "Details". The arrows are not glued to the boxes: moving a node in PowerPoint leaves its arrows where they are.
 
 Known limits:
 
@@ -91,18 +96,27 @@ Known limits:
 
 ## The HTML
 
-One file per deck, which opens from disk and loads nothing from the network. One slide shows at a time, scaled to the window.
+One file per deck, which opens from disk and loads nothing from the network. One slide shows at a time, scaled to the window. A page of text is drawn from the same boxes as the pptx. A scene is a stage: its question as the title, the diagram, the text of the current step with the fields of its message, and a button that opens the longer explanation of the scene.
 
 | Key | What it does |
 | --- | --- |
-| Right, Down, Page Down, Space, Enter | Next slide |
-| Left, Up, Page Up, Backspace | Previous slide |
-| Home, End | First, last slide |
+| Right, Down, Page Down, Space, Enter | Next step; after the last step of a slide, the next slide |
+| Left, Up, Page Up, Backspace | Back one step; from the first step of a slide, the last step of the slide before |
+| Home, End | First slide, last step of the last slide |
+| `d` | Open or close the longer explanation of a scene ("Read more"); Escape closes it |
+| `m` | Less motion: every change shows at once |
+| `r` | The reading view; Escape goes back |
 | `f` | Full screen |
 
-The address keeps the number of the slide (`#12`), so a link or a reload opens the same slide. Printing gives one slide per page of 10 by 5.625 inches, the size of the pptx slides; "Save as PDF" in the print dialog makes a PDF.
+The bar under the stage has the same buttons, a list of the slides, and a button for each step of the current scene. Space and Enter on a button press the button and do not step.
 
-With `?check` at the end of the address (`04-registration.html?check`), the page shows every slide and lists at its bottom each box whose text the browser drew larger than the box. It confirms the measure of the build with the fonts of a real browser.
+The address names the slide and the step: `#select/uaa` for the step `uaa` of the scene `select`, `#12` for slide 12 when it is a page of text. A link or a reload opens the same state, and stepping to it, stepping back to it or opening it from its address draw the same picture: each step is drawn from its complete state, not from the step before it. An address that names no slide opens the first. The link to the deck in the other language keeps the address, so it opens the same step.
+
+Each step that adds a message shows a dot running along it from its sender to its receiver, and the view glides when a step moves in on a node. "Less motion", or the setting of the system that asks for less motion, leaves both out; nothing is lost. On a narrow screen, such as a phone, the slides are not scaled down: the text flows, the diagram takes the width of the screen, and the text of the step follows below it.
+
+The reading view shows every slide one after the other: a page of text as flowing text, and a scene at each of its checkpoints, as the pptx does, followed by its longer explanation. Printing prints the reading view; "Save as PDF" in the print dialog makes a PDF of it.
+
+With `?check` at the end of the address (`04-registration.html?check`), the page shows every slide, draws every step of every scene, and lists at its bottom each box whose text the browser drew larger than the box, each scene panel whose text does not fit, each node whose name is wider than its box, and each label of a message that covers a node or another label. It confirms the measure of the build with the fonts of a real browser.
 
 [check-html.js](check-html.js) does this for every deck in a headless Chromium. Run it here after `build`:
 
@@ -110,7 +124,18 @@ With `?check` at the end of the address (`04-registration.html?check`), the page
 node check-html.js   # reads dist/
 ```
 
-It prints, for each deck, the number of boxes that overflow and the fonts that drew the text, and fails when a box overflows, or when more than 1% of the glyphs of a deck come from fonts that the deck does not name: that is what a machine without the fonts of the decks shows, and its measure would say nothing. A symbol that none of the fonts has, such as "⊕", comes from another font on any machine and stays under that share. It needs Node with Playwright and its Chromium, and the fonts: on Ubuntu, the packages `fonts-crosextra-carlito` (`Carlito`, with the widths of `Calibri`), `fonts-noto-cjk` (`Noto Sans CJK JP`) and `fonts-dejavu-core` (`DejaVu Sans Mono`).
+It prints, for each deck, the number of problems and the fonts that drew the text, and fails when there is a problem, or when more than 1% of the glyphs of a deck come from fonts that the deck does not name: that is what a machine without the fonts of the decks shows, and its measure would say nothing. A symbol that none of the fonts has, such as "⊕", comes from another font on any machine and stays under that share. It needs Node with Playwright and its Chromium, and the fonts: on Ubuntu, the packages `fonts-crosextra-carlito` (`Carlito`, with the widths of `Calibri`), `fonts-noto-cjk` (`Noto Sans CJK JP`) and `fonts-dejavu-core` (`DejaVu Sans Mono`).
+
+### Sizes
+
+The units differ between the outputs, and the same number is not the same length in each.
+
+| Where | Unit | Size |
+| --- | --- | --- |
+| A page of the layout, and the pptx | point; 1 point is 12700 EMU | 960 by 540 points, 13⅓ by 7½ inches |
+| The stage of the HTML | CSS pixel | 1280 by 720, scaled to the window. A page of text is drawn at 4/3 of its points, so that it fills the stage. |
+| A diagram | its own unit | A grid of 280 by 160 per node on a map, a column of 168 and a row of 42 on a ladder. Each output scales the diagram to its room. |
+| The reading view and the printout | CSS pixel | The width of the window, or of the paper |
 
 ## Check
 
@@ -120,9 +145,12 @@ It prints, for each deck, the number of boxes that overflow and the fonts that d
 - a slide whose content does not fit, even at 80% of the text size. Nothing is cut off or shrunk further in silence: split the slide or shorten it;
 - a link to a file that does not exist, and a link to a heading of a guide that no longer exists. The decks link to the steps of the guides by heading, so a renamed heading breaks them;
 - a code excerpt that is no longer in its file. An excerpt is a code block right below a paragraph that is only a link to a file, and the code blocks in the same language that follow it, such as a second `go` block; a block in another language, such as the `sh` that runs the code, ends them. Each excerpt has to be lines of the file, one after another, as they are there, tabs and all, so a change of the code that the deck did not follow fails the check;
-- a deck that is missing in one language, or whose slides differ between the languages in number or in layout;
+- a deck that is missing in one language, or whose slides differ between the languages in number or in layout, or whose model or scenes differ: the ids, the nodes and their places, the senders and receivers of the events, the names of the signals, the number of fields, and the complete state of each step;
+- a mistake in a scene, with its line: an unknown key, an id that is taken, an event that a step shows twice or hides without showing, a node that the scene does not draw, and a checkpoint whose diagram and text do not fit on a page;
 - a command of a deck that the repository does not take. The check reads the `sh` blocks and the inline code: for `docker compose`, the services and the profiles of `compose.yaml` (or of the files that `-f` names); for `ue`, also inside `docker compose run`, the subcommands that `ue register -h` lists and, for each subcommand, the flags that `ue SUBCOMMAND -h` prints; for `curl` to the Lab, the method and the path against the routes that `internal/lab` registers, read from its source; and every path under `scripts/`. A `curl` to another address fails until the address and its package are added to `httpHosts` in [internal/facts/routes.go](internal/facts/routes.go).
 - a node of a deck that the Compose files no longer run at that address. The check reads every table of a deck and, in each cell, every address of a Compose network and every subnet; a cell may write a list of addresses with the last number only, so `172.28.0.100, 101, 103` is three of them. Each has to be the address of a service, or the subnet of a network, of `compose.yaml` or of `deploy/interconnect/compose.yaml`, which adds the second network and the link between the two. Where the first two columns of a table are the nodes and their addresses, a service that the node column names in code (`` `mrfp` ``) also has to be the service of the addresses of its row. Four numbers outside the range of every Compose network are the clause of a specification, not an address. Only the tables are read: a diagram or a sentence may name an address on purpose that no node has, such as the host of no peer network whose requests a border drops.
+
+The text of a scene goes through the same checks as the text of a slide: the lead, the title and the text of each step, and the names and values of the fields of the events it draws. A link in a step, or an address or a command in a field, fails as it would in a paragraph or a table.
 
 For each deck it names the slides whose text was made smaller to fit, and by how much. To read the flags of `ue`, the check builds `./cmd/ue` at the root of the repository and runs it, so a check takes longer while Go builds it.
 
@@ -213,13 +241,134 @@ A label is plain text. A row with a label wider than the diagram, or a participa
 
 Every slide has the footer of the deck at the bottom left, and every slide but the first its number at the bottom right. A slide whose content is too tall gets a smaller text, down to 80%; below that the check fails.
 
+### Scenes
+
+A deck with scenes has `format: visual` in its front matter, and between the front matter and the title slide a block `ims-model`: the nodes and every event that a scene of the deck draws. A slide is a scene when its body starts with a block `ims-scene`. The blocks are YAML; every key is known, and a mistyped key fails the check with its line.
+
+````markdown
+---
+title: A UE registers with the IMS
+footer: ims-practice study session 4. Registration
+lang: en
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: icscf, label: I-CSCF, role: entry of the home network, at: [2, 0]}
+  - {id: hss, label: HSS, role: subscriber data, at: [3, 0]}
+  - {id: scscf, label: S-CSCF, role: authenticates and registers, at: [3, 1]}
+events:
+  - id: uar1
+    msg: UAR
+    from: icscf
+    to: hss
+    proto: Cx
+    note: (1st)
+    fields:
+      - User-Authorization-Type: REGISTRATION (0)
+  - id: uaa1
+    msg: UAA
+    from: hss
+    to: icscf
+    proto: Cx
+    note: (1st)
+    fields:
+      - Experimental-Result: DIAMETER_FIRST_REGISTRATION (2001)
+  - id: icscf-select
+    do: chooses the S-CSCF
+    at: icscf
+```
+
+---
+
+# A UE registers with the IMS
+
+---
+
+## 3 and 4. The I-CSCF asks the HSS (UAR and UAA)
+
+```ims-scene
+id: select
+lead: The first UAA returns capabilities, not the name of an S-CSCF.
+steps:
+  - id: uar
+    title: It asks the HSS (UAR)
+    show: [uar1]
+    text: Cx command 300.
+  - id: uaa
+    title: The HSS returns the capabilities needed (UAA)
+    show: [uaa1]
+    checkpoint: true
+    text: No S-CSCF serves the user yet.
+  - id: choose
+    title: The I-CSCF chooses the S-CSCF
+    show: [icscf-select]
+    focus: [icscf]
+    zoom: [icscf, hss, scscf]
+    text: From its configured list.
+```
+
+| Look at | What to see |
+| --- | --- |
+| Result of the UAA | DIAMETER_FIRST_REGISTRATION (2001), inside Experimental-Result. |
+````
+
+The text below the scene block is the longer explanation of the scene: the blocks of any slide, which the HTML shows behind "Read more" and the pptx on a page of its own. It keeps what the learner needs beyond the steps: the tables of what to look at in the capture, the filters, the commands, the links to the guide and the clauses.
+
+**The model.**
+
+| Key | What it is |
+| --- | --- |
+| `nodes` | Each node has an `id`, a `label` (its name, the same in every language), a `role` (a few words, in the language of the deck) and `at: [column, row]`, its place on the grid of the map. A node keeps its place in every scene of the deck. |
+| `groups` | A frame around nodes that belong together, such as two networks: `{id, label, nodes: [...]}`. |
+| `events` | Each event has an `id` and is one of three kinds. `msg: NAME` with `from`, `to` and `proto` is one message over one hop: a request and its answer are two events, and so are the hops of one REGISTER. `do: TEXT` with `at` is what one node does with what it received. `rel: TEXT` with `from` and `to` is a relation that is not a signal, such as an import between packages; it is drawn dashed. |
+| `note` | A short qualifier under the name of the event, such as `(2nd)`. |
+| `fields` | The headers, AVPs or values that a step can show, one `- name: value` each. A value is a line of inline Markdown; put it in quotes when it starts with a backtick. |
+
+The name of a message is the name of the signal (`REGISTER`, `UAA`, `200 OK`) and is the same in both languages. The protocol of a message picks its line: SIP solid, Diameter (`Cx`, `Sh`, `Rx` and the others) dashed, DNS dotted, HTTP and media in colours of their own. The label of each line also names the protocol, so that neither the colour nor the dash is the only sign.
+
+**The scene.**
+
+| Key | What it is |
+| --- | --- |
+| `id` | The name of the scene in the address, `#select/uaa`. It is unique in the deck and the same in both languages. |
+| `view` | `map` (the default): the nodes on their grid, each message between its two nodes. `ladder`: a lifeline for each node and a row for each event, in the order in which the steps show them. |
+| `nodes` | The nodes that the scene draws. A map draws every node of the model by default, a ladder those that its events touch. |
+| `lead` | One line under the title: the answer to the question of the scene. |
+| `basis` | What the diagram is drawn from: `repository` (the default; this implementation, as the guides describe it), `standard` (a procedure of a specification) or `illustration` (an example made up to explain an idea). The diagram says it in a line under it, so that no drawing passes for a capture. |
+| `steps` | The steps, in order. |
+
+**A step.**
+
+| Key | What it is |
+| --- | --- |
+| `id`, `title`, `text` | The name of the step in the address, its title (a name of what happens, not a number), and a line or two that say what the diagram now shows. |
+| `show`, `hide`, `only` | The events that the step draws: those of the step before, minus `hide`, plus `show`. `only` starts over from its list. |
+| `active` | The event that the step is about; it is drawn strongest. By default it is the last message or process that the step adds. `active: ''` makes none. |
+| `focus` | The nodes drawn strongest; by default the ends of the active event. The other nodes that no drawn event touches are drawn faint. |
+| `zoom` | The nodes that the HTML closes in on, with the events between them. Without it the view shows the whole diagram. |
+| `detail` | The events whose fields the step shows; by default the active event, if it has fields. Two events side by side, such as the first and the second UAA, compare them. |
+| `checkpoint` | `true` keeps the state as a page of the pptx and of the reading view. The last step is always a checkpoint. |
+
+The parser turns each step into its complete state, so a step means the same whether the learner steps to it or opens it from its address. A scene in one language has the same ids, nodes, events and states as in the other; only the words differ.
+
+How to choose and split the scenes:
+
+- Give each scene one question that the learner can answer from the diagram, and put the answer in `lead`. Let each step add one thing to understand: a hop, a decision, a value that changes.
+- A map shows where a signal goes and who decides; a ladder shows who talks to whom, and in which order. A relation shows what depends on what, such as packages; it is not a signal, and a scene does not mix it with messages.
+- A step about what a node decides is a `do` event at that node, with its inputs and its result as fields.
+- Where many events gather on a map, start a step with `only` to clear what the learner no longer needs.
+- Mark a checkpoint where a still page can explain what happened since the one before. A checkpoint whose text and fields do not fit on a page fails the check: mark an earlier step as a checkpoint.
+- Keep everything of the old slide that the steps do not say in the longer explanation: nothing that a learner needs is left out, and nothing goes into speaker notes.
+
 ### Add a deck
 
-1. Write the deck in both languages in the same commit: `decks/ja/NN-name.md` and `decks/en/NN-name.md`, with the same slides and the same layouts in the same order. Copy the front matter of an existing deck and change `title` and `footer`.
+1. Write the deck in both languages in the same commit: `decks/ja/NN-name.md` and `decks/en/NN-name.md`, with the same slides and the same layouts in the same order, and the same model and scenes. Copy the front matter of an existing deck and change `title` and `footer`.
 2. Link to the guides with paths relative to the deck, such as `../../../docs/guide/en/call.md#3-the-s-cscf-turns-the-number-into-a-sip-uri`. Do not copy a ladder diagram of a guide in full; a smaller one is fine when the slide says where the full one is.
 3. Cite only the clause numbers that the guide already gives for the step, with the edition the guide names. Telephone numbers are the fictional ones of the guides (+1 202 555 01xx).
 4. A code excerpt is a few lines copied exactly from the repository, with a link to its file right above the block. The check fails when the file no longer has those lines in that order, so a change of the code shows which slide to change with it.
-5. Run `go run ./cmd/slides build` and `python3 scripts/check_links.py`, and open the HTML and the pptx to look at the slides.
+5. Run `go run ./cmd/slides build`, `node check-html.js` and `python3 scripts/check_links.py`. Open the HTML and step through every scene, forward and back, on a wide and on a narrow window; open the pptx and read each page of a checkpoint as a learner who has not seen the steps would.
 
 ### Change the look, or add a layout
 
@@ -233,3 +382,5 @@ A new layout takes four places:
 4. a row in the table of layouts above, in both languages.
 
 The HTML needs no change: it draws whatever boxes the layout places.
+
+The diagrams of the scenes are placed in [internal/layout/diagram.go](internal/layout/diagram.go), drawn on the pages of the pptx in [internal/layout/scene.go](internal/layout/scene.go), and drawn on the stage in [internal/html/svg.go](internal/html/svg.go), with the look of the stage in [internal/html/style.go](internal/html/style.go) and its steps in [internal/html/script.go](internal/html/script.go).

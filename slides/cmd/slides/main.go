@@ -58,7 +58,7 @@ func main() {
 		if *repository != "" {
 			absoluteLinks(d.pages, *repository)
 		}
-		written, err := build(d, *out)
+		written, err := build(d, all, *out, *repository)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -68,18 +68,29 @@ func main() {
 }
 
 // build writes the outputs of one deck and returns their paths.
-func build(d laidOut, out string) ([]string, error) {
+func build(d laidOut, all []laidOut, out, repository string) ([]string, error) {
 	dir := filepath.Join(out, d.deck.Lang)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 	name := strings.TrimSuffix(filepath.Base(d.deck.Path), ".md")
+	options := html.Options{Repository: repository}
+	// The HTML links to the same deck in the other language, at the
+	// same scene and step: the ids are the same in both.
+	for _, other := range all {
+		if other.deck.Lang != d.deck.Lang && filepath.Base(other.deck.Path) == filepath.Base(d.deck.Path) {
+			options.Translation = "../" + other.deck.Lang + "/" + name + ".html"
+			options.TranslationLang = other.deck.Lang
+		}
+	}
 	writers := []struct {
 		extension string
 		write     func(io.Writer, *deck.Deck, []layout.Page) error
 	}{
 		{".pptx", pptx.Write},
-		{".html", html.Write},
+		{".html", func(w io.Writer, d *deck.Deck, pages []layout.Page) error {
+			return html.WriteWith(w, d, pages, options)
+		}},
 	}
 	var written []string
 	for _, w := range writers {
@@ -180,6 +191,9 @@ func checkTranslations(decks []laidOut) []error {
 			if a, b := layoutsOf(first), layoutsOf(other); a != b {
 				problems = append(problems, fmt.Errorf("%s and %s differ in their slides:\n  %s\n  %s", first.Path, other.Path, a, b))
 			}
+			for _, p := range compareStructure(structureOf(first), structureOf(other)) {
+				problems = append(problems, fmt.Errorf("%s and %s differ in their model or their scenes: %s", first.Path, other.Path, p))
+			}
 		}
 	}
 	slices.SortFunc(problems, func(a, b error) int { return strings.Compare(a.Error(), b.Error()) })
@@ -194,11 +208,8 @@ func layoutsOf(d *deck.Deck) string {
 	return fmt.Sprintf("%d slides: %s", len(d.Slides), strings.Join(names, " "))
 }
 
-// repositoryRoot is how a deck at decks/<language>/<name>.md reaches the
-// root of the repository. A built file sits as deep, at
-// dist/<language>/<name>.pptx, so the relative links work inside a
-// checkout; a copy elsewhere, such as a CI artifact, needs them absolute.
-const repositoryRoot = "../../../"
+// repositoryRoot is how a deck reaches the root of the repository.
+const repositoryRoot = html.RepositoryRoot
 
 func absoluteLinks(pages []layout.Page, repository string) {
 	repository = strings.TrimRight(repository, "/") + "/"

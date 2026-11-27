@@ -87,3 +87,10 @@ func (b builder) ladder(l deck.Ladder, x, y, width float64) ([]Element, float64,
 	group.H = bottom - y
 	return []Element{group}, group.H, nil
 }
+
+// LadderShapes places a ladder diagram at the top left of a room of the
+// width, at the full size of its text, for a writer that draws it
+// outside a slide, such as the reading view of the HTML.
+func LadderShapes(l deck.Ladder, width float64) ([]Element, float64, error) {
+	return builder{scale: 1}.ladder(l, 0, 0, width)
+}

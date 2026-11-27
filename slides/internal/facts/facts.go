@@ -77,7 +77,7 @@ func commands(d *deck.Deck) []command {
 		}
 	}
 	for _, slide := range d.Slides {
-		for _, column := range slide.Columns {
+		for _, column := range d.Sections(slide) {
 			for _, b := range column {
 				code, ok := b.(deck.Code)
 				if !ok || code.Info != "sh" {
@@ -95,7 +95,7 @@ func commands(d *deck.Deck) []command {
 				add(slide.Number, line)
 			}
 		}
-		for _, spans := range deck.Lines(slide) {
+		for _, spans := range d.Lines(slide) {
 			for _, span := range spans {
 				if span.Code {
 					add(slide.Number, span.Text)
@@ -230,7 +230,7 @@ func scripts(d *deck.Deck) []script {
 		}
 	}
 	for _, slide := range d.Slides {
-		for _, column := range slide.Columns {
+		for _, column := range d.Sections(slide) {
 			for _, b := range column {
 				if code, ok := b.(deck.Code); ok && code.Info == "sh" {
 					for _, l := range code.Lines {
@@ -239,7 +239,7 @@ func scripts(d *deck.Deck) []script {
 				}
 			}
 		}
-		for _, spans := range deck.Lines(slide) {
+		for _, spans := range d.Lines(slide) {
 			for _, span := range spans {
 				if span.Code {
 					find(slide.Number, span.Text)

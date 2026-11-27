@@ -90,7 +90,7 @@ type slideTable struct {
 func tables(d *deck.Deck) []slideTable {
 	var out []slideTable
 	for _, slide := range d.Slides {
-		for _, column := range slide.Columns {
+		for _, column := range d.Sections(slide) {
 			for _, b := range column {
 				if t, ok := b.(deck.Table); ok {
 					out = append(out, slideTable{slide.Number, t})

@@ -8,6 +8,8 @@
 // point is one CSS pixel of the slide.
 package layout
 
+import "github.com/yuu-biz/ims-practice/slides/internal/deck"
+
 // The size of a slide.
 const (
 	SlideWidth  = 960.0
@@ -34,6 +36,35 @@ const (
 	ColorNoteLine   = "D4A72C"
 	ColorLink       = "0B5CAD"
 )
+
+// Colours of the diagrams of the scenes. Each family of protocols has a
+// colour and a dash of its own; the label of a line also names its
+// protocol, so that the colour is never the only sign.
+const (
+	ColorStage       = "F6F5F1"
+	ColorNodeFill    = "FFFFFF"
+	ColorNodeLine    = "AEB7BF"
+	ColorFocusFill   = "F6E7C1"
+	ColorFocusLine   = "1D2B36"
+	ColorDimLine     = "D9DEE2"
+	ColorDimText     = "8A949D"
+	ColorInk         = "1D2B36"
+	ColorGroupLine   = "BAC3CA"
+	ColorProcessFill = "FFF4D6"
+	ColorProcessLine = "B08A1E"
+)
+
+// FamilyColors are the colours of the lines of each family, see Family.
+var FamilyColors = map[string]string{
+	"sip":      "1F5F8B",
+	"diameter": "9A5B00",
+	"dns":      "5C6670",
+	"http":     "1A7F64",
+	"media":    "6E4BA8",
+	"other":    "3D4A57",
+	"relation": "6B7580",
+	"process":  "8A6A12",
+}
 
 // Fonts. A run of text names a Latin and an East Asian font, and the
 // application picks the one that has the glyph. The pptx names one font
@@ -99,6 +130,20 @@ var scales = []float64{1, 0.95, 0.9, 0.85, 0.8}
 
 // Words that the layouts put on a slide, by the language of the deck.
 var tagWords = map[string]map[string]string{
-	"en": {"exercise": "Exercise", "answers": "Answers"},
-	"ja": {"exercise": "演習", "answers": "解答"},
+	"en": {"exercise": "Exercise", "answers": "Answers", "details": "Details"},
+	"ja": {"exercise": "演習", "answers": "解答", "details": "詳しく"},
+}
+
+// BasisWords say, under each diagram, what the diagram is drawn from.
+var BasisWords = map[string]map[deck.Basis]string{
+	"en": {
+		deck.BasisRepository:   "A schematic of what this implementation does, drawn from the guide. It is not a capture.",
+		deck.BasisStandard:     "A schematic of the procedure of the specification. It is not a capture.",
+		deck.BasisIllustration: "An example made up to explain the idea, not values or a capture of this implementation.",
+	},
+	"ja": {
+		deck.BasisRepository:   "この構成の動きを手順書から描いた模式図です。キャプチャそのものではありません。",
+		deck.BasisStandard:     "仕様の手順を描いた模式図です。キャプチャそのものではありません。",
+		deck.BasisIllustration: "考え方を説明するための例です。この構成の値やキャプチャではありません。",
+	},
 }

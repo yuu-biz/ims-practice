@@ -5,7 +5,14 @@ import "github.com/yuu-biz/ims-practice/slides/internal/deck"
 // Page is one slide with everything on it placed. Elements are drawn in
 // order, the later ones on top.
 type Page struct {
+	// Number is the place of the page in the output, from 1. Slide is
+	// the number of the slide of the source that it comes from: a scene
+	// gives a page for each of its checkpoints and one for its longer
+	// explanation. Step is the checkpoint of such a page, "" for the
+	// page of the explanation.
 	Number     int
+	Slide      int
+	Step       string
 	Layout     deck.Layout
 	Background string
 	// Scale is the share of the full text size that the content of the
@@ -86,10 +93,18 @@ const (
 // the box and its text, on every side. NoWrap keeps each paragraph on
 // one line, for code.
 type TextBox struct {
+	// Name, if set, names the shape in the pptx, such as "node
+	// icscf", so that the shapes of a diagram can be told apart in the
+	// selection pane of PowerPoint.
+	Name       string
 	Role       Role
 	X, Y, W, H float64
 	Inset      float64
 	Fill, Line string
+	// LineWidth is the width of the outline in points, 0.75 when 0.
+	// Round gives the box rounded corners.
+	LineWidth  float64
+	Round      bool
 	Anchor     Anchor
 	NoWrap     bool
 	Paragraphs []Paragraph
@@ -115,10 +130,12 @@ type TableRow struct {
 
 // Line is a straight line, with an arrowhead at either end if asked.
 type Line struct {
+	Name           string
 	X1, Y1, X2, Y2 float64
 	Color          string
 	Width          float64
 	Dash           bool
+	Dot            bool
 	HeadStart      bool
 	HeadEnd        bool
 }
@@ -126,14 +143,17 @@ type Line struct {
 // Rect is a filled rectangle, such as a band or a panel. Round gives it
 // rounded corners.
 type Rect struct {
+	Name       string
 	X, Y, W, H float64
 	Fill, Line string
 	Round      bool
+	Dash       bool
 }
 
 // Group holds elements that belong together, such as the shapes of a
 // ladder diagram. The box is the one around all of them.
 type Group struct {
+	Name       string
 	X, Y, W, H float64
 	Elements   []Element
 }

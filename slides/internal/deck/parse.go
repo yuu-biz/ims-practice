@@ -57,8 +57,27 @@ func Parse(path, source string) (*Deck, error) {
 	if err != nil {
 		return nil, err
 	}
-	for i, slideLines := range p.splitSlides(body) {
-		slide, err := p.slide(i+1, slideLines)
+	parts := p.splitSlides(body)
+	if d.Format == FormatVisual {
+		if d.Model, err = p.model(parts[0]); err != nil {
+			return nil, err
+		}
+		parts = parts[1:]
+	}
+	ids := map[string]bool{}
+	if d.Model != nil {
+		for _, n := range d.Model.Nodes {
+			ids[n.ID] = true
+		}
+		for _, g := range d.Model.Groups {
+			ids[g.ID] = true
+		}
+		for _, e := range d.Model.Events {
+			ids[e.ID] = true
+		}
+	}
+	for i, slideLines := range parts {
+		slide, err := p.slide(d, i+1, slideLines, ids)
 		if err != nil {
 			return nil, err
 		}
@@ -103,13 +122,18 @@ func (p *parser) frontMatter(d *Deck, lines []line) ([]line, error) {
 			d.Title = value
 		case "footer":
 			d.Footer = value
+		case "format":
+			if value != FormatVisual {
+				return nil, p.errorf(l.number, "format is %s, or left out for a deck of slides only", FormatVisual)
+			}
+			d.Format = value
 		case "lang":
 			if !slices.Contains(languages, value) {
 				return nil, p.errorf(l.number, "lang is one of %s", strings.Join(languages, ", "))
 			}
 			d.Lang = value
 		default:
-			return nil, p.errorf(l.number, "unknown front matter key %q (title, footer and lang are known)", key)
+			return nil, p.errorf(l.number, "unknown front matter key %q (title, footer, lang and format are known)", key)
 		}
 		seen[key] = true
 	}
@@ -148,7 +172,7 @@ func nextFence(open, text string) string {
 	return open
 }
 
-func (p *parser) slide(number int, lines []line) (Slide, error) {
+func (p *parser) slide(d *Deck, number int, lines []line, ids map[string]bool) (Slide, error) {
 	first := 0
 	if len(lines) > 0 {
 		first = lines[0].number
@@ -212,8 +236,21 @@ func (p *parser) slide(number int, lines []line) (Slide, error) {
 		return s, p.errorf(heading.number, `a heading with one "#" makes a %s slide; layout %s takes "##"`, s.Layout, hint)
 	}
 
+	rest := lines[1:]
+	if body := trimBlank(rest); len(body) > 0 {
+		if m := fenceOpening.FindStringSubmatch(body[0].text); m != nil && m[2] == fenceScene {
+			if hint != "" || s.Layout != LayoutContent {
+				return s, p.errorf(heading.number, `a scene is a slide with "##" and no layout line`)
+			}
+			scene, after, err := p.scene(d, body, ids)
+			if err != nil {
+				return s, err
+			}
+			s.Scene, s.Layout, rest = scene, LayoutScene, after
+		}
+	}
 	columns := [][]line{nil}
-	for _, l := range lines[1:] {
+	for _, l := range rest {
 		if l.text == columnLine {
 			columns = append(columns, nil)
 			continue
@@ -346,6 +383,9 @@ func (p *parser) fenced(lines []line, i int) (Block, int, error) {
 	open := lines[i]
 	m := fenceOpening.FindStringSubmatch(open.text)
 	fence, info := m[1], m[2]
+	if info == fenceModel || info == fenceScene {
+		return nil, 0, p.errorf(open.number, "an %s block opens a visual deck, an %s block the body of a slide; neither stands among the blocks", fenceModel, fenceScene)
+	}
 	var body []string
 	for j := i + 1; j < len(lines); j++ {
 		if nextFence(fence, lines[j].text) == "" {

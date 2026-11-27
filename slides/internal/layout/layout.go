@@ -28,12 +28,31 @@ func Deck(d *deck.Deck) ([]Page, []error) {
 	var pages []Page
 	var problems []error
 	for _, s := range d.Slides {
+		if s.Scene != nil {
+			scene, err := scenePages(d, s)
+			if err != nil {
+				problems = append(problems, err)
+				continue
+			}
+			pages = append(pages, scene...)
+			continue
+		}
 		page, err := Slide(d, s)
 		if err != nil {
 			problems = append(problems, err)
 			continue
 		}
 		pages = append(pages, page)
+	}
+	// A scene gives more than one page, so the number of a page is its
+	// place in the output, not the number of its slide.
+	for i := range pages {
+		pages[i].Number = i + 1
+		for _, e := range pages[i].Elements {
+			if t, ok := e.(*TextBox); ok && t.Role == RoleNumber {
+				t.Paragraphs[0].Runs[0].Text = fmt.Sprint(i + 1)
+			}
+		}
 	}
 	return pages, problems
 }
@@ -43,7 +62,7 @@ func Slide(d *deck.Deck, s deck.Slide) (Page, error) {
 	overflow := func(format string, args ...any) error {
 		return &OverflowError{Path: d.Path, Slide: s.Number, Title: deck.PlainText(s.Title), Reason: fmt.Sprintf(format, args...)}
 	}
-	page := Page{Number: s.Number, Layout: s.Layout, Background: ColorWhite, Scale: 1}
+	page := Page{Number: s.Number, Slide: s.Number, Layout: s.Layout, Background: ColorWhite, Scale: 1}
 	switch s.Layout {
 	case deck.LayoutTitle:
 		return titleSlide(d, s, page), nil
@@ -58,6 +77,10 @@ func Slide(d *deck.Deck, s deck.Slide) (Page, error) {
 		accent, tag = ColorExercise, tagWords[d.Lang]["exercise"]
 	case deck.LayoutAnswers:
 		accent, tag = ColorAnswers, tagWords[d.Lang]["answers"]
+	case deck.LayoutScene:
+		// The page of the longer explanation of a scene.
+		page.Layout = deck.LayoutContent
+		tag = tagWords[d.Lang]["details"]
 	}
 
 	titleWidth := SlideWidth - 2*MarginX

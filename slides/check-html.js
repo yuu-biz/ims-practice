@@ -1,8 +1,11 @@
 // check-html.js opens every deck that "go run ./cmd/slides build" wrote
 // in a headless Chromium, in the check mode of the HTML (?check), and
-// fails when the browser drew text larger than its box on any slide.
-// The generator measures text with fixed widths; this measures it with
-// the fonts that the machine has.
+// fails when the browser drew text larger than its box on any slide. The
+// check mode also draws every step of every scene and reports a panel
+// whose text does not fit, a node whose name is wider than its box, and
+// a label of a message that covers a node or another label. The
+// generator measures text with fixed widths; this measures it with the
+// fonts that the machine has.
 //
 // It also fails when the browser drew more than 1% of the glyphs of a
 // deck in fonts that the style sheet of the deck does not name: without
@@ -22,8 +25,9 @@ const path = require('path');
 const { chromium } = require('playwright');
 
 // The elements whose fonts are read: every text box, table cell and
-// piece of code.
-const textElements = '.box p, td, th, code, .mono';
+// piece of code, and the text of the scenes: their headings, the text
+// of the steps, the fields and the labels of the diagrams.
+const textElements = '.box p, td, th, code, .mono, .scene h2, .scene .lead, .step h3, .step p, .fields h4, .fields dt, .fields dd, .diagram text';
 
 async function fontsOf(page, client) {
   const { root } = await client.send('DOM.getDocument', { depth: -1 });
