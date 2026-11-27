@@ -3,7 +3,10 @@ package sip
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
 
 // RFC 3262 5: an INVITE without an offer gets the offer in the first
@@ -96,6 +99,69 @@ func TestOfferInThe2xxAndAnswerInTheACK(t *testing.T) {
 	}
 	if err := out.Ack(offer); err == nil {
 		t.Error("a second Ack succeeded")
+	}
+}
+
+// RFC 3261 13.2.2.4: a UAC that ends the dialog instead of taking the
+// offer of the 2xx puts a valid answer in the ACK, and sends the BYE
+// after it. RFC 3264 6: with no stream accepted, the answer has one
+// media description for each offered one, in order, with port 0.
+func TestByeBeforeTheAnswerRejectsTheOfferInTheACK(t *testing.T) {
+	const twoStreams = "v=0\r\n" +
+		"o=callee 2890844526 2890844526 IN IP4 192.0.2.10\r\n" +
+		"s=-\r\n" +
+		"c=IN IP4 192.0.2.10\r\n" +
+		"t=0 0\r\n" +
+		"m=audio 49170 RTP/AVP 96 0\r\n" +
+		"a=rtpmap:96 AMR/8000\r\n" +
+		"a=rtpmap:0 PCMU/8000\r\n" +
+		"m=video 51372 RTP/AVP 99\r\n" +
+		"a=rtpmap:99 H264/90000\r\n"
+	callerUA := newUA(t, testTimers, "001010000000001", noCalls)
+	p := &rawCallee{t: t, peer: rawSocket(t), ua: callerUA}
+	p.target = "sip:" + callee + "@" + addrOf(p.peer).String()
+	inv := invitation(callerUA)
+	inv.RequestURI, inv.From, inv.Body = p.target, caller, Body{}
+	out, err := callerUA.Invite(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.invite = readDatagram(t, p.peer)
+	ok := forked(p.invite, 200, "callee", p.target, 0)
+	Body{Type: "application/sdp", Content: []byte(twoStreams)}.addTo(ok)
+	send(t, p.peer, ok, callerUA.Stack())
+	responses(t, out)
+
+	hungUp := make(chan error, 1)
+	go func() { hungUp <- out.Bye() }()
+	ack := readDatagram(t, p.peer)
+	if ack.Method != ACK {
+		t.Fatalf("got %s, want the ACK before the BYE", startLine(ack))
+	}
+	want := "v=0\r\n" +
+		"o=- " // the session id follows, and is not the same twice
+	if ct := ack.Get("Content-Type"); ct != "application/sdp" || !strings.HasPrefix(string(ack.Body), want) {
+		t.Fatalf("the ACK has Content-Type %q and body\n%s\nwant an SDP answer", ct, ack.Body)
+	}
+	answer, err := sdp.Parse(ack.Body)
+	if err != nil {
+		t.Fatalf("the answer in the ACK does not parse: %v\n%s", err, ack.Body)
+	}
+	if len(answer.Media) != 2 ||
+		answer.Media[0].Type != "audio" || answer.Media[0].Proto != "RTP/AVP" || answer.Media[0].Port != 0 ||
+		answer.Media[1].Type != "video" || answer.Media[1].Proto != "RTP/AVP" || answer.Media[1].Port != 0 {
+		t.Errorf("the ACK has the answer\n%s\nwant the audio and then the video stream, both with port 0", ack.Body)
+	}
+	if !answer.Connection.IsValid() || answer.Name == "" {
+		t.Errorf("the answer has no c= or s= line:\n%s", ack.Body)
+	}
+	bye := readDatagram(t, p.peer)
+	if bye.Method != BYE {
+		t.Fatalf("got %s after the ACK, want the BYE", startLine(bye))
+	}
+	p.respond(bye, 200, Body{})
+	if err := <-hungUp; err != nil {
+		t.Fatalf("Bye: %v", err)
 	}
 }
 

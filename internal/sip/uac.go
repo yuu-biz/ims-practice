@@ -643,7 +643,7 @@ func (c *OutgoingCall) receive2xx(resp *Message) bool {
 		d.peerAllowsUpdate = true
 	}
 	cseq, _ := ParseCSeq(c.invite.Get("CSeq"))
-	d.acknowledge(cseq.Number, d.offer == OfferRemote)
+	d.acknowledge(cseq.Number, d.offer == OfferRemote, resp.Body)
 	if first {
 		c.kept = d
 		// RFC 4028 7.2: the 2xx tells whether the session has a timer.

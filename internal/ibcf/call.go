@@ -646,12 +646,9 @@ func (c *call) Answer(resp, session *sip.Message) (b2bua.Message, bool) {
 // Ack puts the answer in ack through the TrGW, or holds it back
 // (notPassedOn).
 //
-// SIMPLIFIED: RFC 3261 13.2.2.4. When the TrGW does not take the answer
-// in an ACK, the 2xx with the offer of the other side gets an ACK
-// without a body, and a BYE right after it (b2bua.Call). A UAC that does
-// not take the offer of a 2xx is to put a valid answer in the ACK before
-// its BYE; the IBCF has no SDP of its own to answer with, and the call
-// ends at once, so no media flows on that answer.
+// When the TrGW does not take the answer in an ACK, the 2xx with the
+// offer of the other side gets an ACK that rejects every stream of that
+// offer, and a BYE right after it (b2bua.Call, RFC 3261 13.2.2.4).
 func (c *call) Ack(ack *sip.Message, d b2bua.Direction) (sip.Body, bool) {
 	m := ack.Clone()
 	if err := c.throughTrGW(m, c.across(d)); err != nil && c.notPassedOn("the ACK", err) {

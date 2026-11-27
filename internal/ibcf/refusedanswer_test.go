@@ -123,8 +123,9 @@ func TestRefusedAnswerWithinTheCallEndsTheCall(t *testing.T) {
 }
 
 // An INVITE without an offer: the 200 has the offer, and the TrGW refuses
-// the answer in the caller's ACK. The callee's 200 gets an ACK without
-// that answer, and each UE a BYE.
+// the answer in the caller's ACK. The callee's 200 gets an ACK that
+// rejects every stream of its offer instead of that answer, and each UE
+// a BYE.
 func TestRefusedAnswerInTheACKEndsTheCall(t *testing.T) {
 	p := newPair(t, nil)
 	p.a.trgw.refuse(ibcf.CoreSide, errRefusedModify)
@@ -147,8 +148,15 @@ func TestRefusedAnswerInTheACKEndsTheCall(t *testing.T) {
 		t.Error("the callee's 200 got no ACK")
 	}
 	for _, ack := range acks {
-		if len(ack.Body) != 0 {
-			t.Errorf("the callee's 200 got an ACK with %d bytes of body, want none", len(ack.Body))
+		answer, err := sdp.Parse(ack.Body)
+		if err != nil || len(answer.Media) == 0 {
+			t.Errorf("the callee's 200 got an ACK with %q, want an answer that rejects its offer: %v", ack.Body, err)
+			continue
+		}
+		for _, m := range answer.Media {
+			if m.Port != 0 {
+				t.Errorf("the callee's 200 got an ACK with %q, want no stream accepted", ack.Body)
+			}
 		}
 	}
 	p.waitReleased(t)

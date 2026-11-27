@@ -58,10 +58,10 @@ func fakeMRFC(t *testing.T, log *events, uris chan<- string, byed chan<- struct{
 			return
 		}
 		a, err := sdp.Parse(ack.Body)
-		if err == nil && a.Direction(*a.AudioMedia()) == "recvonly" {
+		if m := a.AudioMedia(); err == nil && m != nil && a.Direction(*m) == "recvonly" {
 			log.add("MRFC ACK with an answer")
 		} else {
-			log.add("MRFC ACK without an answer")
+			log.add("MRFC ACK declining the offer")
 		}
 		<-c.Done()
 		log.add("MRFC BYE")
@@ -159,7 +159,7 @@ func TestNoToneForAWaitingCall(t *testing.T) {
 			statuses(got), got[0].Body, got[0].Get("Alert-Info"))
 	}
 	receive(t, byed, "BYE at the MRFC")
-	if l := log.get(); !slices.Equal(l, []string{"MRFC INVITE", "MRFC ACK without an answer", "MRFC BYE"}) {
+	if l := log.get(); !slices.Equal(l, []string{"MRFC INVITE", "MRFC ACK declining the offer", "MRFC BYE"}) {
 		t.Errorf("the MRFC saw %q, want its dialog ended without a tone", l)
 	}
 }
