@@ -142,6 +142,13 @@ func (c *Call) callerDialogTag() string {
 // that answered, whichever that is: a role that gave a leg up and sent
 // the INVITE on to another callee (Attempt again) ended that early
 // dialog with a 199 (earlyDialogs.inTag).
+//
+// A 2xx without a session description, of the dialog whose session
+// description the caller got, gets that one when no reliable response
+// brought it to the caller: the callee answered in a reliable
+// provisional response, whose copy went to a caller without 100rel
+// unreliably, and the 2xx is then the first reliable response to the
+// caller, which has to carry the answer (RFC 3261 13.2.1, RFC 3262 5).
 func (c *Call) answerFrom(resp *sip.Message) (toCaller, session *sip.Message) {
 	tag := toTag(resp)
 	inTag := c.callerDialogTag()
@@ -149,11 +156,18 @@ func (c *Call) answerFrom(resp *sip.Message) (toCaller, session *sip.Message) {
 	if c.early.inTag != inTag {
 		c.early.from = ""
 	}
-	if sip.HasSessionDescription(resp) {
+	described := sip.HasSessionDescription(resp)
+	if described {
 		c.early.last[tag] = resp
 	}
-	from, kept := c.early.from, c.early.last[tag]
+	from, kept, reliably := c.early.from, c.early.last[tag], c.sessionToCaller
 	c.mu.Unlock()
+	if from == tag && !described && !reliably {
+		toCaller = resp.Clone()
+		toCaller.Set("Content-Type", kept.Get("Content-Type"))
+		toCaller.Body = kept.Body
+		return toCaller, nil
+	}
 	if from == "" || from == tag {
 		return resp, nil
 	}

@@ -232,9 +232,11 @@ func TestRefusedSDPOfAPRACKEndsTheINVITE(t *testing.T) {
 
 // The caller's PRACK has a new offer, for a 183 of the callee that came
 // without 100rel, here because network A's profile of network B removes
-// that option tag. The PRACK then goes on as an UPDATE (RFC 3311 5.1),
-// and when the TrGW turns its offer down, the IBCF refuses it as it
-// would refuse the UPDATE: the PRACK gets 500, and the call goes on.
+// that option tag. The caller requires 100rel, so the copy of that 183
+// reaches it reliably all the same (RFC 3262 3). The PRACK then goes on
+// as an UPDATE (RFC 3311 5.1), and when the TrGW turns its offer down,
+// the IBCF refuses it as it would refuse the UPDATE: the PRACK gets
+// 500, and the call goes on.
 func TestRefusedOfferOfAPRACKSentOnAsAnUPDATEKeepsTheCall(t *testing.T) {
 	p := newPair(t, func(ofB, _ *interconnect.Profile) {
 		ofB.OptionTags = map[string]interconnect.OptionTagPolicy{sip.Option100rel: interconnect.OptionRemove}
@@ -243,6 +245,7 @@ func TestRefusedOfferOfAPRACKSentOnAsAnUPDATEKeepsTheCall(t *testing.T) {
 		RequestURI:  p.b.sipURI(),
 		From:        "sip:" + p.a.number + "@" + p.a.domain + ";user=phone",
 		Route:       []string{p.a.ueRoute},
+		Headers:     []sip.HeaderField{{Name: "Require", Value: sip.Option100rel}},
 		Body:        p.a.offer(t, sdp.VoLTECodecs(), 1, ""),
 		ManualPRACK: true,
 	})
