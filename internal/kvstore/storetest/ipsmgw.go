@@ -26,7 +26,7 @@ func IPSMGW(t *testing.T, newPair func(t *testing.T) (ipsmgw.Store, ipsmgw.Store
 		{"ClaimThatIsNotDoneRunsOut", ipsmgwClaimRunsOut},
 		{"TakenDeliveryLeavesNoExpiry", ipsmgwTakenDeliveryLeavesNoExpiry},
 		{"OutcomeReachesTheInstanceThatWaitsForIt", ipsmgwOutcome},
-		{"OnlyOneTakesAnOutcome", ipsmgwOnlyOneTakesAnOutcome},
+		{"TFRIsBegunOnce", ipsmgwTFRBegunOnce},
 		{"NotReachableIsTakenOnce", ipsmgwNotReachable},
 		{"RegSubscription", ipsmgwRegSubscription},
 		{"RegSubscriptionOfIMSI", ipsmgwRegSubscriptionOfIMSI},
@@ -468,60 +468,78 @@ func putOutcome(t *testing.T, s ipsmgw.Store, reference string, o ipsmgw.Outcome
 	}
 }
 
-func takeOutcome(t *testing.T, s ipsmgw.Store, reference string) (ipsmgw.Outcome, bool) {
+func outcomeOf(t *testing.T, s ipsmgw.Store, reference string) (ipsmgw.Outcome, bool) {
 	t.Helper()
-	o, ok, err := s.TakeOutcome(context.Background(), reference)
+	o, ok, err := s.Outcome(context.Background(), reference)
 	if err != nil {
-		t.Errorf("TakeOutcome(%s): %v", reference, err)
+		t.Errorf("Outcome(%s): %v", reference, err)
 	}
 	return o, ok
 }
 
+func beginTFR(t *testing.T, s ipsmgw.Store, request, reference string, expires time.Time) string {
+	t.Helper()
+	first, err := s.BeginTFR(context.Background(), request, reference, expires)
+	if err != nil {
+		t.Errorf("BeginTFR(%s): %v", request, err)
+	}
+	return first
+}
+
 // ipsmgwOutcome: the instance that ends a delivery puts its outcome in
-// the Store, and the instance that holds the request which brought the
-// delivery takes it there.
+// the Store, and the instances that hold the request which brought the
+// delivery, or a copy of it, read it there.
 func ipsmgwOutcome(t *testing.T, a, b ipsmgw.Store) {
 	putOutcome(t, a, "ref:1@sc", ipsmgw.MemoryCapacityExceeded, hourHence())
-	if got, ok := takeOutcome(t, b, "ref:1@sc"); !ok || got != ipsmgw.MemoryCapacityExceeded {
-		t.Errorf("TakeOutcome = %v, %v; want memory capacity exceeded", got, ok)
+	for _, s := range []ipsmgw.Store{b, a} {
+		if got, ok := outcomeOf(t, s, "ref:1@sc"); !ok || got != ipsmgw.MemoryCapacityExceeded {
+			t.Errorf("Outcome = %v, %v; want memory capacity exceeded", got, ok)
+		}
 	}
-	if _, ok := takeOutcome(t, a, "ref:1@sc"); ok {
-		t.Error("TakeOutcome of an outcome that was taken")
-	}
-	if _, ok := takeOutcome(t, b, "ref-none"); ok {
-		t.Error("TakeOutcome of a reference no delivery has")
+	if _, ok := outcomeOf(t, b, "ref-none"); ok {
+		t.Error("Outcome of a reference no delivery has")
 	}
 	// Delivered is the zero Outcome, which must still come back as an
 	// outcome that is there.
 	putOutcome(t, a, "ref-2", ipsmgw.Delivered, hourHence())
-	if got, ok := takeOutcome(t, b, "ref-2"); !ok || got != ipsmgw.Delivered {
-		t.Errorf("TakeOutcome of a delivered short message = %v, %v", got, ok)
+	if got, ok := outcomeOf(t, b, "ref-2"); !ok || got != ipsmgw.Delivered {
+		t.Errorf("Outcome of a delivered short message = %v, %v", got, ok)
 	}
 	putOutcome(t, a, "ref-3", ipsmgw.Delivered, time.Now().Add(short))
 	waitOut()
-	if _, ok := takeOutcome(t, b, "ref-3"); ok {
-		t.Error("TakeOutcome after the outcome expired")
+	if _, ok := outcomeOf(t, b, "ref-3"); ok {
+		t.Error("Outcome after the outcome expired")
 	}
 }
 
-// ipsmgwOnlyOneTakesAnOutcome: a request is answered once, so of
-// several instances that read one outcome only one gets it.
-func ipsmgwOnlyOneTakesAnOutcome(t *testing.T, a, b ipsmgw.Store) {
-	for range 10 {
-		putOutcome(t, a, "ref-1", ipsmgw.AbsentSubscriber, hourHence())
-		var takes atomic.Int32
-		parallel(4, func(i int) {
-			s := a
-			if i%2 == 1 {
-				s = b
-			}
-			if _, ok := takeOutcome(t, s, "ref-1"); ok {
-				takes.Add(1)
-			}
-		})
-		if got := takes.Load(); got != 1 {
-			t.Fatalf("%d instances took the outcome, want 1", got)
+// ipsmgwTFRBegunOnce: of the instances that begin one TFR at once, each
+// with a delivery of its own, one has its delivery kept, and all of them
+// are given that one. The record goes when it expires, and the same
+// request is a new one after that.
+func ipsmgwTFRBegunOnce(t *testing.T, a, b ipsmgw.Store) {
+	var mu sync.Mutex
+	given := map[string]int{}
+	parallel(10, func(i int) {
+		s := a
+		if i%2 == 1 {
+			s = b
 		}
+		first := beginTFR(t, s, "sc;1", "ref-"+string(rune('a'+i)), hourHence())
+		mu.Lock()
+		defer mu.Unlock()
+		given[first]++
+	})
+	if len(given) != 1 {
+		t.Errorf("BeginTFR gave %v, want one delivery for every copy", given)
+	}
+	if got := beginTFR(t, b, "sc;2", "ref-other", hourHence()); got != "ref-other" {
+		t.Errorf("BeginTFR of another request = %s, want its own delivery", got)
+	}
+
+	beginTFR(t, a, "sc;3", "ref-old", time.Now().Add(short))
+	waitOut()
+	if got := beginTFR(t, b, "sc;3", "ref-new", hourHence()); got != "ref-new" {
+		t.Errorf("BeginTFR after the record expired = %s, want its own delivery", got)
 	}
 }
 

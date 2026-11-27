@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/sms"
 )
@@ -209,8 +210,9 @@ func (g *IPSMGW) endDelivery(ctx context.Context, callID string, outcome Outcome
 // reportNow hands the outcome of a delivery to whoever waits for it: the
 // SC of this node for a short message that the SC brought here, and the
 // Store for one that came in a TFR, where the instance which holds the
-// TFR takes it (sgd.go). The outcome of a TFR is kept as long as TR1N,
-// which outlasts the wait of that instance.
+// TFR reads it (sgd.go). The outcome of a TFR is kept for
+// diameter.DuplicateWindow, as long as the record by which a copy of the
+// TFR that comes later finds it.
 //
 // A Store that will not take the outcome leaves the TFR without one.
 // The wait of that instance, not this failure, is then what answers the
@@ -221,7 +223,7 @@ func (g *IPSMGW) reportNow(ctx context.Context, reference string, overSGd bool, 
 		g.sc.Report(ctx, reference, outcome)
 		return
 	}
-	if err := g.store.PutOutcome(ctx, reference, outcome, time.Now().Add(g.cfg.ReportTimeout)); err != nil {
+	if err := g.store.PutOutcome(ctx, reference, outcome, time.Now().Add(diameter.DuplicateWindow)); err != nil {
 		log.Warn("the outcome of the delivery was not stored for the node that waits for it",
 			"outcome", outcome.String(), "error", err.Error())
 	}
