@@ -713,3 +713,61 @@ func TestFailedReINVITEDropsTheOfferOfItsUnacknowledged183(t *testing.T) {
 		t.Errorf("Update returned %v, %v; want the 200", r.resp, r.err)
 	}
 }
+
+// RFC 3261 13.2.1: only a session description is an offer or an answer,
+// in a reliable provisional response to a re-INVITE as in its 2xx. A
+// body of another type, such as one that a service puts there, answers
+// no offer of the re-INVITE, so the 2xx still has to; nor is it the
+// offer that the first reliable response to a re-INVITE without one
+// has to carry (RFC 3262 5), or the offer of the 2xx.
+func TestBodyThatIsNotSDPIsNoSessionDescriptionOfAReINVITE(t *testing.T) {
+	notSDP := Body{Type: "text/plain", Content: []byte("connecting")}
+	t.Run("offer", func(t *testing.T) {
+		errs := make(chan error, 3)
+		_, p := rawCall(t, testTimers, func(r *InDialogRequest) {
+			errs <- r.Progress(183, notSDP)
+			_, err := r.Accept(notSDP)
+			errs <- err
+			_, err = r.Accept(holdAnswer)
+			errs <- err
+		})
+		reinvite := reInviteFrom(p, holdOffer, supports100rel)
+		prov := readProvisional(t, p)
+		if !prov.Requires(Option100rel) || string(prov.Body) != string(notSDP.Content) {
+			t.Fatalf("got %s with Require %q and body %q, want the reliable 183 with the text", startLine(prov), prov.Get("Require"), prov.Body)
+		}
+		prackFrom(p, prov, Body{})
+		if err := returned(t, errs, "Progress"); err != nil {
+			t.Fatalf("Progress: %v", err)
+		}
+		if err := returned(t, errs, "Accept with the text"); !errors.Is(err, ErrNoAnswer) {
+			t.Errorf("Accept with a body that is not SDP: %v, want ErrNoAnswer", err)
+		}
+		if ok := readFinal(t, p, reinvite.Get("CSeq")); ok.StatusCode != 200 || string(ok.Body) != string(holdAnswer.Content) {
+			t.Fatalf("re-INVITE got %s with body %q, want 200 with the answer", startLine(ok), ok.Body)
+		}
+		ackFrom(p, reinvite)
+		if err := returned(t, errs, "Accept with the answer"); err != nil {
+			t.Errorf("Accept with the answer: %v", err)
+		}
+	})
+	t.Run("no offer", func(t *testing.T) {
+		errs := make(chan error, 2)
+		_, p := rawCall(t, testTimers, func(r *InDialogRequest) {
+			errs <- r.Progress(183, notSDP)
+			_, err := r.Accept(notSDP)
+			errs <- err
+			r.Reject(500)
+		})
+		reinvite := reInviteFrom(p, Body{}, supports100rel)
+		if err := returned(t, errs, "Progress"); !errors.Is(err, errNoOfferInReliable) {
+			t.Errorf("Progress with a body that is not SDP: %v, want errNoOfferInReliable", err)
+		}
+		if err := returned(t, errs, "Accept"); !errors.Is(err, errNoOfferFor2xx) {
+			t.Errorf("Accept with a body that is not SDP: %v, want errNoOfferFor2xx", err)
+		}
+		if m := readSkippingTrying(t, p.peer); m.StatusCode != 500 || m.Get("CSeq") != reinvite.Get("CSeq") {
+			t.Errorf("re-INVITE got %s, want only the 500 of the user", startLine(m))
+		}
+	})
+}
