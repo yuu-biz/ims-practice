@@ -581,6 +581,10 @@ var ErrInviteInProgress = errors.New("sip: an INVITE transaction is in progress 
 // the UA sends the ACK itself. Without a body, the 2xx carries the
 // offer, and the user sends the ACK with the answer (Ack).
 //
+// The re-INVITE lists 100rel in Supported, as every request within the
+// dialog does, so the peer may send its provisional responses reliably.
+// Each one gets its PRACK (RFC 3262 4).
+//
 // A final response other than 2xx leaves the session as it was. After a
 // 491 (Request Pending), the re-INVITE crossed one of the peer; the
 // user may try again after GlareDelay.
@@ -615,6 +619,7 @@ func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, erro
 	req.Add("Allow", c.ua.allowHeader())
 	cseq, _ := ParseCSeq(req.Get("CSeq"))
 	d.invite = inviteSent
+	d.expectReliable(cseq.Number)
 	t := d.takeTurn()
 	c.mu.Unlock()
 
@@ -627,6 +632,9 @@ func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, erro
 				final = resp
 				break
 			}
+			if resp.StatusCode > 100 {
+				d.reInviteProvisional(resp)
+			}
 		}
 		t.end()
 		if final == nil {
@@ -637,6 +645,9 @@ func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, erro
 
 	c.mu.Lock()
 	d.invite = noInvite
+	// RFC 3262 4: the UAC keeps the RSeq until the final response. One
+	// that comes after it is discarded, which the RFC allows.
+	delete(d.reliable, cseq.Number)
 	if accepted && !offers && len(final.Body) > 0 {
 		d.offerEvent(OfferReceived)
 	}
@@ -654,6 +665,19 @@ func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, erro
 		d.lost(req, final)
 	}
 	return final, err
+}
+
+// reInviteProvisional is RFC 3262 4 for resp, a 101-199 response to a
+// re-INVITE of this UA: a reliable one gets its PRACK, unless it is a
+// retransmission or comes out of order.
+func (d *CallDialog) reInviteProvisional(resp *Message) {
+	c := d.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !resp.Requires(Option100rel) || d.usable() != nil || !d.reliableInOrder(resp) {
+		return
+	}
+	d.autoPRACK(resp)
 }
 
 // awaitsACK tells that a 2xx of this UA to an INVITE of the peer
