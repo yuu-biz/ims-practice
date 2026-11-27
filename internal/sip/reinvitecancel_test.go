@@ -200,3 +200,45 @@ func TestACancelledReInviteThatGetsA2xxKeepsTheNewSession(t *testing.T) {
 		t.Errorf("the ACK has CSeq %q, want %d ACK for the re-INVITE", ack.Get("CSeq"), cseq.Number)
 	}
 }
+
+// The CANCEL that a watcher of ReInvitation.Cancelled asks for belongs
+// to the re-INVITE it watches. When that re-INVITE has its final
+// response by the time the watcher acts, and the dialog has a later
+// re-INVITE already, the later one goes on uncancelled (RFC 3261 9.1).
+func TestTheCancelOfAReInviteThatIsOverLeavesTheNextOne(t *testing.T) {
+	callerUA := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	d, err := out.currentDialog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := make(chan reInviteDone, 1)
+	go func() {
+		resp, err := out.ReInvite(holdOffer)
+		first <- reInviteDone{resp, err}
+	}()
+	reinvite := readRequest(t, p, INVITE)
+	d.c.mu.Lock()
+	watched := d.sentReInvite
+	d.c.mu.Unlock()
+	p.respond(reinvite, 200, holdAnswer)
+	if r := finalOf(t, first); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("the first re-INVITE returned %v, %v; want the 200", r.resp, r.err)
+	}
+
+	second := make(chan reInviteDone, 1)
+	go func() {
+		resp, err := out.ReInvite(holdOffer)
+		second <- reInviteDone{resp, err}
+	}()
+	next := readRequest(t, p, INVITE)
+	p.respond(next, 180, Body{})
+	if err := d.cancelReInvite(watched, nil); !errors.Is(err, ErrNoReInvite) {
+		t.Errorf("the CANCEL of the first re-INVITE: %v, want ErrNoReInvite", err)
+	}
+	noRequest(t, p.peer, CANCEL, 5*slowTimers.T1)
+	p.respond(next, 200, holdAnswer)
+	if r := finalOf(t, second); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("the second re-INVITE returned %v, %v; want the 200", r.resp, r.err)
+	}
+}
