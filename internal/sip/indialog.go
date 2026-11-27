@@ -99,16 +99,15 @@ func (r *InDialogRequest) Dialog() *CallDialog { return r.d }
 // re-INVITE without an offer asks for one: body is then the offer, and
 // the ACK carries the answer. When a reliable provisional response has
 // carried the session description already, body may be empty (RFC
-// 3262 5). Accept waits for a Progress that waits for its PRACK, so the
-// 2xx never passes a reliable provisional response (RFC 3262 3). For
-// any other request the returned message is nil.
+// 3262 5). While a reliable provisional response with a session
+// description waits for its PRACK, Accept waits for that PRACK: the 2xx
+// must not pass it (RFC 3262 3). For any other request the returned
+// message is nil.
 //
 // A BYE in the dialog, in either direction, answers the request with
 // 487 before the user of the call gets to it (RFC 3261 15.1.2). Accept
 // then sends nothing and returns ErrCallEnded.
 func (r *InDialogRequest) Accept(body Body, headers ...HeaderField) (*Message, error) {
-	r.answering.Lock()
-	defer r.answering.Unlock()
 	if r.Request.Method == INVITE {
 		return r.acceptReInvite(body, headers)
 	}
@@ -136,9 +135,9 @@ var ErrNoAnswer = errors.New("sip: the 2xx to a request with an offer needs the 
 // Reject answers the request with a final response from 300 to 699,
 // such as 488 (Not Acceptable Here) for an offer that the user cannot
 // take. The session and the dialog stay as they were before the
-// request. Like Accept, Reject waits for a Progress to return, and
-// sends nothing and returns ErrCallEnded once a BYE has answered the
-// request with 487.
+// request. Reject waits for a Progress to return. Like Accept, it sends
+// nothing and returns ErrCallEnded once a BYE has answered the request
+// with 487.
 func (r *InDialogRequest) Reject(code int, headers ...HeaderField) error {
 	if code < 300 || code > 699 {
 		return fmt.Errorf("sip: %d is not a final response that Reject can send", code)
@@ -946,6 +945,19 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 	body.addTo(ok)
 
 	c.mu.Lock()
+	for r.unacked != nil && HasSessionDescription(r.unacked) && r.answerable() == nil {
+		// RFC 3262 3 and 5: the 2xx goes once the PRACK has come, or not
+		// at all when the re-INVITE gets another final response meanwhile.
+		pracked := r.pracked
+		c.mu.Unlock()
+		select {
+		case <-pracked:
+		case <-r.settled:
+		case <-c.done:
+			return nil, ErrCallEnded
+		}
+		c.mu.Lock()
+	}
 	err := r.answerable()
 	if err == nil {
 		// Only a session description is an offer or an answer (RFC 3261
@@ -968,7 +980,7 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 		c.mu.Unlock()
 		return nil, err
 	}
-	r.answered = true
+	r.answered, r.over = true, true
 	d.removePending(r)
 	close(r.settled)
 	if !r.described {
@@ -1025,8 +1037,9 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 // PRACK comes, and Progress returns then. After 64*T1 without a PRACK,
 // the UA rejects the re-INVITE with 500 and Progress returns
 // ErrNoPRACK. Without 100rel, the response goes unreliably, and
-// Progress returns once it is sent. Accept and Reject wait for Progress
-// to return.
+// Progress returns once it is sent. Accept waits for the PRACK of a
+// reliable response with a session description, and Reject for a
+// Progress to return.
 //
 // The first reliable response with a session description carries the
 // answer to the offer of the re-INVITE, or the offer when the
