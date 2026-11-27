@@ -448,11 +448,15 @@ func (d *CallDialog) expectReliable(seq uint32) {
 }
 
 // reliableTo is the RSeq state of the INVITE that resp answers, nil for
-// an INVITE whose reliable provisional responses d does not take. c.mu
-// is held.
+// an INVITE whose reliable provisional responses d does not take, and
+// for a response whose To tag is that of another dialog. c.mu is held.
 func (d *CallDialog) reliableTo(resp *Message) *reliableSeq {
 	cseq, _ := ParseCSeq(resp.Get("CSeq"))
-	return d.reliable[cseq.Number]
+	seq := d.reliable[cseq.Number]
+	if seq == nil || tagOf(resp.Get("To")) != d.dialog.ID.RemoteTag {
+		return nil
+	}
+	return seq
 }
 
 // reliableInOrder is RFC 3262 4 for a reliable provisional response:
@@ -544,7 +548,7 @@ func (d *CallDialog) PRACK(resp *Message, body Body, headers ...HeaderField) (*M
 	seq := d.reliableTo(resp)
 	rseq, err := ParseRSeq(resp.Get("RSeq"))
 	switch {
-	case seq == nil || err != nil || !resp.Requires(Option100rel) || tagOf(resp.Get("To")) != d.dialog.ID.RemoteTag:
+	case seq == nil || err != nil || !resp.Requires(Option100rel):
 		err = errNotReliable
 	case rseq != seq.last || rseq == seq.pracked:
 		err = errors.New("sip: the response is not the one that waits for its PRACK")

@@ -2,6 +2,7 @@ package sip
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -490,4 +491,28 @@ func TestReINVITEAnsweredInAReliable183IsAcknowledgedWhileAnUPDATEWaits(t *testi
 		t.Fatalf("ReInvite returned %v, %v; want the 200", r.resp, r.err)
 	}
 	u.acceptUPDATE(t)
+}
+
+// RFC 3261 12: the To tag of a response is the remote tag of its dialog,
+// so a response to a re-INVITE with another tag is not of the dialog. A
+// reliable one gets no PRACK within the dialog, and neither changes its
+// remote target nor reaches the user.
+func TestReliableResponseWithAnotherTagIsNotOfTheDialog(t *testing.T) {
+	callerUA := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	got := make(chan *Message, 1)
+	done := reInviteWith(out, ReInvitation{Body: holdOffer, OnProvisional: func(resp *Message) { got <- resp }})
+	reinvite := readDatagram(t, p.peer)
+	foreign := reliable(reinvite, 183, 1, "sip:moved@"+addrOf(p.peer).String())
+	foreign.Set("To", strings.Replace(foreign.Get("To"), "tag=callee", "tag=other", 1))
+	holdAnswer.addTo(foreign)
+	send(t, p.peer, foreign, callerUA.Stack())
+	expectSilence(t, p.peer, 3*slowTimers.T1, "no PRACK for a response of another dialog")
+	if len(got) > 0 {
+		t.Errorf("OnProvisional got the %d with the tag %q", (<-got).StatusCode, tagOf(foreign.Get("To")))
+	}
+	acceptReInvite(t, p, reinvite, holdAnswer)
+	if r := finalOf(t, done); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("ReInviteWith returned %v, %v; want the 200", r.resp, r.err)
+	}
 }
