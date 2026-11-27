@@ -53,6 +53,9 @@ type Call struct {
 	// offers the caller no session of its own after that (OfferCaller).
 	settled bool
 	early   earlyDialogs
+	// subscriptions are the subscriptions that share the two dialogs
+	// with the session, by their Event (subscription.go).
+	subscriptions map[string]*relayedSubscription
 }
 
 // copied is a reliable provisional response that the Call sent the
@@ -263,7 +266,9 @@ func (c *Call) acknowledged() (acked *sip.Message, own bool) {
 // first (RFC 3326 2). That BYE is also what ends the other leg when one
 // leg fails: a caller that never acknowledges the 2xx, or a dialog that
 // the far end no longer answers in (RFC 3261 12.2.1.2), ends its leg,
-// and the Call ends the other one.
+// and the Call ends the other one. Those BYEs end the session only: a
+// subscription that shares the dialogs keeps both legs until it ends
+// (subscription.go).
 func (c *Call) Answer(out *sip.OutgoingCall, resp *sip.Message) {
 	c.answered.Store(true)
 	toCaller, session := c.answerFrom(resp)
@@ -349,7 +354,9 @@ func (c *Call) keepDialogs() {
 	c.mu.Lock()
 	out := c.out
 	c.mu.Unlock()
-	if out == nil || !c.confirmed.Load() {
+	if out == nil || !c.confirmed.Load() || ended(c.in.Done()) || ended(out.Done()) {
+		// After the session, the dialogs carry only the subscriptions
+		// that outlive it, and the role has let the call go.
 		return
 	}
 	in, okIn := c.in.Dialog()
@@ -367,6 +374,7 @@ type leg interface {
 	ReInvite(body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
 	Send(method sip.Method, body sip.Body, headers ...sip.HeaderField) (*sip.Message, error)
 	Ack(body sip.Body, headers ...sip.HeaderField) error
+	AddSubscriptionUsage() (end func(), err error)
 }
 
 // fromCaller handles the requests of the caller within the dialog of
@@ -389,11 +397,8 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 	c.mu.Lock()
 	out := c.out
 	c.mu.Unlock()
-	var outDone <-chan struct{}
-	if out != nil {
-		outDone = out.Done()
-	}
-	if !c.callerTurns.wait(r.Arrival, c.in.Done(), outDone) {
+	inDone, outDone := c.ends(req, out)
+	if !c.callerTurns.wait(r.Arrival, inDone, outDone) {
 		if req.Method == sip.PRACK {
 			// The copy that this PRACK acknowledges leaves the order in
 			// which the caller acknowledges them, so that the PRACK after
@@ -514,15 +519,27 @@ func (c *Call) fromCallee(r *sip.InDialogRequest, out *sip.OutgoingCall, t *turn
 	defer c.keepDialogs()
 	finish := t.take(r.Arrival)
 	defer finish()
-	var outDone <-chan struct{}
-	if out != nil {
-		outDone = out.Done()
-	}
-	if !t.wait(r.Arrival, c.in.Done(), outDone) {
+	inDone, outDone := c.ends(r.Request, out)
+	if !t.wait(r.Arrival, inDone, outDone) {
 		rejectEnded(r)
 		return
 	}
 	c.forward(r, c.in, ToCaller, finish)
+}
+
+// ends are what ends the wait of req, a request within a dialog of
+// out, for its turn: the end of either leg. A request of a subscription
+// that the Call keeps both legs for waits on, since that subscription
+// outlives the session (outlivesSession). out is nil when the request
+// comes before Invite has returned.
+func (c *Call) ends(req *sip.Message, out *sip.OutgoingCall) (in, outDone <-chan struct{}) {
+	if c.outlivesSession(req) {
+		return nil, nil
+	}
+	if out != nil {
+		outDone = out.Done()
+	}
+	return c.in.Done(), outDone
 }
 
 // rejectEnded answers a request that the call can no longer carry
@@ -548,6 +565,14 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 			c.release()
 		}
 		return
+	}
+	created := false
+	if req.Method == sip.SUBSCRIBE {
+		var refuse bool
+		if created, refuse = c.addSubscription(req); refuse {
+			c.refuse(r, d, 603)
+			return
+		}
 	}
 	var resp *sip.Message
 	var err error
@@ -575,6 +600,9 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 		finish()
 	}
 	c.answerRequest(r, m.Body, resp, err, to, d)
+	if ofSubscription(req.Method) {
+		c.relayed(req, created, resp, err)
+	}
 }
 
 // changesSession reports whether r, a request within a dialog, settles
@@ -715,4 +743,14 @@ func (c *Call) release() {
 		return
 	}
 	c.log.Info("call released: the caller got a BYE")
+}
+
+// ended reports whether done is closed.
+func ended(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
+	}
 }
