@@ -123,9 +123,10 @@ func (c *Call) reInviteOf(req *sip.Message) *reInviteRelay {
 // send the UPDATE that follows (RFC 3311 5.1). It acknowledges each copy
 // with a PRACK, which the Call takes among the requests of its leg and
 // sends on as the PRACK of the response that the copy is of (Call.prack).
-// The re-INVITE holds its turn only until the first provisional response
-// of to, which shows that to has it: its own PRACKs and UPDATEs come
-// after it on the same leg, and would otherwise wait for its final
+// The re-INVITE holds its turn only until the first reliable
+// provisional response of to whose copy goes reliably, which shows that
+// to has it: the PRACK of that copy and the UPDATE after it come after
+// the re-INVITE on the same leg, and would otherwise wait for its final
 // response (turns).
 //
 // RFC 3261 13.2.1: a session description in a reliable provisional
@@ -158,9 +159,16 @@ func (c *Call) reInvite(r *sip.InDialogRequest, to leg, m Message, d Direction, 
 		Headers:     m.Headers,
 		ManualPRACK: k.reliable,
 		OnProvisional: func(p *sip.Message) {
-			// to has the re-INVITE, so the requests of this leg that came
-			// after it need not wait for its final response.
-			finish()
+			if p.Requires(sip.Option100rel) && k.reliable {
+				// to has the re-INVITE, and the side that sent it is to
+				// acknowledge the copy of p, and may then send the UPDATE
+				// that the far end waits for: those requests of this leg
+				// need not wait for the final response of the re-INVITE.
+				// Without a reliable copy nothing of the sort follows, and
+				// the re-INVITE keeps its turn, up to the ACK that answers
+				// an offer of its 2xx (forward).
+				finish()
+			}
 			if pr, ok := c.prepareProvisional(r, k, p); ok {
 				k.provisionals <- pr
 			}

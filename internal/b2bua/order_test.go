@@ -3,6 +3,7 @@ package b2bua_test
 import (
 	"net/netip"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -35,6 +36,25 @@ type rawCallee struct {
 	// rseq counts the reliable provisional responses that the callee
 	// sends within one INVITE (RFC 3262 3).
 	rseq int
+	// arrived are the requests within the dialog that reached the
+	// callee, ACKs among them, as "CSeq method" in the order they came.
+	mu      sync.Mutex
+	arrived []string
+}
+
+// record notes that req reached the callee.
+func (rc *rawCallee) record(req *sip.Message) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	rc.arrived = append(rc.arrived, req.Get("CSeq"))
+}
+
+// requests are the requests within the dialog that reached the callee,
+// in the order they came.
+func (rc *rawCallee) requests() []string {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	return slices.Clone(rc.arrived)
 }
 
 // handleRequests has the test answer the requests that the callee
@@ -52,7 +72,7 @@ func newRawCallee(t *testing.T, tm sip.Timers) *rawCallee {
 		t.Fatal(err)
 	}
 	rc := &rawCallee{t: t, dialog: make(chan sip.Dialog, 1)}
-	stack, err := sip.NewStack(tl, sip.Config{SentBy: tl.LocalAddr().String(), Timers: tm, OnRequest: rc.onRequest, OnACK: func(*sip.Message) {}}, discard)
+	stack, err := sip.NewStack(tl, sip.Config{SentBy: tl.LocalAddr().String(), Timers: tm, OnRequest: rc.onRequest, OnACK: rc.record}, discard)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,6 +85,7 @@ func (rc *rawCallee) uri() string { return "sip:callee@" + rc.stack.LocalAddr().
 
 func (rc *rawCallee) onRequest(st *sip.ServerTransaction) {
 	if st.Request.Method != sip.INVITE || ims.IsInDialog(st.Request) {
+		rc.record(st.Request)
 		if rc.handle != nil {
 			rc.handle <- st
 			return
