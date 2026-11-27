@@ -1,6 +1,8 @@
 package lab
 
 import (
+	"net/netip"
+	"net/url"
 	"strconv"
 	"testing"
 	"time"
@@ -140,5 +142,72 @@ func TestRegistrationFromNotifyHasNoCallID(t *testing.T) {
 	}}))
 	if r, ok := h.registrations()[impu]; !ok || r.State != Registered || r.CallID != "" {
 		t.Errorf("registration from a NOTIFY = %+v, want registered with no call_id", r)
+	}
+}
+
+// The S-CSCF's third-party REGISTER to an application server (TS 24.229
+// 5.4.1.7) names the user in To, but its From and Contact are the S-CSCF.
+// Its 200 is no registration of the user's: the registration list keeps
+// the UE's Contact and the Call-ID of the UE's REGISTER, whichever 200
+// the Lab reads last, and the third-party REGISTER stays in the capture
+// under its own Call-ID.
+func TestThirdPartyRegisterIsNoRegistrationOfTheUE(t *testing.T) {
+	const (
+		thirdPartyCallID = "third-party-1@scscf." + domain
+		scscfURI         = "sip:scscf." + domain + ":5060"
+		ipsmgwURI        = "sip:ipsmgw." + domain + ":5060"
+	)
+	ipsmgw := node{"ipsmgw", netip.MustParseAddrPort("172.28.0.90:5060")}
+	toAS := []node{scscf, ipsmgw}
+	fromAS := []node{ipsmgw, scscf}
+	thirdPartyRequest := sipText("REGISTER "+ipsmgwURI+" SIP/2.0", "",
+		"Via: SIP/2.0/UDP scscf."+domain+":5060;branch=z9hG4bK3pty",
+		"Max-Forwards: 70",
+		"From: <"+scscfURI+">;tag=3pty",
+		"To: <"+impu+">",
+		"Call-ID: "+thirdPartyCallID,
+		"CSeq: 1 REGISTER",
+		"Contact: <"+scscfURI+">",
+		"Expires: 600")
+	thirdPartyOK := sipText("SIP/2.0 200 OK", "",
+		"Via: SIP/2.0/UDP scscf."+domain+":5060;branch=z9hG4bK3pty",
+		"From: <"+scscfURI+">;tag=3pty",
+		"To: <"+impu+">;tag=ipsmgw1",
+		"Call-ID: "+thirdPartyCallID,
+		"CSeq: 1 REGISTER",
+		"Contact: <"+scscfURI+">;expires=600")
+	ueOK := registerResponse(2, 200, "OK",
+		"Service-Route: <sip:orig@scscf."+domain+":5060;lr>",
+		"P-Associated-URI: <"+impu+">",
+		"Contact: <"+ueContact+">;expires=600")
+
+	for _, tc := range []struct {
+		name         string
+		thirdPartyOK bool // whether the 200 to the third-party REGISTER is read first
+	}{
+		{"the UE's 200 first", false},
+		{"the third-party 200 first", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, Config{})
+			h.along(toRegistrar, register(2, `Digest username="`+impi+`", realm="`+domain+`", nonce="abc", uri="sip:`+domain+`", response="0123", qop=auth, nc=00000001, cnonce="c1"`, 600000))
+			h.along(toAS, thirdPartyRequest)
+			if tc.thirdPartyOK {
+				h.along(fromAS, thirdPartyOK)
+				h.along(toUE, ueOK)
+			} else {
+				h.along(toUE, ueOK)
+				h.along(fromAS, thirdPartyOK)
+			}
+			r, ok := h.registrations()[impu]
+			if !ok || r.Contact != ueContact || r.CallID != regCallID || r.IMPI != impi || r.SCSCF != scscfURI {
+				t.Errorf("registration of %s = %+v, want the UE's contact %s and Call-ID %s", impu, r, ueContact, regCallID)
+			}
+			var messages []Message
+			h.get("/api/messages?call_id="+url.QueryEscape(thirdPartyCallID), &messages)
+			if len(messages) == 0 {
+				t.Errorf("no message of the third-party REGISTER %s in the capture", thirdPartyCallID)
+			}
+		})
 	}
 }
