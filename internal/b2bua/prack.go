@@ -47,6 +47,13 @@ func (u *unacked) dropped(k *copied) {
 	u.copies = slices.DeleteFunc(u.copies, func(c *copied) bool { return c == k })
 }
 
+// empty tells that no copy waits for its PRACK.
+func (u *unacked) empty() bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	return len(u.copies) == 0
+}
+
 // acknowledged is the response of the other side whose copy the next
 // PRACK, in the order the copies went, acknowledges: nil when that copy
 // was of a response that the other side wants no PRACK for. own tells
