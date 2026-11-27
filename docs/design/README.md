@@ -18,4 +18,5 @@
 | [provisioning-northbound.md](provisioning-northbound.md) | BSS から加入者を入れる口を、標準に寄せずに独自の API のままにすること | 標準にある形（SuM の Itf-N に流す Bulk CM の XML）が、この実装の運ぶ長期の鍵、OPc、SIP Digest のパスワードを持たないため |
 | [fm-northbound.md](fm-northbound.md) | OSS に警報を渡す口を、TS 28.111 の故障管理と TS 28.532 の ProvMnS の REST の形で作ること。警報の一覧の読み出し、確認、`NtfSubscriptionControl` による購読と通知。通知は、ノードごとのリースを持つ OAM のインスタンスが送ること | 標準の Itf-N の形で OSS につなぎ、OAM を複数のインスタンスで動かしても、1 台のノードの通知を 1 か所から順に送るため |
 | [b2bua.md](b2bua.md) | IBCF と MMTel AS が 2 つのレグを中継する部分を `internal/b2bua` にまとめ、ダイアログの中の要求を届いた順に中継すること | 同じ直しを 2 か所に入れ続けずに済み、オファーとアンサーの順を崩さないため |
+| [slides.md](slides.md) | スライドの元データに、ノードとイベントのモデルと、段階で進むシーンを書けるようにしたこと。HTML は段階を進める舞台、pptx はチェックポイントごとの静止のページにすること | 信号を 1 区間ずつ追い、ノードの判断を図で見せるため。動かない pptx でも同じことを読めるようにするため |
 | [openapi.md](openapi.md) | 独自の HTTP の API を API ごとの OpenAPI 3.1 で書き、試験でハンドラーと突き合わせること。スキーマの検査に santhosh-tekuri/jsonschema を使うこと。3GPP の OpenAPI に従う API の示し方 | 文書とハンドラーの食い違いを試験で見つけ、どの API が標準に従うかを見分けられるようにするため |
