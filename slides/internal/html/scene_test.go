@@ -94,3 +94,32 @@ func TestSceneMarkup(t *testing.T) {
 		t.Error("the page loads a file")
 	}
 }
+
+// TestLadderBandCoversTheRoomAboveTheHeads makes sure that the band
+// behind the heads of a ladder reaches above them, into the room that a
+// stage of another shape than the camera adds there: a row that the
+// view has scrolled past does not show above the heads. The heads say
+// the role of each node as well.
+func TestLadderBandCoversTheRoomAboveTheHeads(t *testing.T) {
+	source := strings.Replace(sceneSource, "id: flow\n", "id: flow\nview: ladder\n", 1)
+	source = strings.Replace(source, "{id: a, label: A, at: [0, 0]}", "{id: a, label: A, role: sends, at: [0, 0]}", 1)
+	d, err := deck.Parse("ladder.md", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages, problems := layout.Deck(d)
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	var out bytes.Buffer
+	if err := WriteWith(&out, d, pages, Options{}); err != nil {
+		t.Fatal(err)
+	}
+	band := regexp.MustCompile(`<rect class="band" x="[^"]*" y="(-?[0-9.]+)"`).FindStringSubmatch(out.String())
+	if band == nil || !strings.HasPrefix(band[1], "-") {
+		t.Errorf("the band starts at %v, not above the heads", band)
+	}
+	if !strings.Contains(out.String(), `<text class="role"`) || !strings.Contains(out.String(), ">sends</text>") {
+		t.Error("the head of a has no role")
+	}
+}

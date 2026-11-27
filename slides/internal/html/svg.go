@@ -126,8 +126,11 @@ func diagramSVG(b *strings.Builder, d *deck.Deck, s deck.Slide, diagram *layout.
 		// script moves them with it.
 		fmt.Fprintf(b, `<g class="heads" transform="translate(0 %s)">`, num(camera.Y))
 		// A band behind the heads hides the rows that the view has
-		// scrolled past.
-		fmt.Fprintf(b, `<rect class="band" x="%s" y="0" width="%s" height="%s"/>`, num(diagram.Bounds.X), num(diagram.Bounds.W), num(diagram.Lines[0].Head.Y+diagram.Lines[0].Head.H+10))
+		// scrolled past. It reaches up past the top of the camera, into
+		// the room that the stage adds above the view when its shape is
+		// not that of the camera.
+		const above = 1000.0
+		fmt.Fprintf(b, `<rect class="band" x="%s" y="%s" width="%s" height="%s"/>`, num(diagram.Bounds.X), num(-above), num(diagram.Bounds.W), num(above+diagram.Lines[0].Head.Y+diagram.Lines[0].Head.H+10))
 		for _, l := range diagram.Lines {
 			cx, cy := l.Head.Center()
 			nameY := cy + 6
