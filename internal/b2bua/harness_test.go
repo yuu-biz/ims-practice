@@ -50,7 +50,11 @@ func startUA(t *testing.T, user string, tm sip.Timers, w *wire, onCall func(*sip
 		Timers:  tm,
 		Contact: "sip:" + user + "@" + tl.LocalAddr().String(),
 		Allow:   []sip.Method{"INFO"},
-		OnCall:  onCall,
+		// A B2BUA relays the reliable provisional responses, the PRACKs
+		// and the UPDATEs that preconditions need, as the IBCF and the
+		// MMTel AS do, so it takes a request that requires them.
+		Supported: []string{sip.OptionPrecondition},
+		OnCall:    onCall,
 	}, discard)
 	if err != nil {
 		t.Fatal(err)

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/b2bua"
+	"github.com/yuu-biz/ims-practice/internal/ims"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -27,6 +28,21 @@ type rawCallee struct {
 	t      *testing.T
 	stack  *sip.Stack
 	dialog chan sip.Dialog
+	// handle, when set, takes the requests within the dialog for the
+	// test to answer, where the callee otherwise answers each with 200
+	// (handleRequests).
+	handle chan *sip.ServerTransaction
+	// rseq counts the reliable provisional responses that the callee
+	// sends within one INVITE (RFC 3262 3).
+	rseq int
+}
+
+// handleRequests has the test answer the requests that the callee
+// receives within its dialog, and returns where they come. The test
+// calls it before the first call reaches the callee.
+func (rc *rawCallee) handleRequests() <-chan *sip.ServerTransaction {
+	rc.handle = make(chan *sip.ServerTransaction, 8)
+	return rc.handle
 }
 
 func newRawCallee(t *testing.T, tm sip.Timers) *rawCallee {
@@ -48,7 +64,11 @@ func newRawCallee(t *testing.T, tm sip.Timers) *rawCallee {
 func (rc *rawCallee) uri() string { return "sip:callee@" + rc.stack.LocalAddr().String() }
 
 func (rc *rawCallee) onRequest(st *sip.ServerTransaction) {
-	if st.Request.Method != sip.INVITE {
+	if st.Request.Method != sip.INVITE || ims.IsInDialog(st.Request) {
+		if rc.handle != nil {
+			rc.handle <- st
+			return
+		}
 		st.Respond(sip.NewResponse(st.Request, 200, ""))
 		return
 	}
@@ -68,10 +88,14 @@ func (rc *rawCallee) onRequest(st *sip.ServerTransaction) {
 	rc.dialog <- d
 }
 
-// send sends a request of method with body within d to the B2BUA.
-func (rc *rawCallee) send(d *sip.Dialog, method sip.Method, body sip.Body) *sip.ClientTransaction {
+// send sends a request of method with body and headers within d to the
+// B2BUA.
+func (rc *rawCallee) send(d *sip.Dialog, method sip.Method, body sip.Body, headers ...sip.HeaderField) *sip.ClientTransaction {
 	rc.t.Helper()
 	req := d.NewRequest(method)
+	for _, h := range headers {
+		req.Add(h.Name, h.Value)
+	}
 	if len(body.Content) > 0 {
 		req.Set("Content-Type", body.Type)
 		req.Body = body.Content

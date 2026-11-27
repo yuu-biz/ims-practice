@@ -55,6 +55,10 @@ type Call struct {
 	// subscriptions are the subscriptions that share the two dialogs
 	// with the session, by their Event (subscription.go).
 	subscriptions map[string]*relayedSubscription
+	// reInvites are the re-INVITEs within the dialogs that the Call is
+	// relaying now, by the dialog and the CSeq number that the RAck of a
+	// PRACK for one of their responses names (reinvite.go).
+	reInvites map[reInviteKey]*reInviteRelay
 }
 
 // New starts the Call of in, an INVITE that the B2BUA has taken, and
@@ -369,6 +373,12 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 	c.mu.Lock()
 	out := c.out
 	c.mu.Unlock()
+	// The PRACK of a copy of a response to a re-INVITE of the caller
+	// belongs to that re-INVITE, not to the INVITE of the call.
+	copies := &c.copies
+	if relay := c.reInviteOf(req); relay != nil {
+		copies = &relay.copies
+	}
 	inDone, outDone := c.ends(req, out)
 	if !c.callerTurns.wait(r.Arrival, inDone, outDone) {
 		if req.Method == sip.PRACK {
@@ -378,7 +388,7 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 			// that sends the INVITE on to another callee (Attempt again)
 			// goes on relaying the caller's requests after the leg that this
 			// one gave up for has ended.
-			c.copies.acknowledged()
+			copies.acknowledged()
 		}
 		if !answered {
 			rejectEnded(r)
@@ -388,7 +398,7 @@ func (c *Call) fromCaller(r *sip.InDialogRequest) {
 	var acked *sip.Message
 	var own bool
 	if req.Method == sip.PRACK {
-		acked, own = c.copies.acknowledged()
+		acked, own = copies.acknowledged()
 	}
 	select {
 	case <-c.outReady:
@@ -491,10 +501,36 @@ func (c *Call) fromCallee(r *sip.InDialogRequest, out *sip.OutgoingCall, t *turn
 	defer c.keepDialogs()
 	finish := t.take(r.Arrival)
 	defer finish()
-	inDone, outDone := c.ends(r.Request, out)
+	req := r.Request
+	answered := false
+	if req.Method == sip.PRACK && len(req.Body) == 0 {
+		// The callee has the 200 at once, as the caller does (fromCaller).
+		r.Accept(sip.Body{})
+		answered = true
+	}
+	// The PRACK of a copy of a response to a re-INVITE of the callee
+	// belongs to that re-INVITE, and goes on toward the caller.
+	relay := c.reInviteOf(req)
+	inDone, outDone := c.ends(req, out)
 	if !t.wait(r.Arrival, inDone, outDone) {
-		rejectEnded(r)
+		if relay != nil {
+			relay.copies.acknowledged()
+		}
+		if !answered {
+			rejectEnded(r)
+		}
 		return
+	}
+	if relay != nil {
+		if acked, _ := relay.copies.acknowledged(); acked != nil {
+			c.prack(r, relay.to, acked, answered, finish, ToCaller)
+			return
+		}
+		if answered {
+			// The PRACK of a copy of a response that the caller wants no
+			// PRACK for: the callee has its 200, and the PRACK ends here.
+			return
+		}
 	}
 	c.forward(r, c.in, ToCaller, finish)
 }
@@ -562,7 +598,7 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 		}
 		resp, err = to.Update(m.Body, m.Headers...)
 	case sip.INVITE:
-		resp, err = reInvite(to, m)
+		resp, err = c.reInvite(r, to, m, d, finish)
 	case sip.PRACK:
 		// A PRACK with a new offer, for a copy of a response that the
 		// callee wanted no PRACK for (RFC 3262 5). The offer goes on in
@@ -578,34 +614,6 @@ func (c *Call) forward(r *sip.InDialogRequest, to leg, d Direction, finish func(
 	if ofSubscription(req.Method) {
 		c.relayed(req, created, resp, err)
 	}
-}
-
-// reInvite sends m, a re-INVITE that crosses the B2BUA, on in to, and
-// returns its final response. The other side may answer an offer of m in
-// a reliable provisional response, which the UA of to acknowledges with
-// a PRACK. The UA of to takes that answer, and no SDP that comes after
-// it, such as one of the 2xx (RFC 3261 13.2.1, RFC 3262 5). The side
-// that sent m gets no provisional response of the other side's, so the
-// answer would be lost on the way: the 2xx that goes back carries the
-// answer of that provisional response instead of its own SDP, and both
-// sides have the same answer.
-func reInvite(to leg, m Message) (*sip.Message, error) {
-	var answered *sip.Message
-	re := sip.ReInvitation{Body: m.Body, Headers: m.Headers}
-	if len(m.Body.Content) > 0 {
-		re.OnProvisional = func(p *sip.Message) {
-			if answered == nil && p.Requires(sip.Option100rel) && sip.HasSessionDescription(p) {
-				answered = p
-			}
-		}
-	}
-	resp, err := to.ReInviteWith(re)
-	if err == nil && resp.StatusCode < 300 && answered != nil {
-		resp = resp.Clone()
-		resp.Set("Content-Type", answered.Get("Content-Type"))
-		resp.Body = answered.Body
-	}
-	return resp, err
 }
 
 // changesSession reports whether r, a request within a dialog, settles
