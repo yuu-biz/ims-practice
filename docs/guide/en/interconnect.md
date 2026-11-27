@@ -493,7 +493,7 @@ The agreement of network A with network B is `deploy/interconnect/profiles/netwo
 | `trusted` | Whether the peer is in the trust domain | TS 24.229 4.4 |
 | `transports` | The transports to send with, preferred first | TS 29.165 6.2 |
 | `methods` | The optional methods that the agreement allows, such as MESSAGE | TS 29.165 Table 6.1 |
-| `option_tags` | `pass`, `remove` or `reject` for each option tag: `remove` takes the tag out of the request, and with `reject` the IBCF answers a request that requires the extension with 420 | TS 29.165 Table 6.1.3.1 (100rel item 18, precondition item 20), RFC 3261 8.2.2.3 |
+| `option_tags` | `pass`, `remove` or `reject` for each option tag: `remove` takes the tag out of the requests that cross and out of everything that the IBCF itself sends the peer, and with `reject` the IBCF answers a request that requires the extension with 420 | TS 29.165 Table 6.1.3.1 (100rel item 18, precondition item 20), RFC 3261 8.2.2.3 |
 | `headers` | The operator's rules to remove or rewrite header fields | TS 24.229 5.10.6.2 |
 | `number_format`, `local_numbers`, `allow_local_numbers` | The form of the numbers, and how a local number becomes global | TS 29.165 8.1, RFC 3966 5.1.5 |
 | `codecs` | The payload formats that the peer takes | TS 29.165 7.1 |
@@ -515,6 +515,8 @@ These scenarios show agreements that do not match, a call that fails because of 
 The failures come from the IBCFs, by the agreement, not from the UEs: compare the INVITE on the link with the one that reaches network B, or the 405 and the 488 in the capture of the IBCF that sent them.
 
 The precondition mechanism is optional at the II-NNI too (TS 29.165 Table 6.1.3.1 item 20), and the operators agree on it (Table C.3.1.2). Whether a call uses it is decided by its two ends, not by the border: an INVITE that only lists `precondition` in Supported gets an answer without preconditions from a callee that lacks them (RFC 3312 11), and one that requires it gets 420 from that callee (RFC 3261 8.2.2.3). With `precondition: reject` in its profile, the IBCF answers that 420 itself, as the UAS of the caller's dialog. A profile cannot `remove` precondition: the tag would go, and the precondition attributes would stay in the SDP.
+
+`remove` is for an extension that lives in the header fields alone, such as `100rel`, `timer` or `replaces`. The IBCF takes the tag out of each request that crosses the border, either way. It also keeps the tag out of what its own UA sends in the dialog with the peer: the Supported of the requests within the dialog and of its responses, and the Require of a reliable provisional response. And it reads the requests of the peer without the tag, so that it does not use the extension with the peer either: with `100rel: remove`, the 183 that the IBCF sends the peer is not reliable, and the peer sends no PRACK for it (RFC 3262 3). In the dialog with the home network, the IBCF uses the extension as before.
 
 ## Short messages across
 
