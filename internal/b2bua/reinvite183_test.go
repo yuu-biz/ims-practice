@@ -213,6 +213,41 @@ func TestSDPOfThe2xxAfterAReliable183DoesNotReachTheCaller(t *testing.T) {
 	}
 }
 
+// TestAnUnreliable183ToAReINVITEIsCopiedUnreliably: the callee shows
+// its answer in a 183 that is not reliable, and then answers for real
+// in the 200, at another port. The copy that reaches the caller is not
+// reliable either, although the caller's re-INVITE offered 100rel: a
+// reliable copy would have the caller take the session description of
+// the 183 for the answer and leave the one of the 200 unread (RFC 3261
+// 13.2.1, RFC 3262 5).
+func TestAnUnreliable183ToAReINVITEIsCopiedUnreliably(t *testing.T) {
+	rc := newRawCallee(t, timers)
+	rc.handleRequests()
+	b2b := newB2BUA(t, &hooks{}, rc.uri())
+	out, _ := answeredCall(t, rc, b2b, nil)
+
+	provisional := make(chan *sip.Message, 4)
+	done := make(chan result, 1)
+	go func() {
+		resp, err := out.ReInviteWith(sip.ReInvitation{Body: reOffer,
+			OnProvisional: func(p *sip.Message) { provisional <- p }})
+		done <- result{resp, err}
+	}()
+	re := rc.next(sip.INVITE)
+	rc.respond(re, 183, reAnswer)
+	p := within(t, "the 183 of the callee at the caller", provisional)
+	if p.StatusCode != 183 || p.Requires(sip.Option100rel) || string(p.Body) != string(reAnswer.Content) {
+		t.Fatalf("the caller got %d with Require %q and %q, want an unreliable 183 with the session of the callee",
+			p.StatusCode, p.Get("Require"), p.Body)
+	}
+	rc.respond(re, 200, lateAnswer)
+	r := within(t, "the final response to the caller's re-INVITE", done)
+	if r.err != nil || r.resp.StatusCode != 200 || string(r.resp.Body) != string(lateAnswer.Content) {
+		t.Fatalf("the caller's re-INVITE got %v %v with %q, want 200 with the answer of the 200",
+			r.resp, r.err, r.resp.Body)
+	}
+}
+
 // TestAReINVITEWithout100relKeepsTheAnswerForThe2xx: the callee sends a
 // re-INVITE that offers no 100rel, so the copies of the provisional
 // responses go to it unreliably and it takes the session description of

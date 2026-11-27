@@ -22,10 +22,11 @@ type reInviteRelay struct {
 	// d is the way the re-INVITE crosses, so its responses cross the
 	// other way.
 	d Direction
-	// reliable tells that the re-INVITE offered 100rel, so the copies go
-	// reliably and the side that sent it acknowledges each with a PRACK
-	// (RFC 3262 3). Without it that side sends no PRACK, and the UA of to
-	// acknowledges the reliable responses itself.
+	// reliable tells that the re-INVITE offered 100rel, so the copy of a
+	// reliable provisional response of to goes reliably too, and the side
+	// that sent the re-INVITE acknowledges it with a PRACK (RFC 3262 3).
+	// Without it that side sends no PRACK, and the UA of to acknowledges
+	// the reliable responses itself.
 	reliable bool
 	// copies are the copies that wait for a PRACK of that side (prack.go).
 	copies unacked
@@ -141,18 +142,24 @@ func (c *Call) reInvite(r *sip.InDialogRequest, to leg, m Message, d Direction, 
 
 // reInviteProvisional passes p, a provisional response to the re-INVITE
 // r that the far leg of its relay k sent, back to the side that sent r.
-// A copy that goes reliably waits for its PRACK, as
-// sip.InDialogRequest.Progress does, and the Call sends that PRACK on as
-// the PRACK of p (Call.prack): it comes while Progress waits, so the
-// relay is still there to be found (reInviteOf). A reliable p whose copy
-// did not go, or went unreliably, gets a PRACK of the B2BUA's own (RFC
-// 3262 4).
+//
+// The copy goes reliably when p came reliably and r offered 100rel. It
+// then waits for its PRACK, as sip.InDialogRequest.Progress does, and
+// the Call sends that PRACK on as the PRACK of p (Call.prack): it comes
+// while Progress waits, so the relay is still there to be found
+// (reInviteOf). A p that came without 100rel is copied unreliably even
+// where r offered 100rel: a session description in it is no answer, and
+// a reliable copy would have the side that sent r take it for the
+// answer and leave the answer that follows unread (RFC 3261 13.2.1, RFC
+// 3262 5). A reliable p whose copy did not go reliably gets a PRACK of
+// the B2BUA's own (RFC 3262 4).
 //
 // RFC 3262 5: after a re-INVITE without an offer, the first reliable
 // response with a body has the offer of the far end, and the PRACK of
 // its copy the answer. The B2BUA has no answer of its own, so a
-// response with that offer whose copy did not go gets no PRACK, and the
-// far end gives the re-INVITE up with a 5xx (RFC 3262 3).
+// response with that offer whose copy did not go reliably gets no
+// PRACK, and the far end gives the re-INVITE up with a 5xx (RFC 3262
+// 3).
 func (c *Call) reInviteProvisional(r *sip.InDialogRequest, k *reInviteRelay, p *sip.Message) {
 	reliable := p.Requires(sip.Option100rel)
 	m, ok := c.hooks.Response(p, r.Request, k.d.reverse())
@@ -166,18 +173,17 @@ func (c *Call) reInviteProvisional(r *sip.InDialogRequest, k *reInviteRelay, p *
 		offer = len(r.Request.Body) == 0
 	}
 	var sent *copied
-	if k.reliable {
-		sent = &copied{}
-		if reliable {
-			sent.of = p
-		}
+	send := r.ProgressUnreliably
+	if reliable && k.reliable {
+		sent = &copied{of: p}
 		k.copies.sent(sent)
+		send = r.Progress
 	}
 	if k.d == ToCallee {
 		// The response goes to the caller, which sent the re-INVITE.
 		c.sentToCaller(m.Body)
 	}
-	if err := r.Progress(p.StatusCode, m.Body, m.Headers...); err != nil {
+	if err := send(p.StatusCode, m.Body, m.Headers...); err != nil {
 		c.log.Info("provisional response to the re-INVITE not relayed", "status", p.StatusCode, "error", err.Error())
 		// No PRACK comes for a copy that did not go.
 		k.copies.dropped(sent)
