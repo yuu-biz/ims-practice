@@ -340,13 +340,15 @@ events:
     from: scscf
     to: pcscf
     proto: SIP
+    fields:
+      - Route: the P-CSCF, from the Record-Route of the SUBSCRIBE
   - id: unotify-p-ue
     msg: NOTIFY
     from: pcscf
     to: ue
     proto: SIP
     fields:
-      - Route: the P-CSCF, from the Record-Route of the SUBSCRIBE
+      - Record-Route: added by the P-CSCF; the UE builds the route of the subscription from it
   # The third-party REGISTER (steps 15 to 18)
   - id: tp-register
     msg: REGISTER
@@ -639,7 +641,7 @@ steps:
       The HSS is 10, the I-CSCF 20, the S-CSCF 30, the P-CSCF 40.
 ```
 
-- The UE is a softphone without a SIM. Its identities are configured in it, as an IMC holds them (TS 24.229 5.1.1.1B.1), so it uses the public identity it registers in its other requests too. That identity has the form of one made from an IMSI, but it is configured and not barred. A VoLTE phone registers a barred temporary identity instead; the VoLTE session shows it.
+- The UE is a softphone without a SIM. Its identities are configured in it, as an IMC holds them (TS 24.229 5.1.1.1B.1), so it uses the public identity it registers in its other requests too. That identity is the SIP URI of the user's number, and it is not barred. A VoLTE phone registers a barred temporary identity instead; the VoLTE session shows it.
 
 | Node | Address | What it does in registration |
 | --- | --- | --- |
@@ -876,20 +878,20 @@ steps:
     only: [reg1-i-s, mar]
     zoom: [icscf, hss, scscf]
     text: The scheme is `Unknown`. The REGISTER has no integrity-protected, so the HSS is to choose.
-  - id: maa
-    title: The HSS returns the SIP Digest data (MAA)
-    show: [maa]
-    zoom: [icscf, hss, scscf]
-    text: H(A1) is a hash of the user name, the realm and the password. With it alone the S-CSCF can check the answer of the UE.
   - id: assign
     title: The HSS stores the S-CSCF of the user
     show: [hss-assign]
     focus: [hss]
     zoom: [icscf, hss, scscf]
-    checkpoint: true
     text: |
-      It stores this S-CSCF as the one that serves the user, with authentication pending.
+      With the MAR the HSS stores this S-CSCF as the one that serves the user, with authentication pending.
       The registration is not done yet. The second UAR uses what is stored here.
+  - id: maa
+    title: The HSS returns the SIP Digest data (MAA)
+    show: [maa]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: H(A1) is a hash of the user name, the realm and the password. With it alone the S-CSCF can check the answer of the UE.
   - id: nonce
     title: The S-CSCF makes its question
     show: [scscf-challenge]
@@ -1051,6 +1053,7 @@ steps:
     only: [mt-s-p, mt-p-ue]
     active: mt-p-ue
     focus: [scscf, pcscf, ue]
+    checkpoint: true
     text: |
       The S-CSCF sends requests for the UE along the Path, through the P-CSCF of that UE.
       An incoming INVITE takes this route.
@@ -1147,9 +1150,10 @@ steps:
     title: The NOTIFY reaches the UE through the P-CSCF
     show: [unotify-s-p, unotify-p-ue]
     active: unotify-p-ue
+    detail: [unotify-s-p, unotify-p-ue]
     text: |
-      The Route of the NOTIFY holds the P-CSCF.
-      The UE takes the route of the subscription from the NOTIFY, so its later SUBSCRIBEs pass the P-CSCF too.
+      The Route of the NOTIFY from the S-CSCF holds the P-CSCF. The P-CSCF adds its own Record-Route to the NOTIFY.
+      The UE takes the route of the subscription from this NOTIFY, so its later SUBSCRIBEs pass the P-CSCF too.
 ```
 
 | Look at | What to see |
