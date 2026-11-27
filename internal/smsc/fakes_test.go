@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -55,8 +56,11 @@ type fakeHSS struct {
 	// user unknown.
 	answers map[string]sgd.SendRoutingInfoForSMAnswer
 	down    bool
-	srr     []sgd.SendRoutingInfoForSMRequest
-	rdr     []sgd.ReportSMDeliveryStatusRequest
+	// hold, while it is not nil, keeps each SRR waiting until it is
+	// closed: an HSS that is slow to answer.
+	hold chan struct{}
+	srr  []sgd.SendRoutingInfoForSMRequest
+	rdr  []sgd.ReportSMDeliveryStatusRequest
 	// rdaResult is the result of every RDA; zero means success.
 	rdaResult diameter.Result
 }
@@ -82,8 +86,14 @@ func (h *fakeHSS) reports() []sgd.ReportSMDeliveryStatusRequest {
 
 func (h *fakeHSS) SendRoutingInfoForSM(_ context.Context, req sgd.SendRoutingInfoForSMRequest) (sgd.SendRoutingInfoForSMAnswer, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
 	h.srr = append(h.srr, req)
+	hold := h.hold
+	h.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
 	if h.down {
 		return sgd.SendRoutingInfoForSMAnswer{}, errors.New("no route to the HSS")
 	}
@@ -97,6 +107,14 @@ func (h *fakeHSS) set(msisdn string, a sgd.SendRoutingInfoForSMAnswer) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.answers[msisdn] = a
+}
+
+// holdSRRs keeps the SRRs from now on waiting until the test closes
+// hold.
+func (h *fakeHSS) holdSRRs(hold chan struct{}) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.hold = hold
 }
 
 func (h *fakeHSS) srrCount() int {
@@ -211,6 +229,8 @@ type network struct {
 	nodes *fakeNodes
 	store *MemoryStore
 	sc    *SMSC
+	// endToEnd is the End-to-End Identifier of the last OFR the MME sent.
+	endToEnd atomic.Uint32
 }
 
 func newNetwork(t *testing.T) *network {
@@ -250,16 +270,24 @@ func (n *network) submit(to string, s sms.Submit) sgd.MOForwardShortMessageAnswe
 // answer without waiting for the delivery that it starts.
 func (n *network) submitTo(sc *SMSC, s sms.Submit) sgd.MOForwardShortMessageAnswer {
 	n.t.Helper()
+	return sc.MOForwardShortMessage(context.Background(), n.ofr(s))
+}
+
+// ofr is a new OFR of the MME for Alice with the SMS-SUBMIT s: one with
+// an End-to-End Identifier of its own (RFC 6733 3).
+func (n *network) ofr(s sms.Submit) sgd.MOForwardShortMessageRequest {
+	n.t.Helper()
 	tpdu, err := s.Marshal()
 	if err != nil {
 		n.t.Fatal(err)
 	}
-	return sc.MOForwardShortMessage(context.Background(), sgd.MOForwardShortMessageRequest{
+	return sgd.MOForwardShortMessageRequest{
 		Header:         diameter.Header{SessionID: mmeHost + ";1;1", OriginHost: mmeHost, OriginRealm: epcRealm, DestinationRealm: epcRealm},
+		EndToEndID:     n.endToEnd.Add(1),
 		SCAddress:      scAddress,
 		UserIdentifier: sgd.UserIdentifier{UserName: imsiOf[alice], MSISDN: alice},
 		SMRPUI:         tpdu,
-	})
+	}
 }
 
 // cutStore is a Store that fails a call whose context has ended before

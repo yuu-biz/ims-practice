@@ -7,6 +7,7 @@
 //
 //	queue:<destination>        queue, kept until the SC has emptied it
 //	time-stamp:<destination>   timeStamp, a time to live of seconds
+//	ofr:<request>              ofr, time to live until its Expires
 //
 // The destinations that are due for a delivery attempt are a time index.
 // Each operation touches the queue of one destination, or the front of
@@ -72,6 +73,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/internal/kvstore"
 	"github.com/yuu-biz/ims-practice/internal/kvstore/kvjson"
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 	"github.com/yuu-biz/ims-practice/internal/smsc"
 )
 
@@ -516,4 +518,47 @@ func (s *Store) Alert(ctx context.Context, destination string, now time.Time) (b
 		return false, err
 	}
 	return held, nil
+}
+
+// ofr is the item of one OFR that an instance has taken: the record by
+// which every instance tells a copy of the OFR from a new one.
+type ofr struct {
+	// Answer is nil until the instance that took the OFR has answered it.
+	Answer *sgd.MOForwardShortMessageAnswer
+	// Expires is when the record goes.
+	Expires time.Time
+}
+
+func (s *Store) ofrKey(request string) string { return s.c.Key("ofr", request) }
+
+// BeginOFR writes the record only where there is none, so that of
+// several instances that begin the same request one wins. A record that
+// has expired is gone with its time to live.
+func (s *Store) BeginOFR(ctx context.Context, request string, _, expires time.Time) (bool, error) {
+	_, err := kvjson.CompareAndSwap(ctx, s.c, s.ofrKey(request), "", ofr{Expires: expires}, s.c.TTLUntil(expires))
+	switch {
+	case errors.Is(err, kvstore.ErrConflict):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *Store) PutOFA(ctx context.Context, request string, a sgd.MOForwardShortMessageAnswer, expires time.Time) error {
+	return kvjson.Write(ctx, s.c, s.ofrKey(request), ofr{Answer: &a, Expires: expires}, s.c.TTLUntil(expires))
+}
+
+func (s *Store) OFA(ctx context.Context, request string, now time.Time) (sgd.MOForwardShortMessageAnswer, bool, error) {
+	var r ofr
+	switch _, err := kvjson.Read(ctx, s.c, s.ofrKey(request), &r); {
+	case errors.Is(err, kvstore.ErrNotFound):
+		return sgd.MOForwardShortMessageAnswer{}, false, nil
+	case err != nil:
+		return sgd.MOForwardShortMessageAnswer{}, false, err
+	}
+	if r.Answer == nil || !now.Before(r.Expires) {
+		return sgd.MOForwardShortMessageAnswer{}, false, nil
+	}
+	return *r.Answer, true, nil
 }

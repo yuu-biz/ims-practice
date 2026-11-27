@@ -4,8 +4,11 @@ import (
 	"container/heap"
 	"context"
 	"crypto/rand"
+	"slices"
 	"sync"
 	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/sgd"
 )
 
 // MemoryStore is a Store in the memory of one process: for tests, and
@@ -21,6 +24,18 @@ type MemoryStore struct {
 	// old to matter can be dropped from the front.
 	timestamps map[string]time.Time
 	stamped    []stamp
+	// ofrs are the records of the OFRs the SC has taken, by request.
+	// begun lists the same in the order they began, so that the ones
+	// that have expired can be dropped from the front.
+	ofrs  map[string]ofrRecord
+	begun []string
+}
+
+// ofrRecord is what BeginOFR and PutOFA keep of one OFR.
+type ofrRecord struct {
+	// answer is nil until PutOFA.
+	answer  *sgd.MOForwardShortMessageAnswer
+	expires time.Time
 }
 
 type destination struct {
@@ -43,7 +58,8 @@ type stamp struct {
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{destinations: map[string]*destination{}, timestamps: map[string]time.Time{}}
+	return &MemoryStore{destinations: map[string]*destination{}, timestamps: map[string]time.Time{},
+		ofrs: map[string]ofrRecord{}}
 }
 
 var _ Store = (*MemoryStore)(nil)
@@ -184,6 +200,54 @@ func (s *MemoryStore) Alert(_ context.Context, dest string, now time.Time) (bool
 		heap.Fix(&s.due, d.index)
 	}
 	return true, nil
+}
+
+func (s *MemoryStore) BeginOFR(_ context.Context, request string, now, expires time.Time) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for len(s.begun) > 0 {
+		if r, ok := s.ofrs[s.begun[0]]; ok && now.Before(r.expires) {
+			break
+		}
+		delete(s.ofrs, s.begun[0])
+		s.begun = s.begun[1:]
+	}
+	if r, ok := s.ofrs[request]; ok && now.Before(r.expires) {
+		return false, nil
+	}
+	s.ofrs[request] = ofrRecord{expires: expires}
+	s.begun = append(s.begun, request)
+	return true, nil
+}
+
+func (s *MemoryStore) PutOFA(_ context.Context, request string, a sgd.MOForwardShortMessageAnswer, expires time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a = copyOFA(a)
+	s.ofrs[request] = ofrRecord{answer: &a, expires: expires}
+	return nil
+}
+
+func (s *MemoryStore) OFA(_ context.Context, request string, now time.Time) (sgd.MOForwardShortMessageAnswer, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.ofrs[request]
+	if !ok || r.answer == nil || !now.Before(r.expires) {
+		return sgd.MOForwardShortMessageAnswer{}, false, nil
+	}
+	return copyOFA(*r.answer), true, nil
+}
+
+// copyOFA copies what the pointer and the slice of a point to, as
+// copyMessage does for a message.
+func copyOFA(a sgd.MOForwardShortMessageAnswer) sgd.MOForwardShortMessageAnswer {
+	if a.SMDeliveryFailureCause != nil {
+		c := *a.SMDeliveryFailureCause
+		c.SMDiagnosticInfo = slices.Clone(c.SMDiagnosticInfo)
+		a.SMDeliveryFailureCause = &c
+	}
+	a.SMRPUI = slices.Clone(a.SMRPUI)
+	return a
 }
 
 // copyMessage copies what the pointers of m point to, so that neither

@@ -63,6 +63,54 @@ func TestShortMessageAcceptedAndDelivered(t *testing.T) {
 	}
 }
 
+// TestOFRSentAgainToAnotherInstance is RFC 6733 3: a serving node that
+// got no OFA in time sends the OFR again, with its Origin-Host and
+// End-to-End Identifier, and it may reach another instance of the SC.
+// That one answers what the first one answers, both while the first is
+// still at the request and after it has answered, and the short message
+// is queued, and delivered, once.
+func TestOFRSentAgainToAnotherInstance(t *testing.T) {
+	n := newNetwork(t)
+	other := n.newSC()
+	ofr := n.ofr(hello(t, bob, 7))
+	hold := make(chan struct{})
+	n.hss.holdSRRs(hold)
+
+	first := make(chan sgd.MOForwardShortMessageAnswer, 1)
+	go func() { first <- n.sc.MOForwardShortMessage(context.Background(), ofr) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for n.hss.srrCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the first instance never asked the HSS about the recipient")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	during := make(chan sgd.MOForwardShortMessageAnswer, 1)
+	go func() { during <- other.MOForwardShortMessage(context.Background(), ofr) }()
+	select {
+	case a := <-during:
+		t.Fatalf("the copy was answered %+v before the first instance had answered", a)
+	case <-time.After(100 * time.Millisecond):
+	}
+	n.hss.holdSRRs(nil)
+	close(hold)
+
+	want := <-first
+	if want.Result != diameter.Base(diameter.DiameterSuccess) {
+		t.Fatalf("OFA = %+v, want success", want)
+	}
+	for _, got := range []sgd.MOForwardShortMessageAnswer{<-during, other.MOForwardShortMessage(context.Background(), ofr)} {
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("OFA to the copy = %+v, want %+v, the answer to the first", got, want)
+		}
+	}
+	waitDeliveries(t, n.sc)
+	waitDeliveries(t, other)
+	if sent := n.nodes.sent(); len(sent) != 1 {
+		t.Errorf("%d TFRs, want 1", len(sent))
+	}
+}
+
 func TestStatusReport(t *testing.T) {
 	n := newNetwork(t)
 	submit := hello(t, bob, 42)
