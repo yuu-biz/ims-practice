@@ -336,7 +336,7 @@ ue2 や pjsua のように attach していない UE では、PCRF は IP-CAN �
 | `Framed-IP-Address` | 172.28.0.121 | UE。PCRF はこれで IP-CAN セッションを見つける。 |
 | `Rx-Request-Type` | INITIAL_REQUEST | 通話のための新しい Rx のセッション。 |
 
-PCRF は音声を QCI 1 で許可し（TS 29.213 6.3、IR.92 4.4.2）、スタブが dedicated bearer を作り、PCRF が 2001 で答えます。そのあと UPDATE や保留で新しい SDP の offer と answer があるたびに、同じセッションで `Rx-Request-Type: UPDATE_REQUEST` の AAR が送られます。保留中は、発信側の `Flow-Status` が `ENABLED-UPLINK`（0）、着信側が `ENABLED-DOWNLINK`（1）になります。
+PCRF は音声を QCI 1 で許可し（TS 29.213 6.3、IR.92 4.4.2）、2001 で答えます。スタブはその答えを送ってから dedicated bearer を作ります。AAA は PCC ルールを当てる前か、それと並行して返すものだからです（TS 29.214 4.4.1）。そのあと UPDATE や保留で新しい SDP の offer と answer があるたびに、同じセッションで `Rx-Request-Type: UPDATE_REQUEST` の AAR が送られます。保留中は、発信側の `Flow-Status` が `ENABLED-UPLINK`（0）、着信側が `ENABLED-DOWNLINK`（1）になります。
 
 ### 通話の終わり
 
