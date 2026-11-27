@@ -191,6 +191,73 @@ func TestMediaCarriesAMRWB(t *testing.T) {
 	}
 }
 
+// TestMediaPacksTheFramesInTheFormatOfTheStreamAtTheTick: a new offer and
+// answer that changes octet-align of the same AMR-WB codec, with its own
+// payload type, applies to the frames that have not gone out yet. The
+// peer files each packet by its payload type, and what it gets back is
+// the recording, frame for frame.
+func TestMediaPacksTheFramesInTheFormatOfTheStreamAtTheTick(t *testing.T) {
+	peer, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer peer.Close()
+	remote := loopback(uint16(peer.LocalAddr().(*net.UDPAddr).Port))
+	bandwidthEfficient, octetAligned := sdp.VoLTECodecs()[0], sdp.VoLTECodecs()[1]
+	formats := map[uint8]sdp.Codec{uint8(bandwidthEfficient.PayloadType): bandwidthEfficient, uint8(octetAligned.PayloadType): octetAligned}
+
+	a := listenMedia(t)
+	a.SetFlow(ue.Flow{Send: true})
+	if err := a.SetStream(ue.Stream{Remote: remote, Codec: bandwidthEfficient}); err != nil {
+		t.Fatal(err)
+	}
+	speech := ue.ToneSpeech(time.Second)
+	if err := a.Start(speech); err != nil {
+		t.Fatal(err)
+	}
+
+	var got []amr.Frame
+	var seen []uint8 // the payload type of each packet
+	deadline := time.Now().Add(5 * time.Second)
+	buf := make([]byte, 1500)
+	for len(got) < len(speech.AMRWB) {
+		peer.SetReadDeadline(deadline)
+		n, err := peer.Read(buf)
+		if err != nil {
+			t.Fatalf("after %d of %d frames: %v", len(got), len(speech.AMRWB), err)
+		}
+		pkt, err := rtp.Unmarshal(buf[:n])
+		if err != nil {
+			t.Fatal(err)
+		}
+		codec, ok := formats[pkt.PayloadType]
+		if !ok {
+			t.Fatalf("a packet of payload type %d, which no stream had", pkt.PayloadType)
+		}
+		format, err := codec.AMRFormat()
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload, err := format.Unmarshal(pkt.Payload)
+		if err != nil {
+			t.Fatalf("packet %d of payload type %d: %v", len(seen), pkt.PayloadType, err)
+		}
+		got = append(got, payload.Frames...)
+		seen = append(seen, pkt.PayloadType)
+		if len(seen) == 10 {
+			if err := a.SetStream(ue.Stream{Remote: remote, Codec: octetAligned}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if !slices.EqualFunc(got, speech.AMRWB, sameFrame) {
+		t.Errorf("the frames rebuilt from the packets are not the recording of %d frames", len(speech.AMRWB))
+	}
+	if seen[0] != 96 || seen[len(seen)-1] != 97 {
+		t.Errorf("payload types %v, want 96 before the change and 97 after", seen)
+	}
+}
+
 func sameFrame(a, b amr.Frame) bool {
 	return a.Type == b.Type && a.Quality == b.Quality && bytes.Equal(a.Data, b.Data)
 }
