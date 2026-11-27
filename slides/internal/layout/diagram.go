@@ -276,8 +276,8 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 	// list: a process below, above, right or left of its node; a label
 	// at the middle of its line, then further along it, then further out.
 	var taken []Box
-	for _, b := range boxes {
-		taken = append(taken, b.grow(4, 4))
+	for _, id := range s.Nodes {
+		taken = append(taken, boxes[id].grow(4, 4))
 	}
 	free := func(b Box) bool {
 		for _, t := range taken {

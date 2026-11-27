@@ -88,6 +88,21 @@ func checkpointPage(d *deck.Deck, s deck.Slide, diagram *Diagram, from, k int) (
 		camera = diagram.Cameras[k]
 	}
 
+	// A still page of a ladder shows LadderRows rows. Every row that the
+	// steps of the page add has to be among them, or the page would tell
+	// of a message that it does not draw.
+	if diagram.View == deck.ViewLadder {
+		for _, st := range scene.Steps[from : k+1] {
+			for _, e := range diagram.Events {
+				if slices.Contains(st.Events, e.ID) && hiddenRow(e, camera) {
+					if prev := from - 1; prev < 0 || !slices.Contains(scene.Steps[prev].Events, e.ID) {
+						return page, &OverflowError{Path: d.Path, Slide: s.Number, Title: deck.PlainText(s.Title),
+							Reason: fmt.Sprintf("the checkpoint %s of the ladder adds more rows than a page shows; make an earlier step a checkpoint", step.ID)}
+					}
+				}
+			}
+		}
+	}
 	numbers := scene.FirstActive()
 	var details []string
 	for _, st := range scene.Steps[from : k+1] {
@@ -352,10 +367,12 @@ func drawDiagram(diagram *Diagram, scene *deck.Scene, step deck.Step, camera Box
 			color = tint(color, 0.45)
 			labelColor = ColorMuted
 		}
+		// On a scrolled ladder the rows above the view, and those under
+		// the heads at its top, are not drawn, as in the HTML.
+		if diagram.View == deck.ViewLadder && hiddenRow(e, camera) {
+			continue
+		}
 		if e.Kind == deck.EventProcess {
-			if diagram.View == deck.ViewLadder && !camera.contains(e.LabelX, e.LabelY) {
-				continue
-			}
 			bx, by, bw, bh := box(e.Box)
 			lineW := 0.75
 			if active {
@@ -363,9 +380,6 @@ func drawDiagram(diagram *Diagram, scene *deck.Scene, step deck.Step, camera Box
 			}
 			g.Elements = append(g.Elements, &TextBox{Name: "event " + e.ID, X: bx, Y: by, W: bw, H: bh, Inset: 2, Fill: ColorProcessFill, Line: ColorProcessLine, LineWidth: lineW, Round: true, Anchor: AnchorMiddle,
 				Paragraphs: []Paragraph{{Runs: []Run{{Text: e.LabelText()}}, Size: labelSize * 0.9, LineHeight: lineHeight(labelSize*0.9, lineHeightText), Color: labelColor, Bold: active, Align: AlignCenter}}})
-			continue
-		}
-		if diagram.View == deck.ViewLadder && !camera.contains(e.X1, e.Y1) {
 			continue
 		}
 		x1, y1 := at(e.X1, e.Y1)
@@ -396,6 +410,16 @@ func drawDiagram(diagram *Diagram, scene *deck.Scene, step deck.Step, camera Box
 			Paragraphs: paragraphs})
 	}
 	return []Element{g}
+}
+
+// hiddenRow reports a row of a ladder that a view does not show: above
+// it, under the heads of the lifelines at its top, or below it.
+func hiddenRow(e EventShape, camera Box) bool {
+	y := e.Y1
+	if e.Kind == deck.EventProcess {
+		y = e.LabelY
+	}
+	return y < camera.Y+ladderTop+ladderHeadH+8 || !camera.contains(e.LabelX, e.LabelY)
 }
 
 // tint mixes a colour with white: share 0 keeps it, 1 makes it white.

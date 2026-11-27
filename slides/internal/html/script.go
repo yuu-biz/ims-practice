@@ -153,6 +153,9 @@ const script = `(function () {
 
   function renderSteps(scene, k) {
     const list = document.getElementById('steps');
+    // A step button that had the focus gives it to the button of the
+    // step it shows now, so that a keyboard keeps its place.
+    const focused = list.contains(document.activeElement);
     list.textContent = '';
     if (scene.steps.length < 2) return;
     scene.steps.forEach((st, i) => {
@@ -167,6 +170,7 @@ const script = `(function () {
       li.appendChild(b);
       list.appendChild(li);
     });
+    if (focused) list.querySelector('[aria-current=step]').focus();
   }
 
   function next() {
@@ -183,7 +187,8 @@ const script = `(function () {
   }
 
   function fromHash() {
-    const hash = decodeURIComponent(location.hash.slice(1));
+    let hash = location.hash.slice(1);
+    try { hash = decodeURIComponent(hash); } catch (e) { return { slide: 0, step: 0 }; }
     const [id, step] = hash.split('/');
     let slide = scenes.findIndex((s) => s.id === id);
     if (slide < 0) return { slide: 0, step: 0 };
@@ -319,6 +324,7 @@ const script = `(function () {
   document.getElementById('motion').addEventListener('click', () => setStill(!root.classList.contains('still')));
   document.getElementById('read').addEventListener('click', () => setReading(true));
   document.getElementById('read-close').addEventListener('click', () => setReading(false));
+  document.getElementById('skip').addEventListener('click', (e) => { e.preventDefault(); setReading(true); });
   document.getElementById('drawer-close').addEventListener('click', toggleDrawer);
   for (const more of document.querySelectorAll('.more')) more.addEventListener('click', toggleDrawer);
   addEventListener('resize', fit);

@@ -86,7 +86,7 @@ The pptx is an ordinary PowerPoint file. Everything on a slide is a native objec
 
 There are no pictures, and there are no speaker notes.
 
-A scene gives a page for each of its checkpoints, the states that its source marks to keep, and the last step of the scene is always one. The page draws the diagram as the checkpoint leaves it, numbers each message with the step that sends it, and writes out, beside or below the diagram, the title and the text of every step since the checkpoint before, with the fields of their messages in a table. A page that the learner reads without stepping through the scene so says what the HTML shows one step at a time. The longer explanation of the scene follows on a page of its own with the tag "Details". The arrows are not glued to the boxes: moving a node in PowerPoint leaves its arrows where they are.
+A scene gives a page for each of its checkpoints, the states that its source marks to keep, and the last step of the scene is always one. The page draws the diagram as the checkpoint leaves it, numbers each message with the step that is about it, and writes out, beside or below the diagram, the title and the text of every step since the checkpoint before, with the fields of their messages in a table. A page that the learner reads without stepping through the scene so says what the HTML shows one step at a time. The longer explanation of the scene follows on a page of its own with the tag "Details". The arrows are not glued to the boxes: moving a node in PowerPoint leaves its arrows where they are.
 
 Known limits:
 

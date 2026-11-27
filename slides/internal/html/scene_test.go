@@ -77,7 +77,7 @@ func TestStepsAreInTheData(t *testing.T) {
 func TestSceneMarkup(t *testing.T) {
 	page := buildScene(t, Options{Repository: "https://example.org/tree", Translation: "../ja/scene.html", TranslationLang: "ja"})
 	for _, want := range []string{
-		`<section class="slide scene wide" id="flow"`,
+		`<section class="slide scene wide" id="slide-flow"`,
 		`<g class="event sip" data-id="req" data-nodes="a b" data-state="active">`,
 		`<g class="event sip" data-id="ans" data-nodes="b a" data-state="off">`,
 		`<div class="step" data-step="answer" hidden>`,
