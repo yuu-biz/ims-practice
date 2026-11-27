@@ -336,6 +336,8 @@ The P-CSCF of each side sends an AAR when it has the SDP answer of the call (TS 
 | `Framed-IP-Address` | 172.28.0.121 | The UE, so that the PCRF finds its IP-CAN session. |
 | `Rx-Request-Type` | INITIAL_REQUEST | A new Rx session for the call. |
 
+Each `b=` line that these AVPs come from is the one in the `m=audio` section. Without one there, the P-CSCF takes the line before the first `m=` line, which holds for the whole session (RFC 3556 4).
+
 The PCRF authorises the audio with QCI 1 (TS 29.213 6.3, IR.92 4.4.2) and answers 2001. The stub sets up the dedicated bearer once the answer is sent, since the AAA goes before the PCC rules are provisioned, or in parallel with it (TS 29.214 4.4.1). Each later offer and answer with a new SDP, such as the UPDATE's or a hold's, gives an AAR with `Rx-Request-Type: UPDATE_REQUEST` on the same session. On hold the caller's side has `Flow-Status: ENABLED-UPLINK` (0) and the callee's `ENABLED-DOWNLINK` (1).
 
 ### The end of a call
