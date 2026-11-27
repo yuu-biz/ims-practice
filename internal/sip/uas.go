@@ -10,11 +10,8 @@ import (
 
 // IncomingCall is a call this UA answers, at the UAS side (RFC 3261
 // 13.3). Progress, Accept and Reject may be called from any goroutine;
-// each one waits for the one before it to finish. A reliable Progress
-// finishes when its PRACK comes, so a reliable provisional response,
-// with or without SDP, always has its PRACK before the next one or the
-// final response goes out. RFC 3262 3 asks this for the next reliable
-// one, and for a 2xx after one with SDP; for the rest it is allowed.
+// each one waits for the one before it to finish, and a reliable
+// Progress for its PRACK (provisionals).
 //
 // The call has one dialog, the embedded CallDialog, which its first
 // response creates: Update, ReInvite, Send and Bye work within it, and
@@ -22,6 +19,7 @@ import (
 type IncomingCall struct {
 	call
 	CallDialog
+	provisionals
 	// Request is the INVITE.
 	Request *Message
 
@@ -29,13 +27,8 @@ type IncomingCall struct {
 	// tag is the To tag of every response to the INVITE (RFC 3261
 	// 8.2.6.2), until a 199 ends the early dialog and the next one gets
 	// a tag of its own (EarlyDialogTerminated). Guarded by mu.
-	tag string
-	// reliable is RFC 3262 3: the INVITE has 100rel in Supported or
-	// Require, so provisional responses go reliably.
-	reliable bool
-	// answering lets one of Progress, Accept and Reject run at a time.
-	answering sync.Mutex
-	acked     chan struct{}
+	tag   string
+	acked chan struct{}
 
 	// Guarded by mu.
 	final *Message // the final response to the INVITE, once sent
@@ -43,14 +36,32 @@ type IncomingCall struct {
 	// sessionAnswer is what the UA answers to the session timer of the
 	// INVITE (RFC 4028 9).
 	sessionAnswer SessionTimerAnswer
+}
+
+// provisionals is RFC 3262 3 at the UAS of one INVITE, the INVITE of an
+// IncomingCall: whether its provisional responses go reliably, and the
+// reliable one that waits for its PRACK.
+type provisionals struct {
+	// reliable tells that the INVITE has 100rel in Supported or Require.
+	reliable bool
+	// answering lets one response to the INVITE go at a time. A reliable
+	// provisional response holds it until its PRACK has come, so that a
+	// reliable provisional response, with or without SDP, always has its
+	// PRACK before the next one or the final response goes out. RFC 3262
+	// 3 asks this for the next reliable one, and for a 2xx after one with
+	// SDP; for the rest it is allowed.
+	answering sync.Mutex
+
+	// Guarded by the mu of the call.
+
+	// relay hands every PRACK to the user (RelayPRACK).
+	relay bool
 	// rseq is the RSeq of the last reliable provisional response, and
 	// unacked that response while it waits for its PRACK; pracked is
 	// closed when the PRACK comes.
 	rseq    uint32
 	unacked *Message
 	pracked chan struct{}
-	// relayPRACK hands every PRACK to the user (RelayPRACK).
-	relayPRACK bool
 }
 
 // receiveInvite is RFC 3261 8.2 and 13.3.1 for an INVITE outside a
@@ -85,14 +96,15 @@ func (ua *UA) receiveInvite(st *ServerTransaction) {
 		return
 	}
 	c := &IncomingCall{
-		call:     newCall(ua, st.stack),
-		Request:  req,
-		st:       st,
-		tag:      NewTag(),
-		acked:    make(chan struct{}),
-		reliable: req.Supports(Option100rel),
+		call:         newCall(ua, st.stack),
+		provisionals: provisionals{reliable: req.Supports(Option100rel)},
+		Request:      req,
+		st:           st,
+		tag:          NewTag(),
+		acked:        make(chan struct{}),
 	}
-	c.CallDialog = CallDialog{c: &c.call, in: c, invite: inviteReceived, peerAllowsUpdate: req.Allows(UPDATE)}
+	c.CallDialog = CallDialog{c: &c.call, in: c, invite: inviteReceived, peerAllowsUpdate: req.Allows(UPDATE),
+		peerInvite: &c.provisionals}
 	c.sessionAnswer = session
 	if len(req.Body) > 0 {
 		c.offer = OfferRemote
@@ -126,7 +138,7 @@ func (c *IncomingCall) Handle(f func(*InDialogRequest)) {
 func (c *IncomingCall) RelayPRACK() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.relayPRACK = true
+	c.relay = true
 }
 
 // SetContact has the responses of the call and its later messages carry
@@ -213,7 +225,7 @@ func (c *IncomingCall) Progress(code int, body Body, headers ...HeaderField) err
 	}
 	c.answering.Lock()
 	defer c.answering.Unlock()
-	return c.progress(code, body, headers, c.reliable)
+	return c.progress(code, body, headers, c.provisionals.reliable)
 }
 
 // progress sends a provisional response, reliably or not, and waits for
@@ -342,59 +354,74 @@ func (c *IncomingCall) sessionSent(body Body) {
 var ErrNoPRACK = errors.New("sip: no PRACK for the reliable provisional response")
 
 // makeReliable turns resp into a reliable provisional response, which
-// waits for its PRACK (RFC 3262 3). c.mu is held.
-func (c *IncomingCall) makeReliable(resp *Message) {
-	if c.rseq == 0 {
+// waits for its PRACK (RFC 3262 3). The mu of the call is held.
+func (p *provisionals) makeReliable(resp *Message) {
+	if p.rseq == 0 {
 		// The first RSeq is RECOMMENDED to be random from 1 to 2**31-1.
-		c.rseq = rand.Uint32N(1<<31-1) + 1
+		p.rseq = rand.Uint32N(1<<31-1) + 1
 	} else {
-		c.rseq++
+		p.rseq++
 	}
 	resp.AddOption("Require", Option100rel)
-	resp.Add("RSeq", strconv.FormatUint(uint64(c.rseq), 10))
-	c.unacked = resp
-	c.pracked = make(chan struct{})
+	resp.Add("RSeq", strconv.FormatUint(uint64(p.rseq), 10))
+	p.unacked = resp
+	p.pracked = make(chan struct{})
+}
+
+// receivePRACK takes a PRACK within the dialog.
+func (d *CallDialog) receivePRACK(st *ServerTransaction) {
+	c := d.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	before := *d.dialog
+	if d.inOrder(st) && !d.acceptPRACK(st) {
+		// RFC 3261 12.2.2: a rejected request changes no state.
+		*d.dialog = before
+	}
 }
 
 // acceptPRACK is RFC 3262 3: the PRACK that matches the reliable
 // provisional response waiting for it, by RSeq and by the response's
-// CSeq, stops the retransmissions. Any other PRACK gets 481. It reports
-// whether the PRACK matched. c.mu is held.
+// CSeq, stops the retransmissions. That is a response to the last
+// INVITE of the peer in the dialog (peerInvite). Any other PRACK gets
+// 481. It reports whether the PRACK matched. c.mu is held.
 //
 // A PRACK without a body gets its 200 here, unless the user relays the
 // PRACKs (RelayPRACK). One with a body carries the answer to an offer
 // in the response, or a new offer (RFC 3262 5), and goes to the user of
 // the call, who reads the answer or gives the answer for the 200.
-func (c *IncomingCall) acceptPRACK(st *ServerTransaction) bool {
+func (d *CallDialog) acceptPRACK(st *ServerTransaction) bool {
+	c := d.c
 	req := st.Request
+	p := d.peerInvite
 	rack, err := ParseRAck(req.Get("RAck"))
-	if err != nil || c.unacked == nil || rack != rackFor(c.unacked) {
+	if err != nil || p == nil || p.unacked == nil || rack != rackFor(p.unacked) {
 		c.ua.respondOwn(st, NewResponse(req, 481, ""))
 		return false
 	}
-	r := &InDialogRequest{Request: req, d: &c.CallDialog, st: st, dialog: c.dialog}
+	r := &InDialogRequest{Request: req, d: d, st: st, dialog: d.dialog}
 	if len(req.Body) > 0 {
-		if c.offer == OfferLocal {
-			c.offerEvent(AnswerReceived)
-		} else if err := c.offerEvent(OfferReceived); err != nil {
+		if d.offer == OfferLocal {
+			d.offerEvent(AnswerReceived)
+		} else if err := d.offerEvent(OfferReceived); err != nil {
 			// The offer comes before the answer to the last one.
-			c.CallDialog.respond(st, 500, retryAfter())
+			d.respond(st, 500, retryAfter())
 			return false
 		} else {
 			r.Offer = true
 		}
 	}
-	c.unacked = nil
-	close(c.pracked)
+	p.unacked = nil
+	close(p.pracked)
 	switch {
-	case c.onRequest != nil && (len(req.Body) > 0 || c.relayPRACK):
+	case c.onRequest != nil && (len(req.Body) > 0 || p.relay):
 		c.handOver(r)
 	case len(req.Body) == 0:
 		c.ua.respondOwn(st, NewResponse(req, 200, ""))
 	case r.Offer:
 		// The UA answers in a goroutine of its own, so a BYE can get there
 		// first (endPending).
-		c.addPending(r)
+		d.addPending(r)
 		c.ua.spawn(func() { r.Reject(488, append(c.ua.own(PRACK, true, nil), c.ua.noSessionChange())...) })
 	default:
 		c.ua.respondOwn(st, NewResponse(req, 200, ""))
@@ -503,17 +530,6 @@ func (c *IncomingCall) Bye(headers ...HeaderField) error {
 	c.answering.Lock()
 	defer c.answering.Unlock()
 	return c.CallDialog.bye(nil, headers)
-}
-
-// receivePRACK takes a PRACK within the dialog.
-func (c *IncomingCall) receivePRACK(st *ServerTransaction) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	before := *c.dialog
-	if c.inOrder(st) && !c.acceptPRACK(st) {
-		// RFC 3261 12.2.2: a rejected request changes no state.
-		*c.dialog = before
-	}
 }
 
 // receiveACK takes the ACK for the 2xx, which stops the retransmissions
