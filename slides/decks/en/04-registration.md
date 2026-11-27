@@ -2,6 +2,569 @@
 title: A UE registers with the IMS
 footer: ims-practice study session 4. Registration
 lang: en
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: ue, label: UE, role: the phone that registers, at: [0, 1]}
+  - {id: pcscf, label: P-CSCF, role: its first hop, at: [1, 1]}
+  - {id: dns, label: DNS, role: resolves names, at: [1, 0]}
+  - {id: icscf, label: I-CSCF, role: entry of the home network, at: [2, 0]}
+  - {id: hss, label: HSS, role: subscriber data, at: [3, 0]}
+  - {id: scscf, label: S-CSCF, role: authenticates and registers, at: [3, 1]}
+  - {id: ipsmgw, label: IP-SM-GW, role: the AS for SMS, at: [4, 1]}
+events:
+  # The first REGISTER (steps 1 to 4)
+  - id: reg1-ue-p
+    msg: REGISTER
+    from: ue
+    to: pcscf
+    proto: SIP
+    note: (1st)
+    fields:
+      - Request-URI: "`sip:ims.mnc001.mcc001.3gppnetwork.org`, the home network domain"
+      - From, To: the public identity it registers
+      - Contact: "A UUID as the user part, `+g.3gpp.smsip` and `expires=600000`"
+      - Authorization: "The private identity in `username`; `nonce` and `response` empty"
+  - id: dns-query
+    msg: NAPTR, SRV, A
+    from: pcscf
+    to: dns
+    proto: DNS
+    note: (3 queries)
+    fields:
+      - NAPTR: "`ims.mnc001.mcc001.3gppnetwork.org`"
+      - SRV: "`_sip._udp.ims.mnc001.mcc001.3gppnetwork.org`"
+      - A: "`icscf.ims.mnc001.mcc001.3gppnetwork.org`"
+  - id: dns-answer
+    msg: NAPTR, SRV, A
+    from: dns
+    to: pcscf
+    proto: DNS
+    note: (3 answers)
+    fields:
+      - NAPTR answer: "SIP over UDP is at `_sip._udp...`"
+      - SRV answer: "`icscf...`, port 5060"
+      - A answer: 172.28.0.20
+  - id: pcscf-path
+    do: adds headers
+    at: pcscf
+    fields:
+      - Path: "`sip:term@pcscf...`, where incoming requests come back"
+      - Require: "`path`"
+      - P-Charging-Vector: "A new `icid-value`"
+      - P-Visited-Network-ID: the name of the network of the P-CSCF
+  - id: reg1-p-i
+    msg: REGISTER
+    from: pcscf
+    to: icscf
+    proto: SIP
+    note: (1st)
+  - id: uar1
+    msg: UAR
+    from: icscf
+    to: hss
+    proto: Cx
+    note: (1st)
+    fields:
+      - User-Name: the private identity
+      - Public-Identity: the public identity
+      - Visited-Network-Identifier: the network of the P-CSCF
+      - User-Authorization-Type: REGISTRATION (0)
+  - id: uaa1
+    msg: UAA
+    from: hss
+    to: icscf
+    proto: Cx
+    note: (1st)
+    fields:
+      - Experimental-Result: DIAMETER_FIRST_REGISTRATION (2001)
+      - Server-Capabilities: mandatory capability 1, not the name of an S-CSCF
+  - id: icscf-select
+    do: chooses the S-CSCF
+    at: icscf
+    fields:
+      - capabilities asked for: mandatory capability 1
+      - configured candidate: "`scscf.ims.mnc001.mcc001.3gppnetwork.org` has capability 1"
+      - choice: that S-CSCF; the I-CSCF does not remember it
+  - id: reg1-i-s
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (1st)
+    fields:
+      - Request-URI: "rewritten to `sip:scscf.ims.mnc001.mcc001.3gppnetwork.org:5060`"
+      - Via: three, of the UE, the P-CSCF and the I-CSCF
+  # The challenge (steps 5 and 6)
+  - id: mar
+    msg: MAR
+    from: scscf
+    to: hss
+    proto: Cx
+    fields:
+      - 3GPP-SIP-Authentication-Scheme: "`Unknown`: the HSS is to choose the scheme"
+  - id: maa
+    msg: MAA
+    from: hss
+    to: scscf
+    proto: Cx
+    fields:
+      - 3GPP-SIP-Authentication-Scheme: "`SIP Digest`"
+      - Digest-Realm: the realm
+      - Digest-Algorithm: "`MD5`"
+      - Digest-QoP: "`auth`"
+      - Digest-HA1: H(A1), not the password itself
+  - id: hss-assign
+    do: stores the S-CSCF of the user
+    at: hss
+    fields:
+      - what it stores: this S-CSCF serves the user; authentication pending
+      - used: in the answer to the second UAR
+  - id: scscf-challenge
+    do: makes a nonce, starts a timer
+    at: scscf
+    fields:
+      - nonce: made by the S-CSCF
+      - reg-await-auth: 4 minutes
+  - id: r401-s-i
+    msg: "401"
+    from: scscf
+    to: icscf
+    proto: SIP
+    fields:
+      - WWW-Authenticate: 'the realm, a `nonce`, `algorithm=MD5`, `qop="auth"`'
+  - id: r401-i-p
+    msg: "401"
+    from: icscf
+    to: pcscf
+    proto: SIP
+  - id: r401-p-ue
+    msg: "401"
+    from: pcscf
+    to: ue
+    proto: SIP
+    fields:
+      - Via: only the Via of the UE is left
+  # The second REGISTER (steps 7 and 8)
+  - id: reg2-ue-p
+    msg: REGISTER
+    from: ue
+    to: pcscf
+    proto: SIP
+    note: (2nd)
+    fields:
+      - Call-ID: that of the first REGISTER
+      - CSeq: one higher
+      - Authorization: "with `nonce`, `cnonce`, `nc`, `qop` and `response`"
+  - id: pcscf-pending
+    do: adds ip-assoc-pending
+    at: pcscf
+    fields:
+      - added to Authorization: '`integrity-protected="ip-assoc-pending"`'
+      - meaning: an answer to a challenge, with no IP association yet
+  - id: reg2-p-i
+    msg: REGISTER
+    from: pcscf
+    to: icscf
+    proto: SIP
+    note: (2nd)
+  - id: uar2
+    msg: UAR
+    from: icscf
+    to: hss
+    proto: Cx
+    note: (2nd)
+    fields:
+      - User-Authorization-Type: REGISTRATION (0)
+  - id: uaa2
+    msg: UAA
+    from: hss
+    to: icscf
+    proto: Cx
+    note: (2nd)
+    fields:
+      - Experimental-Result: DIAMETER_SUBSEQUENT_REGISTRATION (2002)
+      - Server-Name: the S-CSCF that the HSS stored at the MAR
+  - id: reg2-i-s
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (2nd)
+    fields:
+      - transport: TCP, as it is over 1300 bytes
+      - Via: "the Via of the I-CSCF says `SIP/2.0/TCP`"
+  # The registration is accepted (steps 9 and 10)
+  - id: scscf-verify
+    do: checks the answer
+    at: scscf
+    fields:
+      - Call-ID: that of the challenged REGISTER?
+      - realm and nonce: its own?
+      - response: equal to the value computed from H(A1)?
+  - id: sar
+    msg: SAR
+    from: scscf
+    to: hss
+    proto: Cx
+    fields:
+      - Server-Assignment-Type: REGISTRATION (1)
+  - id: saa
+    msg: SAA
+    from: hss
+    to: scscf
+    proto: Cx
+    fields:
+      - User-Data: "the user profile in XML; Wireshark says `Cx-User-Data`"
+      - contents: the identities registered together, and the iFCs
+  - id: ok-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+    fields:
+      - Path: the route that the S-CSCF stored
+      - Service-Route: "`sip:orig@scscf...`"
+      - P-Associated-URI: the identities registered together; the first is the default
+      - Contact: "`+g.3gpp.smsip` and `expires=3600`"
+      - Authentication-Info: "`rspauth`, proof that the network knows H(A1) too"
+  - id: ok-i-p
+    msg: 200 OK
+    from: icscf
+    to: pcscf
+    proto: SIP
+  - id: pcscf-store
+    do: keeps the routes and the association
+    at: pcscf
+    fields:
+      - IP association: made for the address of the UE
+      - it stores: the Service-Route and the identities
+  - id: ok-p-ue
+    msg: 200 OK
+    from: pcscf
+    to: ue
+    proto: SIP
+  # The routes used after the registration
+  - id: mt-s-p
+    msg: INVITE
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (incoming)
+  - id: mt-p-ue
+    msg: INVITE
+    from: pcscf
+    to: ue
+    proto: SIP
+    note: (incoming)
+  - id: mo-ue-p
+    msg: INVITE
+    from: ue
+    to: pcscf
+    proto: SIP
+    note: (outgoing)
+  - id: mo-p-s
+    msg: INVITE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (outgoing)
+  # The subscription of the P-CSCF (steps 11 and 12)
+  - id: psub-p-i
+    msg: SUBSCRIBE
+    from: pcscf
+    to: icscf
+    proto: SIP
+    fields:
+      - Request-URI, To: the default public identity
+      - Event: "`reg`"
+      - Expires: 3761, longer than the 3600 s of the registration
+      - P-Asserted-Identity: "`sip:term@pcscf...`"
+  - id: lir1
+    msg: LIR
+    from: icscf
+    to: hss
+    proto: Cx
+  - id: lia1
+    msg: LIA
+    from: hss
+    to: icscf
+    proto: Cx
+    fields:
+      - Server-Name: the S-CSCF of the user
+  - id: psub-i-s
+    msg: SUBSCRIBE
+    from: icscf
+    to: scscf
+    proto: SIP
+  - id: psub-ok-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+  - id: psub-ok-i-p
+    msg: 200 OK
+    from: icscf
+    to: pcscf
+    proto: SIP
+  - id: pnotify
+    msg: NOTIFY
+    from: scscf
+    to: pcscf
+    proto: SIP
+    fields:
+      - Subscription-State: "`active;expires=3761`"
+      - Content-Type: "`application/reginfo+xml`"
+      - body: a registration per identity, a contact per binding
+  # The subscription of the UE (steps 13 and 14)
+  - id: usub-ue-p
+    msg: SUBSCRIBE
+    from: ue
+    to: pcscf
+    proto: SIP
+    fields:
+      - Event: "`reg`"
+      - Expires: 600000
+      - Route: the P-CSCF and the Service-Route
+  - id: usub-p-s
+    msg: SUBSCRIBE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    fields:
+      - route: along the Service-Route to the S-CSCF, not through the I-CSCF
+  - id: unotify-s-p
+    msg: NOTIFY
+    from: scscf
+    to: pcscf
+    proto: SIP
+  - id: unotify-p-ue
+    msg: NOTIFY
+    from: pcscf
+    to: ue
+    proto: SIP
+    fields:
+      - Route: the P-CSCF, from the Record-Route of the SUBSCRIBE
+  # The third-party REGISTER (steps 15 to 18)
+  - id: tp-register
+    msg: REGISTER
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+    note: (third-party)
+    fields:
+      - Request-URI: "the ServerName of the iFC, `sip:ipsmgw...:5060`"
+      - From, Contact: S-CSCF
+      - To: the default public identity
+      - Expires: 3600
+      - body: "`application/3gpp-ims+xml` with the MSISDN `12025550101`"
+  - id: tp-ok
+    msg: 200 OK
+    from: ipsmgw
+    to: scscf
+    proto: SIP
+  - id: isub-ip-i
+    msg: SUBSCRIBE
+    from: ipsmgw
+    to: icscf
+    proto: SIP
+    fields:
+      - Expires: 3761
+      - P-Asserted-Identity: the URI of the IP-SM-GW, the ServerName of the iFC
+  - id: lir2
+    msg: LIR
+    from: icscf
+    to: hss
+    proto: Cx
+  - id: lia2
+    msg: LIA
+    from: hss
+    to: icscf
+    proto: Cx
+  - id: isub-i-s
+    msg: SUBSCRIBE
+    from: icscf
+    to: scscf
+    proto: SIP
+  - id: inotify
+    msg: NOTIFY
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+  - id: ipsmgw-check
+    do: looks for a binding that takes SMS
+    at: ipsmgw
+    fields:
+      - it looks for: 'an active contact with `<unknown-param name="+g.3gpp.smsip">`'
+  - id: pur
+    msg: PUR
+    from: ipsmgw
+    to: hss
+    proto: Sh
+    fields:
+      - User-Identity: the MSISDN `12025550101`
+      - Data-Reference: SMSRegistrationInfo (24)
+      - Sh-User-Data: "`12025550199` in `<IP-SM-GW-Number>`"
+  - id: pua
+    msg: PUA
+    from: hss
+    to: ipsmgw
+    proto: Sh
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  # Deregistration
+  - id: dreg-ue-p
+    msg: REGISTER
+    from: ue
+    to: pcscf
+    proto: SIP
+    note: (deregister)
+    fields:
+      - Contact: "`expires=0`"
+  - id: dreg-p-i
+    msg: REGISTER
+    from: pcscf
+    to: icscf
+    proto: SIP
+    note: (deregister)
+    fields:
+      - added to Authorization: '`integrity-protected="ip-assoc-yes"`'
+  - id: duar
+    msg: UAR
+    from: icscf
+    to: hss
+    proto: Cx
+    note: (deregister)
+    fields:
+      - User-Authorization-Type: DE_REGISTRATION (1)
+  - id: duaa
+    msg: UAA
+    from: hss
+    to: icscf
+    proto: Cx
+    note: (deregister)
+  - id: dreg-i-s
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (deregister)
+  - id: dsar
+    msg: SAR
+    from: scscf
+    to: hss
+    proto: Cx
+    note: (deregister)
+    fields:
+      - Server-Assignment-Type: USER_DEREGISTRATION (5)
+  - id: dsaa
+    msg: SAA
+    from: hss
+    to: scscf
+    proto: Cx
+    note: (deregister)
+  - id: dok-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+    note: (deregister)
+  - id: dok-i-p
+    msg: 200 OK
+    from: icscf
+    to: pcscf
+    proto: SIP
+    note: (deregister)
+  - id: dok-p-ue
+    msg: 200 OK
+    from: pcscf
+    to: ue
+    proto: SIP
+    note: (deregister)
+    fields:
+      - Contact: "`expires=0`"
+  - id: dnotify-s-p
+    msg: NOTIFY
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (last)
+    fields:
+      - registration and contact: "`terminated`"
+      - event of the contact: "`unregistered`"
+      - Subscription-State: "`terminated;reason=noresource`"
+  - id: dnotify-p-ue
+    msg: NOTIFY
+    from: pcscf
+    to: ue
+    proto: SIP
+    note: (last)
+  # Failures
+  - id: wp-verify
+    do: finds a response that does not match
+    at: scscf
+  - id: wp-403-s-i
+    msg: "403"
+    from: scscf
+    to: icscf
+    proto: SIP
+  - id: wp-403-i-p
+    msg: "403"
+    from: icscf
+    to: pcscf
+    proto: SIP
+  - id: wp-403-p-ue
+    msg: "403"
+    from: pcscf
+    to: ue
+    proto: SIP
+  - id: wp-sar
+    msg: SAR
+    from: scscf
+    to: hss
+    proto: Cx
+    note: (failure)
+    fields:
+      - Server-Assignment-Type: AUTHENTICATION_FAILURE (9)
+  - id: wp-clear
+    do: forgets the stored S-CSCF
+    at: hss
+    fields:
+      - next attempt: starts again from DIAMETER_FIRST_REGISTRATION
+  - id: rtr
+    msg: RTR
+    from: hss
+    to: scscf
+    proto: Cx
+    fields:
+      - Reason-Code: PERMANENT_TERMINATION (0)
+      - User-Name: the private identity
+  - id: rej-s-p
+    msg: NOTIFY
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (rejected)
+    fields:
+      - event of the contact: "`rejected`"
+  - id: rej-p-ue
+    msg: NOTIFY
+    from: pcscf
+    to: ue
+    proto: SIP
+    note: (rejected)
+  - id: rta
+    msg: RTA
+    from: scscf
+    to: hss
+    proto: Cx
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+```
+
+
 ---
 
 # A UE registers with the IMS
@@ -40,6 +603,44 @@ To begin: what happens in the network between switching a phone on and its first
 
 ## The nodes
 
+```ims-scene
+id: nodes
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: The last number of an address tells you the node.
+steps:
+  - id: ue
+    title: The UE (172.28.0.100)
+    focus: [ue]
+    text: |
+      It sends REGISTER and answers the challenge.
+      It is a softphone without a SIM; its identities and password are configured.
+  - id: pcscf
+    title: The P-CSCF (172.28.0.40)
+    focus: [pcscf]
+    text: The first hop of the UE. It adds Path.
+  - id: dns
+    title: The DNS (172.28.0.2)
+    focus: [dns]
+    checkpoint: true
+    text: It holds NAPTR, SRV and A of the home network domain. The P-CSCF finds the I-CSCF here.
+  - id: icscf
+    title: The I-CSCF (172.28.0.20)
+    focus: [icscf]
+    text: The entry point of the home network. It asks the HSS for the S-CSCF.
+  - id: hss
+    title: The HSS (172.28.0.10)
+    focus: [hss]
+    text: The subscriber database. It answers the I-CSCF and the S-CSCF over Cx.
+  - id: scscf
+    title: The S-CSCF (172.28.0.30)
+    focus: [scscf]
+    text: |
+      The registrar. It authenticates the user and stores the registration.
+      The HSS is 10, the I-CSCF 20, the S-CSCF 30, the P-CSCF 40.
+```
+
+- The UE is a softphone without a SIM. Its identities are configured in it, as an IMC holds them (TS 24.229 5.1.1.1B.1), so it uses the public identity it registers in its other requests too. That identity has the form of one made from an IMSI, but it is configured and not barred. A VoLTE phone registers a barred temporary identity instead; the VoLTE session shows it.
+
 | Node | Address | What it does in registration |
 | --- | --- | --- |
 | UE simulator | 172.28.0.100 | Sends REGISTER and answers the challenge. |
@@ -48,9 +649,6 @@ To begin: what happens in the network between switching a phone on and its first
 | S-CSCF | 172.28.0.30 | The registrar. It authenticates and stores the registration. |
 | HSS | 172.28.0.10 | The subscriber database. It answers over Cx. |
 | DNS | 172.28.0.2 | Holds NAPTR, SRV and A of the home network domain. |
-
-- The last number of each address tells the node in a capture: the HSS is 10, the I-CSCF 20, the S-CSCF 30, the P-CSCF 40.
-- The UE is a softphone without a SIM. Its identities are configured in it, as an IMC holds them (TS 24.229 5.1.1.1B.1), so it uses the public identity it registers in its other requests too. That identity has the form of one made from an IMSI, but it is configured and not barred. A VoLTE phone registers a barred temporary identity instead; the VoLTE session shows it.
 
 > Guide: ["The nodes"](../../../docs/guide/en/registration.md#the-nodes), which also gives the identities and the password of the test user.
 
@@ -95,6 +693,50 @@ sip || diameter.cmd.code >= 300 || dns.qry.type == 35 || dns.qry.type == 33
 
 ## The shape of the whole
 
+```ims-scene
+id: overview
+view: ladder
+nodes: [ue, pcscf, icscf, scscf, hss]
+lead: The first REGISTER says who. The second proves it.
+steps:
+  - id: first
+    title: The first REGISTER reaches the I-CSCF (1, 2)
+    show: [reg1-ue-p, reg1-p-i]
+    detail: []
+    text: The UE sends REGISTER to the P-CSCF, which relays it to the I-CSCF, the entry of the home network.
+  - id: ask
+    title: The I-CSCF asks the HSS and sends it on to the S-CSCF (3, 4)
+    show: [uar1, uaa1, reg1-i-s]
+    active: uar1
+    detail: []
+    text: The first question to the HSS. The I-CSCF chooses the S-CSCF from the answer.
+  - id: challenge
+    title: The S-CSCF challenges (5, 6)
+    show: [mar, maa, r401-s-i, r401-i-p, r401-p-ue]
+    active: r401-p-ue
+    detail: []
+    checkpoint: true
+    text: |
+      The S-CSCF gets the authentication data from the HSS and puts a question to the UE in a 401.
+      The 401 is not a failure; it is a step of the procedure.
+  - id: answer
+    title: The second REGISTER (7, 8)
+    show: [reg2-ue-p, reg2-p-i, uar2, uaa2, reg2-i-s]
+    active: reg2-i-s
+    detail: []
+    text: The UE answers the question. The I-CSCF asks the HSS once more.
+  - id: done
+    title: The registration is settled (9, 10)
+    show: [sar, saa, ok-s-i, ok-i-p, ok-p-ue]
+    active: ok-p-ue
+    detail: []
+    text: |
+      The HSS is asked four times: two UARs, one MAR, one SAR.
+      The full ladder of the guide has DNS as well.
+```
+
+The same shape in a capture also has the DNS lookups, between 1 and 2. The next slides read it one stretch at a time, with the numbers of the guide's ladder.
+
 ```ladder
 UE, P-CSCF, I-CSCF, S-CSCF, HSS
 UE -> P-CSCF -> I-CSCF: REGISTER // 1 - 2
@@ -109,12 +751,43 @@ S-CSCF <-> HSS: SAR, SAA // 9
 UE <-- P-CSCF <-- I-CSCF <-- S-CSCF: 200 OK // 10
 ```
 
-- The first REGISTER says who. The second proves it.
-- The HSS is asked four times: two UARs, one MAR, one SAR. The full ladder of the guide has DNS as well.
-
 ---
 
 ## 1 and 2. The first REGISTER, and DNS finds the I-CSCF
+
+```ims-scene
+id: first-register
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: A REGISTER is addressed to a domain, not to a server. The network decides which server gets it.
+steps:
+  - id: send
+    title: The UE sends REGISTER
+    show: [reg1-ue-p]
+    checkpoint: true
+    text: |
+      The Request-URI is the home network domain.
+      Authorization already tells which private identity is to be authenticated.
+  - id: query
+    title: The P-CSCF asks the DNS
+    show: [dns-query]
+    text: From the domain it looks up NAPTR, SRV and A in turn, as RFC 3263 describes.
+  - id: answer
+    title: The address of the I-CSCF is found
+    show: [dns-answer]
+    checkpoint: true
+    text: The three answers lead to the entry of the home network, port 5060 at 172.28.0.20.
+  - id: add
+    title: The P-CSCF adds headers
+    show: [pcscf-path]
+    focus: [pcscf]
+    text: |
+      Path is the route that later brings incoming requests to the UE.
+      Compare the REGISTER before and after the P-CSCF to find what it adds.
+  - id: forward
+    title: The REGISTER reaches the I-CSCF
+    show: [reg1-p-i]
+    text: From here on it is inside the home network. No S-CSCF serves the user yet.
+```
 
 | Look at | What to see |
 | --- | --- |
@@ -134,6 +807,47 @@ The filter is `dns.qry.type == 35 || dns.qry.type == 33`.
 
 ## 3 and 4. The I-CSCF asks the HSS (UAR and UAA)
 
+```ims-scene
+id: select
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: The first UAA returns capabilities, not the name of an S-CSCF. The I-CSCF chooses.
+steps:
+  - id: arrive
+    title: The I-CSCF does not know the S-CSCF
+    only: [reg1-ue-p, reg1-p-i]
+    active: reg1-p-i
+    focus: [icscf]
+    zoom: [icscf, hss, scscf]
+    text: The I-CSCF is an entry point that keeps no state. It does not remember who serves this user.
+  - id: uar
+    title: It asks the HSS (UAR)
+    show: [uar1]
+    zoom: [icscf, hss, scscf]
+    text: Cx command 300. It carries the private identity, the public identity and the network of the P-CSCF.
+  - id: uaa
+    title: The HSS returns the capabilities needed (UAA)
+    show: [uaa1]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: |
+      No S-CSCF serves the user yet, so the HSS returns Server-Capabilities instead of a name.
+      The 2001 is inside Experimental-Result. In Result-Code, 2001 would be DIAMETER_SUCCESS.
+  - id: choose
+    title: The I-CSCF chooses the S-CSCF
+    show: [icscf-select]
+    focus: [icscf]
+    zoom: [icscf, hss, scscf]
+    text: |
+      From its configured list it picks an S-CSCF that has every mandatory capability.
+      This network configures one.
+  - id: forward
+    title: It forwards to the S-CSCF it chose
+    show: [reg1-i-s]
+    text: |
+      The Request-URI becomes the S-CSCF, and there are three Vias.
+      The I-CSCF does not remember the choice. The HSS does, at the MAR of the next step.
+```
+
 | Look at | What to see |
 | --- | --- |
 | AVPs of the UAR | User-Name, Public-Identity, Visited-Network-Identifier, User-Authorization-Type. |
@@ -151,6 +865,43 @@ The filter is `diameter.cmd.code == 300`.
 ---
 
 ## 5 and 6. The S-CSCF challenges (MAR, MAA, 401)
+
+```ims-scene
+id: challenge
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: The HSS never hands over the password. It hands over H(A1).
+steps:
+  - id: mar
+    title: The S-CSCF asks for authentication data (MAR)
+    only: [reg1-i-s, mar]
+    zoom: [icscf, hss, scscf]
+    text: The scheme is `Unknown`. The REGISTER has no integrity-protected, so the HSS is to choose.
+  - id: maa
+    title: The HSS returns the SIP Digest data (MAA)
+    show: [maa]
+    zoom: [icscf, hss, scscf]
+    text: H(A1) is a hash of the user name, the realm and the password. With it alone the S-CSCF can check the answer of the UE.
+  - id: assign
+    title: The HSS stores the S-CSCF of the user
+    show: [hss-assign]
+    focus: [hss]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: |
+      It stores this S-CSCF as the one that serves the user, with authentication pending.
+      The registration is not done yet. The second UAR uses what is stored here.
+  - id: nonce
+    title: The S-CSCF makes its question
+    show: [scscf-challenge]
+    focus: [scscf]
+    text: It makes a nonce and starts the timer reg-await-auth (4 minutes).
+  - id: back
+    title: The 401 goes back to the UE
+    show: [r401-s-i, r401-i-p, r401-p-ue]
+    text: |
+      It goes back through the I-CSCF and the P-CSCF. Each removes its own Via.
+      The 401 is not a failure. It is the question the UE has to answer.
+```
 
 | Look at | What to see |
 | --- | --- |
@@ -170,6 +921,54 @@ The filter is `diameter.cmd.code == 303 || sip.Status-Code == 401`.
 
 ## 7 and 8. The second REGISTER
 
+```ims-scene
+id: second-register
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: The second REGISTER reaches the same S-CSCF because the HSS remembers it.
+steps:
+  - id: answer
+    title: The UE answers the question
+    only: [reg2-ue-p]
+    checkpoint: true
+    text: It computes the response from the password and the nonce and puts it in a second REGISTER. The Call-ID is that of the first.
+  - id: pending
+    title: The P-CSCF adds ip-assoc-pending
+    show: [pcscf-pending]
+    focus: [pcscf]
+    text: It tells the S-CSCF that this answers a challenge, and that there is no IP association yet.
+  - id: entry
+    title: Through the I-CSCF again
+    show: [reg2-p-i]
+    checkpoint: true
+    text: Every REGISTER goes through the I-CSCF, which does not remember its earlier choice.
+  - id: uar
+    title: It asks the HSS again
+    show: [uar2]
+    zoom: [icscf, hss, scscf]
+    text: The second UAR. The HSS stored the S-CSCF at the MAR.
+  - id: uaa
+    title: This time a Server-Name comes back
+    show: [uaa2]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: DIAMETER_SUBSEQUENT_REGISTRATION (2002) and the name of the S-CSCF it stored.
+  - id: compare
+    title: The first and the second UAA side by side
+    show: [uaa1]
+    active: uaa2
+    detail: [uaa1, uaa2]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: |
+      The first returned capabilities, and the I-CSCF chose.
+      The second returns a name, and the I-CSCF follows it.
+  - id: forward
+    title: To the same S-CSCF, over TCP this time
+    hide: [uaa1]
+    show: [reg2-i-s]
+    text: With the authentication data it is over 1300 bytes, so the I-CSCF sends it over TCP (RFC 3261 18.1.1).
+```
+
 | Look at | What to see |
 | --- | --- |
 | Call-ID and CSeq | The Call-ID of the first REGISTER. CSeq is one higher. |
@@ -186,6 +985,45 @@ The filter is `diameter.cmd.code == 303 || sip.Status-Code == 401`.
 
 ## 9 and 10. SAR, SAA and the 200 OK
 
+```ims-scene
+id: accept
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: Only when the answer checks out does the S-CSCF tell the HSS and return 200 OK.
+steps:
+  - id: verify
+    title: The S-CSCF checks the answer
+    only: [reg2-i-s, scscf-verify]
+    focus: [scscf]
+    text: It checks three things. The Call-ID, the realm and the nonce, and the response.
+  - id: sar
+    title: It tells the HSS (SAR)
+    show: [sar]
+    zoom: [icscf, hss, scscf]
+    text: Server-Assignment-Type is REGISTRATION (1). The HSS records that the user is registered at this S-CSCF.
+  - id: saa
+    title: It receives the profile (SAA)
+    show: [saa]
+    zoom: [icscf, hss, scscf]
+    checkpoint: true
+    text: User-Data holds the identities registered together and the iFCs. An iFC says which application servers join a request.
+  - id: ok
+    title: The 200 OK goes to the I-CSCF
+    show: [ok-s-i]
+    text: Everything that the UE and the P-CSCF use later is in this 200 OK.
+  - id: relay
+    title: The P-CSCF keeps the routes
+    show: [ok-i-p, pcscf-store]
+    active: pcscf-store
+    focus: [pcscf]
+    text: It makes an IP association for the address of the UE and stores the Service-Route and the identities.
+  - id: registered
+    title: The UE is registered
+    show: [ok-p-ue]
+    text: |
+      The UE checks `rspauth`, the proof that the network knows H(A1) too.
+      The Contact has 3600 seconds. The UE asked for 600000; the S-CSCF shortened it to its maximum.
+```
+
 | Look at | What to see |
 | --- | --- |
 | Server-Assignment-Type of the SAR | `REGISTRATION` (1). |
@@ -197,9 +1035,39 @@ The filter is `diameter.cmd.code == 303 || sip.Status-Code == 401`.
 
 The filter is `diameter.cmd.code == 301`. Wireshark names User-Data `Cx-User-Data`.
 
+> Guide: [9](../../../docs/guide/en/registration.md#9-the-s-cscf-checks-the-answer-and-tells-the-hss-sar-and-saa) and [10](../../../docs/guide/en/registration.md#10-the-s-cscf-accepts-200-ok). TS 24.229 5.4.1.2.2A, 5.4.1.2.2F. TS 29.228 Annex E. RFC 3608.
+
+---
+
+## The directions of Path and Service-Route
+
+```ims-scene
+id: routes
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: Both routes arrive in the 200 OK, but they are used in opposite directions. The call session shows them with real INVITEs.
+steps:
+  - id: path
+    title: Path is the route of requests to the UE
+    only: [mt-s-p, mt-p-ue]
+    active: mt-p-ue
+    focus: [scscf, pcscf, ue]
+    text: |
+      The S-CSCF sends requests for the UE along the Path, through the P-CSCF of that UE.
+      An incoming INVITE takes this route.
+  - id: service-route
+    title: Service-Route is the route of requests from the UE
+    only: [mo-ue-p, mo-p-s]
+    active: mo-p-s
+    focus: [ue, pcscf, scscf]
+    checkpoint: true
+    text: |
+      The UE puts the Service-Route at the top of its requests. They go from the P-CSCF straight to its S-CSCF, not through the I-CSCF.
+      An outgoing INVITE takes this route, and so does the SUBSCRIBE of the UE later in this session.
+```
+
 - The UE uses Service-Route when it calls. Path is used when it is called. Both come back in the call.
 
-> Guide: [9](../../../docs/guide/en/registration.md#9-the-s-cscf-checks-the-answer-and-tells-the-hss-sar-and-saa) and [10](../../../docs/guide/en/registration.md#10-the-s-cscf-accepts-200-ok). TS 24.229 5.4.1.2.2A, 5.4.1.2.2F. TS 29.228 Annex E. RFC 3608.
+> Guide: [10](../../../docs/guide/en/registration.md#10-the-s-cscf-accepts-200-ok). RFC 3327, RFC 3608.
 
 ---
 
@@ -209,26 +1077,130 @@ The second half follows what comes after the registration.
 
 ---
 
-## 11 to 14. Subscribing to the registration state
+## 11 and 12. The P-CSCF subscribes to the registration state
 
-- The P-CSCF and the UE ask the S-CSCF to report every change of the registration, with the reg event package.
+```ims-scene
+id: pcscf-subscribe
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: The P-CSCF asks the S-CSCF to report every change of the registration, with the reg event package.
+steps:
+  - id: subscribe
+    title: The P-CSCF sends SUBSCRIBE to the I-CSCF
+    only: [psub-p-i]
+    text: The P-CSCF is in the home network, so its SUBSCRIBE goes to the entry of the home network.
+  - id: lir
+    title: The I-CSCF finds the S-CSCF (LIR and LIA)
+    show: [lir1, lia1]
+    active: lia1
+    zoom: [icscf, hss, scscf]
+    text: It asks the HSS which S-CSCF serves the user. Cx command 302.
+  - id: forward
+    title: The SUBSCRIBE reaches the S-CSCF
+    show: [psub-i-s]
+    text: The S-CSCF checks that the user is registered and that the subscriber is a P-CSCF on its Path.
+  - id: ok
+    title: A 200 OK starts the subscription
+    show: [psub-ok-s-i, psub-ok-i-p]
+    active: psub-ok-i-p
+    checkpoint: true
+    text: With this 200 the P-CSCF and the S-CSCF share a dialog, one without a call.
+  - id: notify
+    title: The NOTIFY goes straight to the P-CSCF
+    hide: [lir1, lia1]
+    show: [pnotify]
+    focus: [scscf, pcscf]
+    text: |
+      The I-CSCF did not stay on the route, so the NOTIFY does not pass it.
+      Its body is `application/reginfo+xml`.
+```
 
 | Look at | What to see |
 | --- | --- |
 | The SUBSCRIBE of the P-CSCF | Goes through the I-CSCF, which finds the S-CSCF with an LIR. |
-| The SUBSCRIBE of the UE | Follows the Service-Route and skips the I-CSCF. |
 | Body of the NOTIFY | `application/reginfo+xml`, with a `contact` per binding. |
 | Subscription-State | `active;expires=...`. |
 
 The filter is `sip.CSeq.method == "SUBSCRIBE" || sip.CSeq.method == "NOTIFY" || diameter.cmd.code == 302`.
 
-> Guide: ["Subscribe to the registration state"](../../../docs/guide/en/registration.md#subscribe-to-the-registration-state). TS 24.229 5.2.3, 5.1.1.3, 5.4.2.1.1, 5.4.2.1.2. RFC 3680, RFC 6665. TS 29.228 6.1.4.
+> Guide: ["Subscribe to the registration state"](../../../docs/guide/en/registration.md#subscribe-to-the-registration-state). TS 24.229 5.2.3, 5.4.2.1.1, 5.4.2.1.2. RFC 3680, RFC 6665. TS 29.228 6.1.4.
+
+---
+
+## 13 and 14. The UE subscribes as well
+
+```ims-scene
+id: ue-subscribe
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: The SUBSCRIBE of the UE follows the Service-Route and does not pass the I-CSCF.
+steps:
+  - id: subscribe
+    title: The UE sends SUBSCRIBE
+    only: [usub-ue-p]
+    text: Its Route is the P-CSCF and the Service-Route, as in every other request of the UE.
+  - id: direct
+    title: From the P-CSCF straight to the S-CSCF
+    show: [usub-p-s]
+    focus: [pcscf, scscf]
+    checkpoint: true
+    text: The P-CSCF puts the identity in P-Asserted-Identity, adds a Record-Route and sends it to the S-CSCF of the Service-Route.
+  - id: notify
+    title: The NOTIFY reaches the UE through the P-CSCF
+    show: [unotify-s-p, unotify-p-ue]
+    active: unotify-p-ue
+    text: |
+      The Route of the NOTIFY holds the P-CSCF.
+      The UE takes the route of the subscription from the NOTIFY, so its later SUBSCRIBEs pass the P-CSCF too.
+```
+
+| Look at | What to see |
+| --- | --- |
+| The SUBSCRIBE of the UE | Follows the Service-Route and skips the I-CSCF. |
+| Body of the NOTIFY | The same reginfo as the one the P-CSCF gets. |
+
+> Guide: [13](../../../docs/guide/en/registration.md#13-the-ue-subscribes-subscribe) and [14](../../../docs/guide/en/registration.md#14-the-notify-reaches-the-ue-through-the-p-cscf). TS 24.229 5.1.1.3, 5.2.6.4.5. RFC 6665 4.4.1.
 
 ---
 
 ## 15 to 18. Registering at the application server too
 
-- Following the iFCs of the profile, the S-CSCF sends a REGISTER of its own to the IP-SM-GW: a third-party REGISTER.
+```ims-scene
+id: third-party
+nodes: [icscf, hss, scscf, ipsmgw]
+lead: Following the iFCs of the profile, the S-CSCF sends a REGISTER of its own to the IP-SM-GW. It is called a third-party REGISTER.
+steps:
+  - id: register
+    title: The S-CSCF sends REGISTER to the IP-SM-GW
+    only: [tp-register]
+    text: |
+      From and Contact are the S-CSCF, To is the user. The body holds the MSISDN.
+      The UE does not wait for this. It already has its 200 OK.
+  - id: ok
+    title: The IP-SM-GW answers 200 OK
+    show: [tp-ok]
+    checkpoint: true
+    text: Without an answer, the DefaultHandling of the iFC applies, here SESSION_CONTINUED, and the registration stays.
+  - id: subscribe
+    title: The IP-SM-GW subscribes to the reg event too
+    only: [isub-ip-i, lir2, lia2, isub-i-s]
+    active: isub-i-s
+    checkpoint: true
+    text: As with the P-CSCF, the SUBSCRIBE goes to the entry of the home network, and the I-CSCF finds the S-CSCF with an LIR.
+  - id: notify
+    title: With the NOTIFY it looks for a binding that takes SMS
+    only: [inotify, ipsmgw-check]
+    active: ipsmgw-check
+    focus: [ipsmgw]
+    checkpoint: true
+    text: '`+g.3gpp.smsip` is the feature tag that says the UE takes SMS over IP.'
+  - id: pur
+    title: The IP-SM-GW tells the HSS (PUR and PUA)
+    only: [pur, pua]
+    active: pur
+    detail: [pur, pua]
+    text: |
+      With Sh command 307 it writes into the HSS that it handles the short messages of this user.
+      The SMS session reads this flow closely.
+```
 
 | Look at | What to see |
 | --- | --- |
@@ -246,7 +1218,42 @@ The filter is `diameter.cmd.code == 307`.
 
 ## Deregistration
 
-The UE sends a REGISTER whose Contact has `expires=0`.
+```ims-scene
+id: deregister
+view: ladder
+nodes: [ue, pcscf, icscf, scscf, hss]
+lead: The UE sends a REGISTER whose Contact has `expires=0`. This time no 401 comes back.
+steps:
+  - id: request
+    title: The REGISTER that deregisters reaches the I-CSCF
+    show: [dreg-ue-p, dreg-p-i]
+    text: The P-CSCF finds the IP association and adds `integrity-protected="ip-assoc-yes"`.
+  - id: uar
+    title: A UAR with DE_REGISTRATION
+    show: [duar, duaa, dreg-i-s]
+    active: duar
+    text: The I-CSCF asks with User-Authorization-Type DE_REGISTRATION (1) and sends the REGISTER to the S-CSCF.
+  - id: sar
+    title: A SAR without a challenge
+    show: [dsar, dsaa]
+    active: dsar
+    checkpoint: true
+    text: |
+      There is an IP association, so the S-CSCF does not challenge again.
+      It sends a SAR with USER_DEREGISTRATION (5) and waits for the SAA.
+  - id: ok
+    title: A 200 OK with expires=0
+    show: [dok-s-i, dok-i-p, dok-p-ue]
+    active: dok-p-ue
+    text: The 200 OK goes back to the UE through the I-CSCF and the P-CSCF.
+  - id: notify
+    title: The last NOTIFY
+    show: [dnotify-s-p, dnotify-p-ue]
+    active: dnotify-s-p
+    text: |
+      The registration and the contact are `terminated`, the contact has `event="unregistered"`. This NOTIFY ends the subscription.
+      It reaches the IP-SM-GW too, which then removes its own registration from the HSS.
+```
 
 | Look at | What to see |
 | --- | --- |
@@ -264,16 +1271,52 @@ The UE sends a REGISTER whose Contact has `expires=0`.
 
 ## Watching it fail
 
+```ims-scene
+id: failures
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: Both failures branch off a normal registration. They start at different nodes.
+steps:
+  - id: wrong
+    title: A wrong password
+    only: [reg2-i-s, wp-verify]
+    focus: [scscf]
+    text: Everything up to step 8 is the same. At step 9 the response does not match the value the S-CSCF computes.
+  - id: forbidden
+    title: A 403, and a SAR with AUTHENTICATION_FAILURE
+    show: [wp-403-s-i, wp-403-i-p, wp-403-p-ue, wp-sar, wp-clear]
+    active: wp-sar
+    detail: [wp-sar, wp-clear]
+    checkpoint: true
+    text: |
+      The S-CSCF answers 403 and sends a SAR with AUTHENTICATION_FAILURE (9).
+      The HSS forgets the S-CSCF it stored, so the next attempt starts from the beginning.
+  - id: rtr
+    title: The HSS removes the subscription
+    only: [rtr]
+    focus: [hss, scscf]
+    text: |
+      This one starts at the HSS. The RTR is the first Cx request in these sessions that the HSS starts.
+      The Reason-Code is PERMANENT_TERMINATION (0).
+  - id: rejected
+    title: The UE gets a NOTIFY with rejected
+    show: [rej-s-p, rej-p-ue, rta]
+    active: rej-p-ue
+    detail: [rej-s-p, rta]
+    text: |
+      The S-CSCF removes the registration, sends a NOTIFY with `event="rejected"` and answers with an RTA.
+      A UE that gets rejected does not register again.
+```
+
 | Case | How to try it | What to see |
 | --- | --- | --- |
 | A wrong password | `ue register -password wrong-password` | The same up to step 8. The S-CSCF answers 403 and sends a SAR with AUTHENTICATION_FAILURE (9). |
 | The HSS removes the subscription | Remove the subscription of a registered user through the OAM, as "The network cancels a registration" in the Lab guide does. | The HSS sends an RTR with Reason-Code PERMANENT_TERMINATION (0). The UE gets a NOTIFY with `event="rejected"`. |
 
 - Put `docker compose run --rm` in front of the command.
-- The filter for RTR and RTA is `diameter.cmd.code == 304`. The RTR is the first Cx request in these sessions that the HSS starts.
+- The filter for RTR and RTA is `diameter.cmd.code == 304`.
 - The provisioning API of the HSS removes a subscription too; the guide has its table.
 
-> Guide: ["A wrong password"](../../../docs/guide/en/registration.md#a-wrong-password) and ["Remove a subscription (deregistration by the HSS)"](../../../docs/guide/en/registration.md#remove-a-subscription-deregistration-by-the-hss). TS 24.229 5.4.1.2.3B. TS 29.228 6.1.2.1, 6.1.3.
+> Guide: ["A wrong password"](../../../docs/guide/en/registration.md#a-wrong-password) and ["Remove a subscription (deregistration by the HSS)"](../../../docs/guide/en/registration.md#remove-a-subscription-deregistration-by-the-hss), and in the Lab guide ["The network cancels a registration"](../../../docs/guide/en/lab.md#the-network-cancels-a-registration). TS 24.229 5.4.1.2.3B. TS 29.228 6.1.2.1, 6.1.3.
 
 ---
 
@@ -298,6 +1341,37 @@ The UE sends a REGISTER whose Contact has `expires=0`.
 ---
 
 ## Check it in the code
+
+```ims-scene
+id: code
+nodes: [ue, pcscf, dns, icscf, hss, scscf]
+lead: Each node has a file with its steps. Search it for a header name that you saw in the capture.
+steps:
+  - id: ue
+    title: The REGISTER of the UE and its digest response (1, 7)
+    focus: [ue]
+    text: "`internal/ue/ue.go`"
+  - id: pcscf
+    title: Path and DNS (2)
+    focus: [pcscf, dns]
+    text: "`internal/pcscf/pcscf.go`, `internal/sipdns/locate.go`"
+  - id: icscf
+    title: UAR (3, 8)
+    focus: [icscf]
+    text: "`internal/icscf/icscf.go`"
+  - id: scscf
+    title: MAR, 401, SAR, 200 OK (5, 6, 9, 10)
+    focus: [scscf]
+    text: "`internal/scscf/scscf.go`"
+  - id: hss
+    title: The answers of the HSS
+    focus: [hss]
+    text: "`internal/hss/hss.go`"
+  - id: regevent
+    title: The reg event (11 to 14)
+    focus: [scscf, pcscf, ue]
+    text: "`internal/scscf/regevent.go`, `internal/pcscf/regevent.go`, `internal/ue/regevent.go`"
+```
 
 | Step | File to open |
 | --- | --- |
@@ -342,10 +1416,13 @@ The UE sends a REGISTER whose Contact has `expires=0`.
 ## Next session
 
 - Next is a call. It uses the Path, the Service-Route and the IP association that this session set up.
-- Clean up with this command.
+- How to clean up depends on whether the next session follows straight away.
 
 ```sh
+docker compose --profile ue --profile phones --profile volte down -v --remove-orphans
 docker compose --profile ue down --rmi all -v --remove-orphans
 ```
 
-> The guide of the next session is [Follow a voice call through the IMS](../../../docs/guide/en/call.md).
+The first line stops the nodes and the UEs and removes the volumes, but keeps the images, so the next session starts without building again. The second removes the images too. Both remove the stored data of the volumes with `-v`; the captures stay.
+
+> The guide of the next session is [Follow a voice call through the IMS](../../../docs/guide/en/call.md). Cleaning up is in the guide's ["Clean up"](../../../docs/guide/en/registration.md#clean-up).
