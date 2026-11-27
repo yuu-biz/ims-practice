@@ -77,6 +77,7 @@ func TestVisualMistakesFail(t *testing.T) {
 		"no title":             {"title: Send, ", ""},
 		"bad id":               {"id: flow\n", "id: Flow\n"},
 		"node not drawn":       {"id: flow\n", "id: flow\nnodes: [a]\n"},
+		"node twice":           {"id: flow\n", "id: flow\nnodes: [a, b, a]\n"},
 		"two kinds":            {"{id: work, do: thinks, at: b}", "{id: work, do: thinks, msg: X, at: b}"},
 		"message to itself":    {"from: b, to: a", "from: b, to: b"},
 		"same id":              {"{id: work,", "{id: req,"},

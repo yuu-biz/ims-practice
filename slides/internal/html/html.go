@@ -80,7 +80,7 @@ func WriteWith(out io.Writer, d *deck.Deck, pages []layout.Page, o Options) erro
 		"<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>%s</title>\n<style>\n%s</style>\n</head>\n<body>\n",
 		d.Lang, html.EscapeString(d.Title), style())
 	b.WriteString(`<div id="app">` + "\n")
-	fmt.Fprintf(b, `<a class="skip" href="#reading">%s</a>`+"\n", w.words["skip"])
+	fmt.Fprintf(b, `<a class="skip" id="skip" href="#reading">%s</a>`+"\n", w.words["skip"])
 	b.WriteString(`<main id="viewport"><div id="stage">` + "\n")
 	var data []sceneData
 	for i, s := range d.Slides {
@@ -148,7 +148,9 @@ func counter(i, n int) string { return fmt.Sprintf("%02d / %02d", i+1, n) }
 // flowing form for a narrow screen.
 func (w *writer) stagePage(s deck.Slide, page layout.Page, i, n int) {
 	b := &w.b
-	fmt.Fprintf(b, `<section class="slide page %s" id="%d" data-index="%d" aria-label="%s" hidden>`+"\n", page.Layout, s.Number, i, html.EscapeString(deck.PlainText(s.Title)))
+	// The ids of the sections start with "slide-", so that no id of a
+	// scene can be the id of a control of the page.
+	fmt.Fprintf(b, `<section class="slide page %s" id="slide-%d" data-index="%d" aria-label="%s" hidden>`+"\n", page.Layout, s.Number, i, html.EscapeString(deck.PlainText(s.Title)))
 	fmt.Fprintf(b, `<div class="fixed" style="background:#%s">`+"\n", page.Background)
 	// The number of the page is its place in the pptx; on the stage a
 	// slide shows its place among the slides, as the scenes do.
@@ -184,7 +186,7 @@ func (w *writer) stageScene(s deck.Slide, diagram *layout.Diagram, i, n int) {
 	if Wide(diagram) {
 		class += " wide"
 	}
-	fmt.Fprintf(b, `<section class="slide %s" id="%s" data-index="%d" aria-label="%s" hidden>`+"\n", class, scene.ID, i, html.EscapeString(deck.PlainText(s.Title)))
+	fmt.Fprintf(b, `<section class="slide %s" id="slide-%s" data-index="%d" aria-label="%s" hidden>`+"\n", class, scene.ID, i, html.EscapeString(deck.PlainText(s.Title)))
 	fmt.Fprintf(b, `<header class="head"><p class="kicker">%s</p><h2>`, counter(i, n))
 	flowSpans(b, s.Title, w.o.Repository)
 	b.WriteString("</h2>")

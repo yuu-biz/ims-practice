@@ -323,9 +323,12 @@ func (p *parser) scene(d *Deck, lines []line, ids map[string]bool) (*Scene, []li
 		return nil, nil, err
 	}
 	s.Nodes = raw.Nodes
-	for _, n := range s.Nodes {
+	for i, n := range s.Nodes {
 		if _, ok := d.Model.Node(n); !ok {
 			return nil, nil, fail("no node %q", n)
+		}
+		if slices.Contains(s.Nodes[:i], n) {
+			return nil, nil, fail("node %s is listed twice", n)
 		}
 	}
 	if len(raw.Steps) == 0 {
