@@ -62,11 +62,11 @@ const (
 	RTCPReceivers = 4000
 )
 
-// bandwidth returns the b= line of this type that holds for m: its own,
+// Bandwidth returns the b= line of this type that holds for m: its own,
 // or else one before the first m= line, which gives the bandwidth of
 // the session as a whole (RFC 3556 4). Only the first such line counts,
 // as in Media.Bandwidth.
-func (s Session) bandwidth(m Media, bwtype string) (int, bool) {
+func (s Session) Bandwidth(m Media, bwtype string) (int, bool) {
 	if v, ok := m.Bandwidth(bwtype); ok {
 		return v, true
 	}
@@ -91,9 +91,9 @@ func (s Session) bandwidth(m Media, bwtype string) (int, bool) {
 // b=AS of the session is the bandwidth of all its media, and calls carry
 // one audio stream, so the stream takes all of it.
 func (s Session) RTCPBandwidth(m Media) (rs, rr int) {
-	rs, hasRS := s.bandwidth(m, "RS")
-	rr, hasRR := s.bandwidth(m, "RR")
-	as, _ := s.bandwidth(m, "AS")
+	rs, hasRS := s.Bandwidth(m, "RS")
+	rr, hasRR := s.Bandwidth(m, "RR")
+	as, _ := s.Bandwidth(m, "AS")
 	total := as * 1000 * 5 / 100
 	switch {
 	case !hasRS && !hasRR:
