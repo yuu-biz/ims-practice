@@ -725,12 +725,13 @@ type reInviteSent struct {
 	described bool
 }
 
-// reInviteProvisional is RFC 3262 4 and 5 for resp, a 101-199 response
-// to the re-INVITE r. A reliable one gets its PRACK, from the UA unless
-// r leaves it to the user, and the first one with a session description
-// carries the answer or the offer. A retransmission, or one that comes
-// out of order, is discarded. It reports whether to pass resp on to the
-// user.
+// reInviteProvisional is RFC 3262 4 and 5 and RFC 6141 4.7 for resp, a
+// 101-199 response to the re-INVITE r. A reliable one gets its PRACK,
+// from the UA unless r leaves it to the user; its Contact, if it has
+// one, is the remote target from now on; and the first one with a
+// session description carries the answer or the offer. One that is not
+// reliable changes nothing. A retransmission, or one that comes out of
+// order, is discarded. It reports whether to pass resp on to the user.
 func (d *CallDialog) reInviteProvisional(resp *Message, r *reInviteSent) bool {
 	c := d.c
 	c.mu.Lock()
@@ -741,6 +742,9 @@ func (d *CallDialog) reInviteProvisional(resp *Message, r *reInviteSent) bool {
 	if d.usable() != nil || !d.reliableInOrder(resp) {
 		return false
 	}
+	// RFC 6141 4.3: the target stays refreshed even when the re-INVITE
+	// then fails.
+	d.dialog.refreshTarget(resp)
 	if len(resp.Body) > 0 && !r.described {
 		r.described = true
 		if r.offers {

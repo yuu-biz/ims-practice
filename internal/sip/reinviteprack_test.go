@@ -324,6 +324,41 @@ func TestReINVITEWithoutAnOfferGetsItInAReliable183(t *testing.T) {
 	}
 }
 
+// RFC 6141 4.7: the Contact of a reliable provisional response to a
+// re-INVITE is the remote target from then on, so the PRACK goes there;
+// that of a provisional response that is not reliable is not.
+func TestReliableResponseToAReINVITERefreshesTheRemoteTarget(t *testing.T) {
+	callerUA := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	unreliable := "sip:unreliable@" + addrOf(p.peer).String()
+	moved := "sip:moved@" + addrOf(p.peer).String()
+	done := reInvite(out, holdOffer)
+	reinvite := readDatagram(t, p.peer)
+	ringing := NewResponse(reinvite, 180, "")
+	ringing.Add("Contact", "<"+unreliable+">")
+	send(t, p.peer, ringing, callerUA.Stack())
+	progress := reliable(reinvite, 183, 1, p.target)
+	progress.Remove("Contact")
+	send(t, p.peer, progress, callerUA.Stack())
+	prack := readPRACK(t, p, "1 2 INVITE", "3 PRACK")
+	if prack.RequestURI != p.target {
+		t.Errorf("PRACK after the unreliable 180 goes to %s, want %s still", prack.RequestURI, p.target)
+	}
+	p.respond(prack, 200, Body{})
+
+	send(t, p.peer, reliable(reinvite, 180, 2, moved), callerUA.Stack())
+	prack = readPRACK(t, p, "2 2 INVITE", "4 PRACK")
+	if prack.RequestURI != moved {
+		t.Errorf("PRACK after the reliable 180 goes to %s, want its Contact %s", prack.RequestURI, moved)
+	}
+	p.respond(prack, 200, Body{})
+	p.target = moved
+	acceptReInvite(t, p, reinvite, holdAnswer)
+	if r := finalOf(t, done); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("ReInvite returned %v, %v; want the 200", r.resp, r.err)
+	}
+}
+
 // RFC 3261 14.1: when the re-INVITE fails before the user has answered
 // the offer of its reliable 183, that offer goes with it, and the UA
 // may offer itself.
