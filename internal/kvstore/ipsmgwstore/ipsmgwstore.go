@@ -8,6 +8,7 @@
 //	message-reference:<recipient>      messageReferences, time to live until its Expires
 //	delivery:<Call-ID>                 PendingDelivery, time to live until its Expires
 //	outcome:<reference>                outcome, time to live until its Expires
+//	tfr:<request>                      tfr, time to live until its Expires
 //	not-reachable:<identity>           notReachable, time to live until its Expires
 //	reg-subscription:<Call-ID>         RegSubscription, time to live until its Expires
 //	reg-subscription-of:<identity>     index: the Call-ID of the subscription
@@ -148,12 +149,47 @@ func (s *Store) PutOutcome(ctx context.Context, reference string, o ipsmgw.Outco
 		s.c.TTLUntil(expires))
 }
 
-// TakeOutcome takes the outcome (kvjson.ReadAndRemove), so that of two
-// instances that read it only one gets it.
-func (s *Store) TakeOutcome(ctx context.Context, reference string) (ipsmgw.Outcome, bool, error) {
-	o, err := kvjson.ReadAndRemove[outcome](ctx, s.c, s.c.Key("outcome", reference))
+func (s *Store) Outcome(ctx context.Context, reference string) (ipsmgw.Outcome, bool, error) {
+	var o outcome
+	_, err := kvjson.Read(ctx, s.c, s.c.Key("outcome", reference), &o)
 	got, ok, err := live(o, o.Expires, s.c.Now(), err)
 	return got.Outcome, ok, err
+}
+
+// tfr is the item of one TFR that an instance has begun a delivery for:
+// the record by which every instance tells a copy of the TFR from a new
+// one.
+type tfr struct {
+	// Reference is the delivery that the first copy of the TFR began.
+	Reference string
+	// Expires is when the record goes, as BeginTFR gave it.
+	Expires time.Time
+}
+
+// beginRounds bounds the rounds of a BeginTFR whose record keeps
+// expiring between its write and its read. One more round is the most
+// that a record which expires at that instant needs.
+const beginRounds = 3
+
+// BeginTFR writes the record only where there is none, so that of
+// several instances that begin the same request one wins, and the others
+// read the reference it wrote.
+func (s *Store) BeginTFR(ctx context.Context, request, reference string, expires time.Time) (string, error) {
+	key := s.c.Key("tfr", request)
+	for range beginRounds {
+		_, err := kvjson.CompareAndSwap(ctx, s.c, key, "", tfr{Reference: reference, Expires: expires}, s.c.TTLUntil(expires))
+		if !errors.Is(err, kvstore.ErrConflict) {
+			return reference, err
+		}
+		var first tfr
+		switch _, err := kvjson.Read(ctx, s.c, key, &first); {
+		case err == nil:
+			return first.Reference, nil
+		case !errors.Is(err, kvstore.ErrNotFound):
+			return "", err
+		}
+	}
+	return "", errors.New("ipsmgwstore: the record of the TFR kept expiring while it was read")
 }
 
 // notReachable is the item of the IP-SM-GW's own UNRI for one user. It

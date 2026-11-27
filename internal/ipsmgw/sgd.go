@@ -32,14 +32,19 @@ import (
 // for the same instance; DNS does not promise it, which is why the
 // delivery is in the Store). The instance that ends the delivery leaves
 // the outcome in the Store under a reference of the TFR's own, and this
-// one takes it there.
+// one reads it there.
 //
-// SIMPLIFIED: RFC 6733 3 (End-to-End Identifier) and Appendix C. The
-// IP-SM-GW detects no duplicate TFR. An SMS-GMSC that sends a TFR again
-// after a failover, with the T flag set, starts a second delivery, so
-// the UE may get the short message twice, and each TFR is answered by
-// how its own delivery ended. The duplicate cache that RFC 6733 asks
-// for would have to be shared by every instance, like the deliveries.
+// An SMS-GMSC that got no TFA in time may send the TFR again, with the
+// same Origin-Host and End-to-End Identifier and the T flag set (RFC
+// 6733 3, 5.5.4), and the copy may reach another instance. RFC 6733 3
+// has a duplicate get the answer of the original and change nothing that
+// the original set, so the delivery that a TFR begins is kept in the
+// Store under the name of the request (BeginTFR). A copy begins no
+// delivery of its own: it waits for the outcome of the first copy's
+// delivery and answers with it, whether that delivery is still under way
+// or has ended. Every TFR is checked, whether it has the T flag or not,
+// since the first copy may arrive after the second (RFC 6733 Appendix
+// C).
 //
 // SIMPLIFIED: TS 23.204 6.4 step 5 and 6.5a. The IP-SM-GW selects no
 // domain: it delivers over IMS and nowhere else. A delivery that fails
@@ -143,21 +148,35 @@ func (g *IPSMGW) mtForwardShortMessage(ctx context.Context, r sgd.MTForwardShort
 	// The outcome of the delivery meets this request in the Store under
 	// a reference that names this one TFR for every instance of the
 	// IP-SM-GW: the Session-Id (RFC 6733 8.8), with a tag of this request
-	// beside it, so that a TFR sent again in the same session waits for
-	// its own delivery and never for the outcome of an earlier one.
+	// beside it, so that a new TFR in the same session waits for its own
+	// delivery and never for the outcome of an earlier one. A copy of the
+	// TFR waits for the delivery of the first copy instead.
 	reference := r.SessionID + ";" + sip.NewTag()
 	deadline := time.Now().Add(g.outcomeWait())
-	g.Deliver(Delivery{
-		Reference:     reference,
-		Recipient:     recipientOf(sub),
-		TPDU:          tpdu,
-		ServiceCentre: sms.InternationalNumber("+" + r.SCAddress),
-		OverSGd:       true,
-	})
+	request := diameter.DuplicateKey(r.OriginHost, r.EndToEndID)
+	first, err := g.store.BeginTFR(ctx, request, reference, time.Now().Add(diameter.DuplicateWindow))
+	switch {
+	case err != nil:
+		log.Warn("the short message was not delivered: the store failed", "error", err.Error())
+		return answer(diameter.Base(diameter.DiameterUnableToComply))
+	case first != reference:
+		log.Info("TFR sent again: it waits for the delivery of the first copy", "origin_host", r.OriginHost,
+			"end_to_end", r.EndToEndID, "reference", first)
+		reference = first
+	default:
+		g.Deliver(Delivery{
+			Reference:     reference,
+			Recipient:     recipientOf(sub),
+			TPDU:          tpdu,
+			ServiceCentre: sms.InternationalNumber("+" + r.SCAddress),
+			OverSGd:       true,
+		})
+	}
 	outcome, err := g.awaitOutcome(ctx, reference, deadline, log)
 	if err != nil {
-		// Only a Store that failed gets here: every delivery ends, at the
-		// latest when TR1N runs out (deliver.go).
+		// Only a Store that failed gets here, or a copy of a TFR whose first
+		// instance stopped before the delivery began: every delivery ends,
+		// at the latest when TR1N runs out (deliver.go).
 		log.Warn("the short message is answered without an outcome", "error", err.Error())
 		return answer(diameter.Base(diameter.DiameterUnableToComply))
 	}
@@ -201,7 +220,7 @@ func (g *IPSMGW) outcomeWait() time.Duration {
 	return g.cfg.ReportTimeout + g.cfg.SweepInterval + time.Second
 }
 
-// awaitOutcome takes the outcome of the delivery of reference out of the
+// awaitOutcome reads the outcome of the delivery of reference in the
 // Store once it is there, looking every outcomePoll. It gives up at
 // deadline, which only a Store that failed reaches: a read that fails
 // is tried again at the next look, since the delivery goes on and its
@@ -209,7 +228,7 @@ func (g *IPSMGW) outcomeWait() time.Duration {
 func (g *IPSMGW) awaitOutcome(ctx context.Context, reference string, deadline time.Time, log *slog.Logger) (Outcome, error) {
 	var last error
 	for {
-		outcome, ok, err := g.store.TakeOutcome(ctx, reference)
+		outcome, ok, err := g.store.Outcome(ctx, reference)
 		switch {
 		case err != nil:
 			log.Warn("the outcome of the delivery was not read: the store failed", "error", err.Error())

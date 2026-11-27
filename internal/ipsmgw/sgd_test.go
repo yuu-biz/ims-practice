@@ -1,6 +1,7 @@
 package ipsmgw_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strconv"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fiorix/go-diameter/v4/diam"
+	"github.com/fiorix/go-diameter/v4/diam/dict"
 
 	"github.com/yuu-biz/ims-practice/internal/diameter"
 	"github.com/yuu-biz/ims-practice/internal/ipsmgw"
@@ -190,6 +192,95 @@ func TestMTForwardShortMessage(t *testing.T) {
 	}
 }
 
+// TestTFRSentAgainToAnotherInstance is RFC 6733 3: an SC that got no
+// TFA in time sends the TFR again, with its Origin-Host and End-to-End
+// Identifier and the T flag, and the copy may reach another instance of
+// the IP-SM-GW. That one starts no delivery of its own: it answers with
+// the outcome of the first copy's delivery, both while the UE has not
+// answered yet and after the first copy has been answered, and the UE
+// gets the short message once.
+func TestTFRSentAgainToAnotherInstance(t *testing.T) {
+	store := ipsmgw.NewMemoryStore()
+	h := newHarness(t, store, time.Minute, answerOK)
+	other, _ := h.start("ipsmgw-2."+domain, store, time.Minute, ipsmgw.Config{}, h.sc, h.hss)
+	h.registered()
+	if err := sgd.LoadDictionary(); err != nil {
+		t.Fatal(err)
+	}
+	tfr := overTheWire(t, sgd.MTForwardShortMessageRequest{
+		Header: diameter.Header{SessionID: scDiameterHost + ";1;1", OriginHost: scDiameterHost, OriginRealm: domain,
+			DestinationHost: gwDiameterHost, DestinationRealm: domain},
+		UserName:  aliceIMSI,
+		SCAddress: scNumber,
+		SMRPUI:    marshal(t, deliver),
+	}.Message())
+	again := overTheWire(t, tfr)
+	again.Header.CommandFlags |= diam.RetransmittedFlag
+
+	first := handling(h.g, tfr)
+	mt := h.next()
+	during := handling(other, again)
+	select {
+	case m := <-h.received:
+		t.Fatalf("the copy of the TFR delivered the short message again: %s", m)
+	case got := <-during:
+		t.Fatalf("the copy of the TFR was answered %+v before the UE answered", got)
+	case <-time.After(200 * time.Millisecond):
+	}
+	data := parseRP(t, mt).(sms.RPDataNetworkToMS)
+	h.send(deliveryReport(t, mt, sms.RPAck{Direction: sms.MSToNetwork, MessageReference: data.MessageReference,
+		UserData: marshal(t, sms.DeliverReport{})}))
+
+	for _, tfa := range []sgd.MTForwardShortMessageAnswer{tfaOf(t, first), tfaOf(t, during), tfaOf(t, handling(other, again))} {
+		if tfa.Result != success || tfa.SMDeliveryFailureCause != nil {
+			t.Errorf("TFA = %+v, want DIAMETER_SUCCESS alone", tfa)
+		}
+	}
+	select {
+	case m := <-h.received:
+		t.Errorf("the copy of the TFR delivered the short message again: %s", m)
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// overTheWire is m as a Diameter node reads it off a connection.
+func overTheWire(t *testing.T, m *diam.Message) *diam.Message {
+	t.Helper()
+	b, err := m.Serialize()
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := diam.ReadMessage(bytes.NewReader(b), dict.Default)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return read
+}
+
+// handling hands request to g on a goroutine of its own, as a Diameter
+// node does, and gives its answer back.
+func handling(g *ipsmgw.IPSMGW, request *diam.Message) <-chan *diam.Message {
+	answers := make(chan *diam.Message, 1)
+	go func() { answers <- g.Handle(request) }()
+	return answers
+}
+
+// tfaOf waits for the TFA that handling gives back.
+func tfaOf(t *testing.T, answers <-chan *diam.Message) sgd.MTForwardShortMessageAnswer {
+	t.Helper()
+	select {
+	case m := <-answers:
+		tfa, err := sgd.ParseMTForwardShortMessageAnswer(m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tfa
+	case <-time.After(10 * time.Second):
+		t.Fatal("the TFR got no answer")
+		return sgd.MTForwardShortMessageAnswer{}
+	}
+}
+
 // outcomesThatFail is a Store whose reads of an outcome fail a number of
 // times before they succeed, as a store that is briefly out of reach.
 type outcomesThatFail struct {
@@ -197,11 +288,11 @@ type outcomesThatFail struct {
 	fails atomic.Int32
 }
 
-func (s *outcomesThatFail) TakeOutcome(ctx context.Context, reference string) (ipsmgw.Outcome, bool, error) {
+func (s *outcomesThatFail) Outcome(ctx context.Context, reference string) (ipsmgw.Outcome, bool, error) {
 	if s.fails.Add(-1) >= 0 {
 		return 0, false, errUnreachable
 	}
-	return s.Store.TakeOutcome(ctx, reference)
+	return s.Store.Outcome(ctx, reference)
 }
 
 // A read of the outcome that fails is tried again: the delivery goes on

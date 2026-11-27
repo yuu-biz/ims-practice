@@ -154,10 +154,17 @@ type Store interface {
 	// reach any IP-SM-GW of the network, and so may the sweep that ends
 	// a delivery whose TR1N has run out.
 	PutOutcome(ctx context.Context, reference string, outcome Outcome, expires time.Time) error
-	// TakeOutcome returns the outcome of reference and removes it, and
-	// whether there was one. It is taken rather than read so that the
-	// Store is left with nothing once the request has been answered.
-	TakeOutcome(ctx context.Context, reference string) (Outcome, bool, error)
+	// Outcome returns the outcome of reference, and whether there is one.
+	// It is read rather than taken, since a copy of the request that
+	// brought the delivery may come later and need it as well (BeginTFR).
+	Outcome(ctx context.Context, reference string) (Outcome, bool, error)
+	// BeginTFR keeps reference, the delivery of the TFR that request names
+	// (diameter.DuplicateKey), until expires, unless the Store holds a
+	// delivery for request already. It returns the delivery that request
+	// has: reference for the first copy of the TFR, and the one of the
+	// first copy for every later one. Of several instances that begin the
+	// same request at once, one has its reference kept.
+	BeginTFR(ctx context.Context, request, reference string, expires time.Time) (string, error)
 
 	// PutNotReachable sets the IP-SM-GW's own UE-Not-Reachable-for-IP
 	// flag for the user of publicID until expires: a delivery to that
@@ -202,10 +209,12 @@ type messageReferences struct {
 }
 
 // storedOutcome is how one delivery ended, waiting for the instance
-// that answers the request which brought it.
+// that answers the request which brought it; or, in tfrs, the reference
+// of the delivery that a TFR began.
 type storedOutcome struct {
-	outcome Outcome
-	expires time.Time
+	outcome   Outcome
+	reference string
+	expires   time.Time
 }
 
 // MemoryStore is a Store in the memory of one process. Two IP-SM-GWs
@@ -218,6 +227,9 @@ type MemoryStore struct {
 	// outcomes are how deliveries ended, by the reference of the request
 	// that brought each one.
 	outcomes map[string]storedOutcome
+	// tfrs are the deliveries of the TFRs this IP-SM-GW has begun, by the
+	// request that names each TFR.
+	tfrs map[string]storedOutcome
 	// notReachable holds the users this IP-SM-GW could not reach, by
 	// public identity, each until its time.
 	notReachable map[string]time.Time
@@ -238,6 +250,7 @@ type MemoryStore struct {
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{deliveries: map[string]PendingDelivery{}, messageReferences: map[string]messageReferences{},
 		outcomes:         map[string]storedOutcome{},
+		tfrs:             map[string]storedOutcome{},
 		notReachable:     map[string]time.Time{},
 		regSubscriptions: map[string]RegSubscription{}, regSubscriptionOf: map[string]string{},
 		regSubscriptionOfIMSI: map[string]string{}, regSubscriptionOfMSISDN: map[string]string{},
@@ -349,15 +362,33 @@ func (s *MemoryStore) PutOutcome(_ context.Context, reference string, outcome Ou
 	return nil
 }
 
-func (s *MemoryStore) TakeOutcome(_ context.Context, reference string) (Outcome, bool, error) {
+func (s *MemoryStore) Outcome(_ context.Context, reference string) (Outcome, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	stored, ok := s.outcomes[reference]
-	delete(s.outcomes, reference)
 	if !ok || !time.Now().Before(stored.expires) {
 		return 0, false, nil
 	}
 	return stored.outcome, true, nil
+}
+
+// BeginTFR keeps the reference until expires, as an external store
+// would with a time to live.
+func (s *MemoryStore) BeginTFR(_ context.Context, request, reference string, expires time.Time) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if first, ok := s.tfrs[request]; ok && time.Now().Before(first.expires) {
+		return first.reference, nil
+	}
+	s.tfrs[request] = storedOutcome{reference: reference, expires: expires}
+	time.AfterFunc(time.Until(expires), func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if stored, ok := s.tfrs[request]; ok && !time.Now().Before(stored.expires) {
+			delete(s.tfrs, request)
+		}
+	})
+	return reference, nil
 }
 
 // PutNotReachable keeps the flag until expires, as an external store
