@@ -1104,7 +1104,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 
 ---
 
-## 1 and 2. The INVITE, and the P-CSCF on the caller's side
+## The INVITE, and the P-CSCF on the caller's side (1, 2)
 
 ```ims-scene
 id: orig-pcscf
@@ -1168,7 +1168,7 @@ steps:
 
 ---
 
-## 3. The S-CSCF turns the number into a SIP URI
+## The S-CSCF turns the number into a SIP URI (3)
 
 ```ims-scene
 id: orig-scscf
@@ -1246,7 +1246,7 @@ The filter is `dns.qry.type == 35`. The records are in `deploy/compose/dns/e164.
 
 ---
 
-## 4 and 5. The entry point of the home network, and the LIR
+## The I-CSCF and the LIR (4, 5)
 
 ```ims-scene
 id: entry
@@ -1306,7 +1306,7 @@ The filter is `diameter.cmd.code == 302`.
 
 ---
 
-## 6 and 7. The S-CSCF and the P-CSCF on the callee's side
+## The S-CSCF and the P-CSCF on the callee's side (6, 7)
 
 ```ims-scene
 id: term
@@ -1390,7 +1390,7 @@ steps:
 
 ---
 
-## 8. UE 2 answers with a reliable 183
+## UE 2 answers with a reliable 183 (8)
 
 ```ims-scene
 id: answer
@@ -1459,7 +1459,7 @@ steps:
 
 ---
 
-## 9. UE 1 acknowledges the 183: PRACK
+## UE 1 acknowledges the 183 with a PRACK (9)
 
 ```ims-scene
 id: prack
@@ -1503,7 +1503,7 @@ steps:
 
 ---
 
-## 10 and 11. 180, 200 OK and ACK
+## 180, 200 OK and ACK (10, 11)
 
 ```ims-scene
 id: confirm
@@ -1568,7 +1568,7 @@ steps:
 
 ---
 
-## 12. The voice flows through the relay
+## The voice flows through the relay (12)
 
 ```ims-scene
 id: media
@@ -1635,7 +1635,7 @@ The filter is `rtp || rtcp`. **Play Streams** plays the voice.
 
 ---
 
-## 12. Two contexts, and latching
+## Two contexts, and latching (12)
 
 - One call has two contexts in the relay: one from the pass of the P-CSCF on the caller's side, one from the pass on the callee's side. Each pass handles its own side only.
 - So the RTP crosses the relay twice, as it would cross the IMS-AGWs of two networks, and the capture tells the two sides apart. With the UEs behind two P-CSCFs, the call would look the same.
@@ -1644,7 +1644,7 @@ The filter is `rtp || rtcp`. **Play Streams** plays the voice.
 
 ---
 
-## 13. Hanging up
+## Hanging up (13)
 
 ```ims-scene
 id: bye

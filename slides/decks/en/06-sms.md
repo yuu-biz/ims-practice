@@ -1552,7 +1552,7 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70)
 
 ---
 
-## R1 to R5. The IP-SM-GW learns about the user
+## The IP-SM-GW learns about the user (R1 to R5)
 
 ```ims-scene
 id: register
@@ -1633,7 +1633,7 @@ The filter is `diameter.cmd.code == 307`.
 
 ---
 
-## 1 to 4. UE 1 submits the short message
+## UE 1 submits the short message (1 to 4)
 
 ```ims-scene
 id: submit
@@ -1687,7 +1687,7 @@ steps:
 
 ---
 
-## 5. The SC accepts: OFR, SRR and OFA
+## The SC accepts (5)
 
 ```ims-scene
 id: sc-accept
@@ -1738,7 +1738,7 @@ The filter is `diameter.cmd.code in {8388645, 8388647} || sip.In-Reply-To`. It k
 
 ---
 
-## 6 and 7. The submit report goes back to UE 1
+## The submit report goes back to UE 1 (6, 7)
 
 ```ims-scene
 id: submit-report
@@ -1790,7 +1790,7 @@ steps:
 
 ---
 
-## 8. The SC starts the delivery: SRR and TFR
+## The SC starts the delivery (8)
 
 ```ims-scene
 id: sc-deliver
@@ -1837,7 +1837,7 @@ steps:
 
 ---
 
-## 8 to 10. The MESSAGE reaches UE 2
+## The MESSAGE reaches UE 2 (8 to 10)
 
 ```ims-scene
 id: mt
@@ -1887,7 +1887,7 @@ steps:
 
 ---
 
-## 11 and 12. The delivery report
+## The delivery report (11, 12)
 
 ```ims-scene
 id: delivery-report
@@ -1943,7 +1943,7 @@ steps:
 
 ---
 
-## 13 to 15. The status report
+## The status report (13 to 15)
 
 ```ims-scene
 id: status-report
@@ -2015,7 +2015,7 @@ The filter is `gsm_sms.tp-mti == 2`.
 
 ---
 
-## A1 to A4. UE 2 takes no short message, and the SC holds it
+## UE 2 takes no short message, and the SC holds it (A1 to A4)
 
 ```ims-scene
 id: absent
@@ -2085,7 +2085,7 @@ SC <-> HSS: RDR, RDA // A4
 
 ---
 
-## A5 to A7. UE 2 is back: Ready-For-SM and the alert
+## The SC learns that UE 2 is back (A5 to A7)
 
 ```ims-scene
 id: alert
@@ -2147,7 +2147,7 @@ IP-SM-GW --> SC: TFA 2001 // A9
 
 ---
 
-## A8 and A9. The SC sends it again
+## The SC sends it again (A8, A9)
 
 ```ims-scene
 id: resend
@@ -2203,7 +2203,7 @@ steps:
 
 ---
 
-## B1 to B4. UE 2 has no memory left
+## UE 2 has no memory left (B1 to B4)
 
 ```ims-scene
 id: memory
@@ -2258,7 +2258,7 @@ steps:
 
 ---
 
-## B5 to B8. The notification of free memory
+## The notification of free memory (B5 to B8)
 
 ```ims-scene
 id: memory-back
@@ -2317,7 +2317,7 @@ The filter is `diameter.Alert-Reason == 1`. The resend is the one of A8 and A9.
 
 ---
 
-## D1 to D3. The retry, and the report of a delivery
+## The retry, and the report of a delivery (D1 to D3)
 
 ```ims-scene
 id: retry

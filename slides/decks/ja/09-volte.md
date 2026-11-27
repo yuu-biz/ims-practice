@@ -67,7 +67,7 @@ ims-practice 勉強会 第 9 回（アクセス網、IMS-AKA、Rx でのポリ�
 
 ---
 
-## スタブであること。EPC スタブが残すもの、省くもの
+## EPC スタブが残すものと省くもの
 
 ```text
  UE ==(HTTP + JSON: ATTACH REQUEST, ...)==> EPC stub: PDN GW and PCRF (epc role)
@@ -125,7 +125,7 @@ volte10 -> EPC スタブ: POST /ues/001010000000010/attach-complete
 
 ---
 
-## attach でほかに見るもの
+## attach のほかの見どころ
 
 - フィルタは `http && ip.addr == 172.28.0.80` です。HTTP のボディの JSON を開きます。
 - PCO で P-CSCF を伝えるのは TS 24.229 L.2.2.1 の方法 II で、IR.92 4.5 が求める方法です。一覧の最初のアドレスが優先です。
@@ -135,7 +135,7 @@ volte10 -> EPC スタブ: POST /ues/001010000000010/attach-complete
 
 ---
 
-## コードで見る UE とアクセス網の境界
+## UE とアクセス網の境界をコードで見る
 
 [internal/ue/access.go](../../../internal/ue/access.go)
 
@@ -190,7 +190,7 @@ type AccessNetwork interface {
 
 ---
 
-## キャプチャで見る識別子
+## 識別子をキャプチャで見る
 
 ```text
 REGISTER  volte10 -> P-CSCF  To: <sip:001010000000010@ims.mnc001.mcc001.3gppnetwork.org>
@@ -208,7 +208,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 ---
 
-## IMS-AKA その 1。最初の REGISTER と 401
+## IMS-AKA の最初の REGISTER と 401
 
 | # | 区間 | 見どころ |
 | --- | --- | --- |
@@ -223,7 +223,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 ---
 
-## IMS-AKA その 2。網を確かめ、答える
+## IMS-AKA で網を確かめて答える
 
 | # | 区間 | 見どころ |
 | --- | --- | --- |
@@ -238,7 +238,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 ---
 
-## IMS-AKA の 2 つの部分で見えること
+## IMS-AKA の前半と後半で見えること
 
 - 保護されていない 5060 番に UE が送る REGISTER は、最初の 1 回だけです。200 OK のあと、UE はすべての要求を P-CSCF の保護ポート 5064 に送り、P-CSCF は UE の 5062 に送ります。
 - P-CSCF は 401 から `ik` と `ck` を取り除くので、鍵は UE まで届きません。UE は自分の K と RAND から同じ鍵を計算します。
@@ -249,7 +249,7 @@ INVITE    P-CSCF -> S-CSCF   P-Asserted-Identity: <sip:+12025550110@ims.mnc001.m
 
 ---
 
-## コードで見る認証ベクトル
+## 認証ベクトルをコードで見る
 
 [internal/aka/aka.go](../../../internal/aka/aka.go)
 
@@ -303,7 +303,7 @@ P-CSCF はポリシーと課金の制御の AF（application function）です�
 
 ---
 
-## Rx その 1。信号の経路（#786）
+## 信号の経路の AAR（#786）
 
 | AVP | 値 |
 | --- | --- |
@@ -321,7 +321,7 @@ P-CSCF はポリシーと課金の制御の AF（application function）です�
 
 ---
 
-## Rx その 2。通話のメディアの AAR
+## 通話のメディアの AAR
 
 両側の P-CSCF は、SDP の answer がそろうと AAR を送ります。着信側は volte12 からの 183、発信側は volte10 に向かう 183 がきっかけです。
 
@@ -339,7 +339,7 @@ P-CSCF はポリシーと課金の制御の AF（application function）です�
 
 ---
 
-## Rx その 2。AAR を読む
+## 通話のメディアの AAR を読む
 
 - フィルタは `diameter.Codec-Data` です。AAR を開き、Media-Component-Description を順に見ます。番号 1 が最初の m= の行です。
 - Flow-Description の 1 つは `permit in 17 from 172.28.0.121 to 172.28.0.50 40004` です。メディアの相手は、もう一方の UE ではなく中継ノードです。
@@ -349,7 +349,7 @@ P-CSCF はポリシーと課金の制御の AF（application function）です�
 
 ---
 
-## dedicated bearer。音声の通り道
+## 音声を運ぶ dedicated bearer
 
 PCRF が音声を許可すると、スタブがイベントストリームで送ります。
 
@@ -370,7 +370,7 @@ data: {"eps_bearer_identity":6,"linked_eps_bearer_identity":5,
 
 ---
 
-## プリコンディション。資源がそろうまで鳴らさない
+## プリコンディション（資源がそろうまで鳴らさない）
 
 ```ladder
 volte10, P-CSCF, PCRF, volte12
@@ -409,7 +409,7 @@ volte10 <-- P-CSCF <-- volte12: 200 (INVITE)。続いて ACK
 
 ---
 
-## コードで見る呼び出しの条件
+## 呼び出しの条件をコードで見る
 
 [internal/precondition/table.go](../../../internal/precondition/table.go)
 
@@ -432,7 +432,7 @@ func (t *Table) Met() bool {
 
 ---
 
-## コーデック。offer と answer
+## コーデックの offer と answer
 
 ```text
 m=audio 53946 RTP/AVP 96 97 98 99 0 100 101
@@ -473,7 +473,7 @@ Adaptive Multi-Rate
 
 ---
 
-## Wireshark の AMR と、比べるフレーム
+## Wireshark で AMR のフレームを比べる
 
 - Wireshark は、見た SDP に従って AMR-WB のフレームをデコードします。SDP が無いときは、**Preferences > Protocols > AMR** で Wideband AMR とペイロードの形式を選び、RTP のポートに **Decode As** を使います。
 - `amr.wb.cmr` と `amr.wb.toc.ft` で、AMR-WB の CMR とフレームの種類を絞れます。
@@ -523,7 +523,7 @@ volte12 <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 
 ---
 
-## 網が bearer を落とす。こう見える理由
+## bearer が落ちたときの見え方
 
 - 音声の bearer がメディアをすべて運んでいたので、PCRF は RAR ではなく ASR で Rx のセッションを終えます。volte10 は自分では BYE を送りません。
 - P-CSCF は `Store` に置いたダイアログの情報から BYE を作ります。相手の側への BYE は、サービスを受ける利用者の名前で送ります。
@@ -547,7 +547,7 @@ volte12 <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 
 ---
 
-## 作っていないものと、その理由
+## 作っていないもの
 
 - REGISTER の Contact には ICSI も +sip.instance も audio のタグもありません。INVITE とその応答の Contact には ICSI と audio があります。
 - CMR に従うには、符号化できる UE が要ります。この UE は、前もって符号化したフレームを送ります。

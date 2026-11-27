@@ -783,7 +783,7 @@ UE <-- P-CSCF <-- I-CSCF <-- S-CSCF: 200 OK // 10
 
 ---
 
-## 1 and 2. The first REGISTER, and DNS finds the I-CSCF
+## The first REGISTER, and DNS finds the I-CSCF (1, 2)
 
 ```ims-scene
 id: first-register
@@ -848,7 +848,7 @@ The filter is `dns.qry.type == 35 || dns.qry.type == 33`.
 
 ---
 
-## 3 and 4. The I-CSCF asks the HSS (UAR and UAA)
+## The I-CSCF asks the HSS with a UAR (3, 4)
 
 ```ims-scene
 id: select
@@ -907,7 +907,7 @@ The filter is `diameter.cmd.code == 300`.
 
 ---
 
-## 5 and 6. The S-CSCF challenges (MAR, MAA, 401)
+## The S-CSCF challenges the UE (5, 6)
 
 ```ims-scene
 id: challenge
@@ -962,7 +962,7 @@ The filter is `diameter.cmd.code == 303 || sip.Status-Code == 401`.
 
 ---
 
-## 7 and 8. The second REGISTER
+## The second REGISTER (7, 8)
 
 ```ims-scene
 id: second-register
@@ -1026,7 +1026,7 @@ steps:
 
 ---
 
-## 9 and 10. SAR, SAA and the 200 OK
+## SAR and the 200 OK (9, 10)
 
 ```ims-scene
 id: accept
@@ -1121,7 +1121,7 @@ The second half follows what comes after the registration.
 
 ---
 
-## 11 and 12. The P-CSCF subscribes to the registration state
+## The P-CSCF subscribes to the registration state (11, 12)
 
 ```ims-scene
 id: pcscf-subscribe
@@ -1170,7 +1170,7 @@ The filter is `sip.CSeq.method == "SUBSCRIBE" || sip.CSeq.method == "NOTIFY" || 
 
 ---
 
-## 13 and 14. The UE subscribes as well
+## The UE subscribes to the registration state too (13, 14)
 
 ```ims-scene
 id: ue-subscribe
@@ -1206,7 +1206,7 @@ steps:
 
 ---
 
-## 15 to 18. Registering at the application server too
+## Third-party registration at the application server (15 to 18)
 
 ```ims-scene
 id: third-party

@@ -61,7 +61,7 @@ ims-practice 勉強会 第 7 回（MMTel AS、Ut/XCAP での設定、キャプ�
 
 ---
 
-## 要求が AS に届くしくみ。4 つのフィルタ条件
+## 要求を AS に届ける 4 つのフィルタ条件
 
 | 優先度 | 一致する要求 | DefaultHandling |
 | --- | --- | --- |
@@ -78,7 +78,7 @@ ims-practice 勉強会 第 7 回（MMTel AS、Ut/XCAP での設定、キャプ�
 
 ---
 
-## 発信側か着信側か。P-Served-User
+## 発信側か着信側かを示す P-Served-User
 
 ```text
 P-Served-User: <sip:+12025550101@…>;sescase=orig;regstate=reg
@@ -101,7 +101,7 @@ P-Served-User: <sip:+12025550102@…>;orig-cdiv;regstate=reg
 
 ---
 
-## コードで見る順番。着信側
+## 着信側のコードを読む順番
 
 [internal/mmtel/sessioncase.go](../../../internal/mmtel/sessioncase.go)
 
@@ -123,7 +123,7 @@ P-Served-User: <sip:+12025550102@…>;orig-cdiv;regstate=reg
 
 ---
 
-## ODI と、1 つの通話に 3 つのダイアログ
+## ODI と 3 つのダイアログ
 
 ```text
 Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
@@ -142,7 +142,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 
 ---
 
-## 3 つのダイアログがキャプチャに与えるもの
+## 3 つのダイアログはキャプチャでどう見えるか
 
 | 見るもの | 見どころ |
 | --- | --- |
@@ -161,7 +161,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 
 ---
 
-## 設定はどこにあるか。simservs の文書
+## 設定の置き場所（simservs の文書）
 
 - 利用者ごとに XML の文書が 1 つあります。XCAP の simservs です（TS 24.623、RFC 4825）。
 - 置き場所は HSS だけです。Sh の repository data で、Service-Indication は `MMTEL-Services` です（TS 29.364 7.2）。
@@ -183,7 +183,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 
 ---
 
-## Ut で変える。CFU を有効にする
+## Ut で CFU を有効にする
 
 `ue xcap set cfu on tel:+12025550103` が送るもの。
 
@@ -201,7 +201,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 
 ---
 
-## コードで見る HTTP Digest のチャレンジ
+## HTTP Digest のチャレンジをコードで見る
 
 [internal/xcap/digest.go](../../../internal/xcap/digest.go)
 
@@ -283,7 +283,7 @@ docker compose run --rm ue call tel:+12025550102
 
 ---
 
-## OIR。発信者が識別子を隠す
+## OIR（発信者が識別子を隠す）
 
 `ue xcap oir restricted` で、UE 1 の既定を非通知にしてから発信します。
 
@@ -302,7 +302,7 @@ docker compose run --rm ue call tel:+12025550102
 
 ---
 
-## CFU。すべての着信を転送する
+## CFU（すべての着信を転送する）
 
 | 見るもの | 見どころ |
 | --- | --- |
@@ -322,7 +322,7 @@ docker compose run --rm ue call tel:+12025550102
 
 ---
 
-## CFB と CFNR。話し中と無応答
+## CFB と CFNR（話し中と無応答）
 
 | 場合 | 見どころ |
 | --- | --- |
@@ -341,7 +341,7 @@ docker compose run --rm ue call tel:+12025550102
 
 ---
 
-## CFNL。着信者が登録していない
+## CFNL（着信者が登録していないとき）
 
 | 順 | 見るもの | 見どころ |
 | --- | --- | --- |
@@ -359,7 +359,7 @@ docker compose run --rm ue call tel:+12025550102
 
 ---
 
-## 規制
+## 発着信の規制
 
 | サービス | 設定 | 見どころ |
 | --- | --- | --- |

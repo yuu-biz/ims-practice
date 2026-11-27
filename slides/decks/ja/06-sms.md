@@ -1477,7 +1477,7 @@ S-CSCF は SMS を知りません。どの要求をどの AS へ送るかは、H
 
 ---
 
-## 利用者に宛てたショートメッセージ。否定の条件
+## 利用者宛てを否定の条件で見分ける
 
 `deploy/compose/hss.yaml` の優先度 2 の条件には、4 つの組があります。
 
@@ -1535,7 +1535,7 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70)
 
 ---
 
-## 全体の形。MESSAGE は 6 通
+## 全体の流れ（MESSAGE は 6 通）
 
 | 順 | 向き | ボディ | 手順 |
 | --- | --- | --- | --- |
@@ -1552,7 +1552,7 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70)
 
 ---
 
-## R1 から R5。IP-SM-GW が利用者の登録を知る
+## IP-SM-GW が利用者の登録を知る（R1〜R5）
 
 ```ims-scene
 id: register
@@ -1633,7 +1633,7 @@ steps:
 
 ---
 
-## 1 から 4。UE 1 がショートメッセージを送る
+## UE 1 がショートメッセージを送る（1〜4）
 
 ```ims-scene
 id: submit
@@ -1687,7 +1687,7 @@ steps:
 
 ---
 
-## 5。SC が受け付ける（OFR、SRR、OFA）
+## SC が受け付ける（5）
 
 ```ims-scene
 id: sc-accept
@@ -1738,7 +1738,7 @@ steps:
 
 ---
 
-## 6 と 7。submit report が UE 1 へ戻る
+## submit report が UE 1 に戻る（6、7）
 
 ```ims-scene
 id: submit-report
@@ -1790,7 +1790,7 @@ steps:
 
 ---
 
-## 8。SC が配達を始める（SRR と TFR）
+## SC が配達を始める（8）
 
 ```ims-scene
 id: sc-deliver
@@ -1837,7 +1837,7 @@ steps:
 
 ---
 
-## 8 から 10。MESSAGE が UE 2 に届く
+## MESSAGE が UE 2 に届く（8〜10）
 
 ```ims-scene
 id: mt
@@ -1887,7 +1887,7 @@ steps:
 
 ---
 
-## 11 と 12。delivery report
+## delivery report（11、12）
 
 ```ims-scene
 id: delivery-report
@@ -1943,7 +1943,7 @@ steps:
 
 ---
 
-## 13 から 15。status report
+## status report（13〜15）
 
 ```ims-scene
 id: status-report
@@ -2015,7 +2015,7 @@ steps:
 
 ---
 
-## A1 から A4。UE 2 がショートメッセージを受け取らず、SC が預かる
+## UE 2 が受け取れず、SC が預かる（A1〜A4）
 
 ```ims-scene
 id: absent
@@ -2085,7 +2085,7 @@ SC <-> HSS: RDR, RDA // A4
 
 ---
 
-## A5 から A7。UE 2 が戻る。Ready-For-SM と知らせ
+## UE 2 が戻ったことを SC に知らせる（A5〜A7）
 
 ```ims-scene
 id: alert
@@ -2147,7 +2147,7 @@ IP-SM-GW --> SC: TFA 2001 // A9
 
 ---
 
-## A8 と A9。SC が送り直す
+## SC が送り直す（A8、A9）
 
 ```ims-scene
 id: resend
@@ -2203,7 +2203,7 @@ steps:
 
 ---
 
-## B1 から B4。UE 2 のメモリに空きが無い
+## UE 2 のメモリがいっぱい（B1〜B4）
 
 ```ims-scene
 id: memory
@@ -2258,7 +2258,7 @@ steps:
 
 ---
 
-## B5 から B8。メモリに空きができた知らせ
+## メモリが空いたことを知らせる（B5〜B8）
 
 ```ims-scene
 id: memory-back
@@ -2317,7 +2317,7 @@ steps:
 
 ---
 
-## D1 から D3。再送と、配達の報告
+## 再送と配達の報告（D1〜D3）
 
 ```ims-scene
 id: retry
@@ -2444,7 +2444,7 @@ steps:
 
 ---
 
-## ボディを読む。RP 層
+## ボディを読む（RP 層）
 
 手順 1 の MESSAGE のボディです。
 
@@ -2466,7 +2466,7 @@ steps:
 
 ---
 
-## ボディを読む。TP 層と文字
+## ボディを読む（TP 層と文字）
 
 | オクテット | フィールド | 見どころ |
 | --- | --- | --- |

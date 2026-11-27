@@ -720,7 +720,7 @@ sip || diameter.cmd.code >= 300 || dns.qry.type == 35 || dns.qry.type == 33
 
 ---
 
-## 全体の形
+## 全体の流れ
 
 ```ims-scene
 id: overview
@@ -782,7 +782,7 @@ UE <-- P-CSCF <-- I-CSCF <-- S-CSCF: 200 OK // 10
 
 ---
 
-## 1 と 2。最初の REGISTER と、I-CSCF を探す DNS
+## 最初の REGISTER と DNS（1、2）
 
 ```ims-scene
 id: first-register
@@ -847,7 +847,7 @@ steps:
 
 ---
 
-## 3 と 4。I-CSCF が HSS に尋ねる（UAR と UAA）
+## I-CSCF が UAR で HSS に尋ねる（3、4）
 
 ```ims-scene
 id: select
@@ -906,7 +906,7 @@ steps:
 
 ---
 
-## 5 と 6。S-CSCF が認証を求める（MAR、MAA、401）
+## S-CSCF が認証を求める（5、6）
 
 ```ims-scene
 id: challenge
@@ -961,7 +961,7 @@ steps:
 
 ---
 
-## 7 と 8。2 回目の REGISTER
+## 2 回目の REGISTER（7、8）
 
 ```ims-scene
 id: second-register
@@ -1025,7 +1025,7 @@ steps:
 
 ---
 
-## 9 と 10。SAR、SAA と 200 OK
+## SAR と 200 OK（9、10）
 
 ```ims-scene
 id: accept
@@ -1081,7 +1081,7 @@ steps:
 
 ---
 
-## Path と Service-Route を使う向き
+## Path と Service-Route の使い分け
 
 ```ims-scene
 id: routes
@@ -1120,7 +1120,7 @@ steps:
 
 ---
 
-## 11 と 12。P-CSCF が登録の状態を購読する
+## P-CSCF が登録の状態を購読する（11、12）
 
 ```ims-scene
 id: pcscf-subscribe
@@ -1169,7 +1169,7 @@ steps:
 
 ---
 
-## 13 と 14。UE も購読する
+## UE も登録の状態を購読する（13、14）
 
 ```ims-scene
 id: ue-subscribe
@@ -1205,7 +1205,7 @@ steps:
 
 ---
 
-## 15 から 18。アプリケーションサーバーにも登録する
+## アプリケーションサーバーへの第三者登録（15〜18）
 
 ```ims-scene
 id: third-party
@@ -1313,7 +1313,7 @@ steps:
 
 ---
 
-## 失敗を見る
+## 失敗の例
 
 ```ims-scene
 id: failures

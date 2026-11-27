@@ -1025,7 +1025,7 @@ sip || diameter.cmd.code == 302 || dns.qry.type == 35 || rtp || rtcp
 
 ---
 
-## 全体の形
+## 全体の流れ
 
 ```ims-scene
 id: overview
@@ -1104,7 +1104,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 
 ---
 
-## 1 と 2。INVITE と、発信側の P-CSCF
+## INVITE と発信側の P-CSCF（1、2）
 
 ```ims-scene
 id: orig-pcscf
@@ -1168,7 +1168,7 @@ steps:
 
 ---
 
-## 3。S-CSCF が番号を SIP URI に変える
+## S-CSCF が番号を SIP URI に変える（3）
 
 ```ims-scene
 id: orig-scscf
@@ -1246,7 +1246,7 @@ steps:
 
 ---
 
-## 4 と 5。ホーム網の入口と、LIR
+## I-CSCF と LIR（4、5）
 
 ```ims-scene
 id: entry
@@ -1306,7 +1306,7 @@ steps:
 
 ---
 
-## 6 と 7。着信側の S-CSCF と P-CSCF
+## 着信側の S-CSCF と P-CSCF（6、7）
 
 ```ims-scene
 id: term
@@ -1390,7 +1390,7 @@ steps:
 
 ---
 
-## 8。UE 2 が信頼性のある 183 で答える
+## UE 2 が高信頼の 183 で答える（8）
 
 ```ims-scene
 id: answer
@@ -1459,7 +1459,7 @@ steps:
 
 ---
 
-## 9。UE 1 が 183 を確認する（PRACK）
+## UE 1 が PRACK で 183 を確かめる（9）
 
 ```ims-scene
 id: prack
@@ -1503,7 +1503,7 @@ steps:
 
 ---
 
-## 10 と 11。180、200 OK、ACK
+## 180、200 OK、ACK（10、11）
 
 ```ims-scene
 id: confirm
@@ -1568,7 +1568,7 @@ steps:
 
 ---
 
-## 12。音声が中継ノードを通る
+## 音声が中継ノードを通る（12）
 
 ```ims-scene
 id: media
@@ -1635,7 +1635,7 @@ UE 1 -> relay access (context 1) -> relay core (context 1)
 
 ---
 
-## 12。2 つのコンテキストとラッチング
+## 2 つのコンテキストとラッチング（12）
 
 - 1 つの通話に、中継ノードのコンテキストが 2 つあります。発信側を通る P-CSCF が 1 つ、着信側を通る P-CSCF がもう 1 つを作ります。P-CSCF はどちらの回も、自分の側だけを扱います。
 - だから RTP は、2 つの網の IMS-AGW を通るのと同じように、中継ノードを 2 回通ります。キャプチャでも 2 つの側を見分けられます。2 台の UE が別々の P-CSCF の後ろにいても、通話は同じに見えます。
@@ -1644,7 +1644,7 @@ UE 1 -> relay access (context 1) -> relay core (context 1)
 
 ---
 
-## 13。切断
+## 通話を切る（13）
 
 ```ims-scene
 id: bye
@@ -1716,19 +1716,19 @@ steps:
 
 ---
 
-## 失敗を見る
+## 失敗の例
 
 ```ims-scene
 id: failures
 lead: 応答を作ったノードは、その応答を運ぶ最初のパケットの送信元で分かります。
 steps:
   - id: busy
-    title: 話中。UE 2 が 486 で断る
+    title: 話し中なら UE 2 が 486 で断る
     checkpoint: true
     only: [r486-ue2-p]
     text: UE 2 を `-reject 486` 付きで起動すると、通話は 486 Busy Here で終わります。
   - id: unregistered
-    title: 未登録。LIA が 2003 で答える
+    title: 未登録なら LIA が 2003 で答える
     checkpoint: true
     only: [lir-u, lia-u]
     active: lia-u
@@ -1783,14 +1783,14 @@ steps:
 
 ---
 
-## 失敗を見る（存在しない番号）
+## 失敗の例（存在しない番号）
 
 ```ims-scene
 id: unknown-number
 lead: 番号の ENUM のレコードが無ければ、S-CSCF が 404 で答えます。
 steps:
   - id: unknown
-    title: 存在しない番号。ENUM にレコードが無い
+    title: 存在しない番号には ENUM のレコードが無い
     checkpoint: true
     only: [enum-q-x, enum-a-x]
     active: enum-a-x
