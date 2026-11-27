@@ -50,6 +50,35 @@ func (c Codec) Param(name string) (string, bool) {
 	return "", false
 }
 
+// HasEvent tells that the telephone-event c lists event among the events
+// it supports. The a=fmtp value is a comma-separated list of single event
+// numbers and ranges such as "0-15,66,70", and the union of them is the
+// set supported. With no list, events 0-15 are assumed (RFC 4733 7.1.1).
+// A sender restricts itself to the events the receiver listed (RFC 4733
+// 2.5.1.1). An element that is no number or range lists no event.
+func (c Codec) HasEvent(event int) bool {
+	if strings.TrimSpace(c.Fmtp) == "" {
+		return event >= 0 && event <= 15
+	}
+	for _, e := range strings.Split(c.Fmtp, ",") {
+		first, last, isRange := strings.Cut(strings.TrimSpace(e), "-")
+		lo, err := strconv.Atoi(first)
+		if err != nil {
+			continue
+		}
+		hi := lo
+		if isRange {
+			if hi, err = strconv.Atoi(last); err != nil {
+				continue
+			}
+		}
+		if lo <= event && event <= hi {
+			return true
+		}
+	}
+	return false
+}
+
 // Is tells that c has this encoding name; names are case-insensitive
 // (RFC 4855 3), so a peer may write "pcmu" for PCMU.
 func (c Codec) Is(name string) bool { return strings.EqualFold(c.Name, name) }

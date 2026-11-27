@@ -396,18 +396,32 @@ func (m *Media) Stop() {
 // with: IR.92 3.3 forbids it then.
 var ErrNoTelephoneEvent = errors.New("the call has not negotiated telephone-event, so it cannot send DTMF")
 
+// ErrEventNotAgreed means the peer's telephone-event does not list an
+// event that the digits need. A sender sends only the events the receiver
+// listed (RFC 4733 2.5.1.1).
+var ErrEventNotAgreed = errors.New("the peer's telephone-event does not list that DTMF event")
+
 // SendDTMF queues digits to go out as telephone events (RFC 4733, TS
-// 26.114 Annex G). The speech pauses while they go.
+// 26.114 Annex G). The speech pauses while they go. No digit is queued
+// unless the peer listed the event of every one.
 func (m *Media) SendDTMF(digits string) error {
+	events := make([]uint8, 0, len(digits))
 	for _, d := range digits {
-		if _, ok := rtp.DTMFEvent(d); !ok {
+		event, ok := rtp.DTMFEvent(d)
+		if !ok {
 			return fmt.Errorf("%q is no DTMF digit", d)
 		}
+		events = append(events, event)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.stream == nil || m.stream.Events == nil {
 		return ErrNoTelephoneEvent
+	}
+	for i, d := range []rune(digits) {
+		if !m.stream.Events.HasEvent(int(events[i])) {
+			return fmt.Errorf("%w: %q is event %d", ErrEventNotAgreed, d, events[i])
+		}
 	}
 	m.dtmf = append(m.dtmf, []rune(digits)...)
 	return nil

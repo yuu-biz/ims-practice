@@ -126,3 +126,32 @@ func TestAMRFormat(t *testing.T) {
 		t.Error("mode-set=8 accepted for AMR; 8 is the SID, not a mode (RFC 4867 8.1)")
 	}
 }
+
+// TestHasEvent is the events list of RFC 4733 7.1.1: single numbers and
+// ranges in any order, and 0-15 when it is left out.
+func TestHasEvent(t *testing.T) {
+	for _, tc := range []struct {
+		fmtp string
+		in   []int
+		out  []int
+	}{
+		{"", []int{0, 11, 15}, []int{-1, 16, 66}},
+		{"0-9", []int{0, 5, 9}, []int{10, 11, 15}},
+		{"0-15,66,70", []int{0, 15, 66, 70}, []int{16, 65, 67, 71}},
+		{"70,32-49,66", []int{32, 49, 66, 70}, []int{31, 50, 69}},
+		{"5-5", []int{5}, []int{4, 6}},
+		{"x,3,9-y,7", []int{3, 7}, []int{9, 0}},
+	} {
+		c := Codec{Name: NameTelephoneEvent, Fmtp: tc.fmtp}
+		for _, e := range tc.in {
+			if !c.HasEvent(e) {
+				t.Errorf("fmtp %q: event %d not listed, want listed", tc.fmtp, e)
+			}
+		}
+		for _, e := range tc.out {
+			if c.HasEvent(e) {
+				t.Errorf("fmtp %q: event %d listed, want not", tc.fmtp, e)
+			}
+		}
+	}
+}

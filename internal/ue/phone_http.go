@@ -342,7 +342,7 @@ func (p *Phone) respond(w http.ResponseWriter, err error) {
 	case err == nil:
 		writeJSON(w, http.StatusOK, p.Status())
 	case errors.Is(err, ErrBusy), errors.Is(err, ErrNotRegistered), errors.Is(err, ErrNoCall), errors.Is(err, ErrNotRinging),
-		errors.Is(err, ErrNotAnswered), errors.Is(err, ErrNoTelephoneEvent), errors.Is(err, ErrNotHeld), errors.Is(err, ErrNoTwoCalls):
+		errors.Is(err, ErrNotAnswered), errors.Is(err, ErrNoTelephoneEvent), errors.Is(err, ErrEventNotAgreed), errors.Is(err, ErrNotHeld), errors.Is(err, ErrNoTwoCalls):
 		writeError(w, http.StatusConflict, err)
 	case errors.Is(err, ErrStopping):
 		writeError(w, http.StatusServiceUnavailable, err)
