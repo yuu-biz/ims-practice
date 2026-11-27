@@ -348,43 +348,6 @@ func TestRefusedRetransmissionOfThe200KeepsTheCall(t *testing.T) {
 	c.relay.waitHeld(t, 1, 0)
 }
 
-// TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased: the caller
-// has the 200 of one dialog, and a 200 of another dialog of the forked
-// INVITE comes, with another To tag. It is no retransmission of the
-// first. The relay does not take its answer, so it goes no further, as
-// its SDP would lead the caller past the relay. TS 24.229 names no
-// procedure for it; the P-CSCF acknowledges it in the caller's name and
-// ends that dialog with a BYE, as for a 2xx that crossed the CANCEL. The
-// call of the first 200 stays.
-func TestRefusedAnswerOfAnotherForkIsAcknowledgedAndReleased(t *testing.T) {
-	c := newRawINVITE(t)
-	c.st.Respond(c.response(200))
-	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
-		t.Fatalf("the caller got %d, want the 200", r.StatusCode)
-	}
-
-	c.relay.refuseModify(agw.Core)
-	other := c.response(200)
-	other.Set("To", c.st.Request.Get("To")+";tag=fork")
-	c.st.Respond(other)
-	got := map[sip.Method]*sip.Message{}
-	for range 2 {
-		m := nextRequest(t, "the callee", c.farGot)
-		got[m.Method] = m
-	}
-	for _, method := range []sip.Method{sip.ACK, sip.BYE} {
-		if m := got[method]; m == nil || tagOf(m.Get("To")) != "fork" {
-			t.Errorf("the callee got %v, want the %s of the P-CSCF in the dialog of the second 200", m, method)
-		}
-	}
-	select {
-	case r := <-c.ct.Responses():
-		t.Errorf("the caller got %d %s, want nothing of the second dialog", r.StatusCode, r.Get("To"))
-	case <-time.After(watch):
-	}
-	c.relay.waitHeld(t, 1, 0)
-}
-
 // TestRefusedAnswerOfAReINVITEThatFailsIsReleasedAtOnce: the far end
 // answers a re-INVITE first with a 183 whose answer the relay does not
 // take, and then with 486. The release would wait for the ACK of a 2xx
