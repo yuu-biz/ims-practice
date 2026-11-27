@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"strings"
 
 	"github.com/yuu-biz/ims-practice/slides/internal/deck"
 )
@@ -34,6 +35,9 @@ const (
 // scenePages lays out the pages of a slide with a scene.
 func scenePages(d *deck.Deck, s deck.Slide) ([]Page, error) {
 	diagram := Draw(d.Model, s.Scene)
+	if len(diagram.Problems) > 0 {
+		return nil, &OverflowError{Path: d.Path, Slide: s.Number, Title: deck.PlainText(s.Title), Reason: "scene " + s.Scene.ID + ": " + strings.Join(diagram.Problems, "; ")}
+	}
 	var pages []Page
 	from := 0
 	for k, step := range s.Scene.Steps {
@@ -341,11 +345,11 @@ func drawDiagram(diagram *Diagram, scene *deck.Scene, step deck.Step, camera Box
 		}
 		active := e.ID == step.Active
 		color := FamilyColors[e.Family]
-		if !active {
-			color = tint(color, 0.45)
-		}
 		labelColor := ColorInk
-		if !active {
+		// A message that a later step has passed is drawn lighter; a
+		// relation lasts and keeps its colour.
+		if !active && e.Kind != deck.EventRelation {
+			color = tint(color, 0.45)
 			labelColor = ColorMuted
 		}
 		if e.Kind == deck.EventProcess {

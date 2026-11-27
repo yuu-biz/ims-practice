@@ -134,7 +134,7 @@ The units differ between the outputs, and the same number is not the same length
 | --- | --- | --- |
 | A page of the layout, and the pptx | point; 1 point is 12700 EMU | 960 by 540 points, 13⅓ by 7½ inches |
 | The stage of the HTML | CSS pixel | 1280 by 720, scaled to the window. A page of text is drawn at 4/3 of its points, so that it fills the stage. |
-| A diagram | its own unit | A grid of 280 by 160 per node on a map, a column of 168 and a row of 42 on a ladder. Each output scales the diagram to its room. |
+| A diagram | its own unit | A grid of 300 by 160 per node on a map, a column of 168 and a row of 42 on a ladder. Each output scales the diagram to its room. |
 | The reading view and the printout | CSS pixel | The width of the window, or of the paper |
 
 ## Check
@@ -149,6 +149,8 @@ The units differ between the outputs, and the same number is not the same length
 - a mistake in a scene, with its line: an unknown key, an id that is taken, an event that a step shows twice or hides without showing, a node that the scene does not draw, and a checkpoint whose diagram and text do not fit on a page;
 - a command of a deck that the repository does not take. The check reads the `sh` blocks and the inline code: for `docker compose`, the services and the profiles of `compose.yaml` (or of the files that `-f` names); for `ue`, also inside `docker compose run`, the subcommands that `ue register -h` lists and, for each subcommand, the flags that `ue SUBCOMMAND -h` prints; for `curl` to the Lab, the method and the path against the routes that `internal/lab` registers, read from its source; and every path under `scripts/`. A `curl` to another address fails until the address and its package are added to `httpHosts` in [internal/facts/routes.go](internal/facts/routes.go).
 - a node of a deck that the Compose files no longer run at that address. The check reads every table of a deck and, in each cell, every address of a Compose network and every subnet; a cell may write a list of addresses with the last number only, so `172.28.0.100, 101, 103` is three of them. Each has to be the address of a service, or the subnet of a network, of `compose.yaml` or of `deploy/interconnect/compose.yaml`, which adds the second network and the link between the two. Where the first two columns of a table are the nodes and their addresses, a service that the node column names in code (`` `mrfp` ``) also has to be the service of the addresses of its row. Four numbers outside the range of every Compose network are the clause of a specification, not an address. Only the tables are read: a diagram or a sentence may name an address on purpose that no node has, such as the host of no peer network whose requests a border drops.
+
+A node whose name or role is wider than its box, and a label of a message that still covers a node or another label after the generator has looked for a free place, fail the check of the deck as well.
 
 The text of a scene goes through the same checks as the text of a slide: the lead, the title and the text of each step, and the names and values of the fields of the events it draws. A link in a step, or an address or a command in a field, fails as it would in a paragraph or a table.
 

@@ -148,6 +148,8 @@ code, .mono, kbd { font-family: $MONO; }
 .event { transition: opacity .35s ease; }
 .event[data-state=off] { opacity: 0; visibility: hidden; }
 .event[data-state=done] { opacity: .55; }
+/* A relation lasts; it is not a message that a later step has passed. */
+.event.relation[data-state=done] { opacity: .9; }
 .event line { stroke-width: 2.2; }
 .event[data-state=active] line { stroke-width: 3.6; }
 .event.diameter line { stroke-dasharray: 9 5; }

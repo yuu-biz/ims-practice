@@ -26,6 +26,9 @@ type Diagram struct {
 	Events  []EventShape
 	Lines   []LifelineShape
 	Cameras []Box
+	// Problems are the texts that do not fit in their shapes, such as
+	// a role wider than the box of its node.
+	Problems []string
 }
 
 // Box is a rectangle of a diagram.
@@ -100,9 +103,9 @@ type EventShape struct {
 // grid; a ladder has a column for each node and a row for each event.
 const (
 	diagramMargin = 36.0
-	mapCellW      = 280.0
+	mapCellW      = 300.0
 	mapCellH      = 160.0
-	mapNodeW      = 150.0
+	mapNodeW      = 168.0
 	mapNodeH      = 64.0
 	mapLane       = 8.0
 	mapLaneStep   = 14.0
@@ -246,6 +249,12 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 		boxes[id] = b
 		d.Nodes = append(d.Nodes, NodeShape{ID: id, Box: b, Label: n.Label, Role: n.Role})
 		d.Bounds = d.Bounds.union(b)
+		if w := textWidth(n.Label, DiagramNodeSize, false, true); w > mapNodeW-8 {
+			d.Problems = append(d.Problems, fmt.Sprintf("the name of node %s is wider than its box", id))
+		}
+		if w := textWidth(deck.PlainText(n.Role), DiagramRoleSize, false, false); w > mapNodeW-8 {
+			d.Problems = append(d.Problems, fmt.Sprintf("the role of node %s is wider than its box; say it in fewer words", id))
+		}
 	}
 	for _, g := range m.Groups {
 		var frame Box
@@ -368,8 +377,8 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 		best, bestCover := [3]float64{0.5, 0, side}, math.Inf(1)
 	search:
 		for _, toward := range []float64{side, -side} {
-			for _, extra := range []float64{0, 14, 28, 42} {
-				for _, t := range []float64{0.5, 0.4, 0.6, 0.32, 0.68, 0.25, 0.75} {
+			for _, extra := range []float64{0, 14, 28, 42, 56, 70} {
+				for _, t := range []float64{0.5, 0.42, 0.58, 0.35, 0.65, 0.28, 0.72, 0.22, 0.78} {
 					place(t, extra, toward)
 					if c := cover(shape.LabelBox()); c < bestCover {
 						best, bestCover = [3]float64{t, extra, toward}, c
@@ -386,11 +395,36 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 		d.Bounds = d.Bounds.union(Box{min(x1, x2), min(y1, y2), math.Abs(x2 - x1), math.Abs(y2 - y1)})
 		d.Bounds = d.Bounds.union(shape.LabelBox())
 	}
+	// A label that still covers a node or another label is a problem
+	// of the scene: its nodes need other places on the grid, or the
+	// scene fewer events.
+	for i, e := range d.Events {
+		for _, n := range d.Nodes {
+			if e.Kind != deck.EventProcess && e.LabelBox().overlaps(n.Box) {
+				d.Problems = append(d.Problems, fmt.Sprintf("the label of %s covers node %s", e.ID, n.ID))
+			}
+		}
+		for _, o := range d.Events[:i] {
+			if e.LabelBox().overlaps(o.LabelBox()) && drawnTogether(s, e.ID, o.ID) {
+				d.Problems = append(d.Problems, fmt.Sprintf("the labels of %s and %s overlap", o.ID, e.ID))
+			}
+		}
+	}
 	d.Bounds = d.Bounds.grow(diagramMargin/2, diagramMargin/2)
 	for _, step := range s.Steps {
 		d.Cameras = append(d.Cameras, d.camera(step, boxes))
 	}
 	return d
+}
+
+// drawnTogether reports whether a step of the scene draws both events.
+func drawnTogether(s *deck.Scene, a, b string) bool {
+	for _, st := range s.Steps {
+		if slices.Contains(st.Events, a) && slices.Contains(st.Events, b) {
+			return true
+		}
+	}
+	return false
 }
 
 // labelReach is how far the center of a label of width w and height h
@@ -475,6 +509,9 @@ func drawLadder(m *deck.Model, s *deck.Scene) *Diagram {
 		x := diagramMargin + (float64(i)+0.5)*ladderColW
 		xs[id] = x
 		head := Box{x - ladderHeadW/2, ladderTop, ladderHeadW, ladderHeadH}
+		if w := textWidth(n.Label, DiagramNodeSize*0.85, false, true); w > ladderHeadW-10 {
+			d.Problems = append(d.Problems, fmt.Sprintf("the name of node %s is wider than its head on the ladder", id))
+		}
 		d.Lines = append(d.Lines, LifelineShape{ID: id, Head: head, Label: n.Label, X: x, Y1: ladderTop + ladderHeadH})
 		d.Bounds = d.Bounds.union(head)
 	}
