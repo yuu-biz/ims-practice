@@ -390,3 +390,76 @@ func TestFailedReINVITEDropsTheOfferOfItsReliable183(t *testing.T) {
 		t.Errorf("Update after the failed re-INVITE: %v", err)
 	}
 }
+
+// updatedReInvite is a re-INVITE of the UA whose offer a reliable 183
+// has answered, after which the peer has sent an UPDATE with an offer of
+// its own (RFC 3311 5.1). The user of the call holds that UPDATE and has
+// not answered it yet.
+type updatedReInvite struct {
+	ua       *UA
+	out      *OutgoingCall
+	p        *rawCallee
+	done     <-chan reInviteDone
+	reinvite *Message
+	update   *InDialogRequest
+}
+
+func reInviteThenUPDATE(t *testing.T) *updatedReInvite {
+	t.Helper()
+	updates := make(chan *InDialogRequest, 1)
+	ua := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, ua, Invitation{OnRequest: func(r *InDialogRequest) { updates <- r }})
+	u := &updatedReInvite{ua: ua, out: out, p: p, done: reInvite(out, holdOffer)}
+	u.reinvite = readDatagram(t, p.peer)
+	progress := reliable(u.reinvite, 183, 1, p.target)
+	holdAnswer.addTo(progress)
+	send(t, p.peer, progress, ua.Stack())
+	p.respond(readPRACK(t, p, "1 2 INVITE", "3 PRACK"), 200, Body{})
+	p.request(UPDATE, offer2, HeaderField{Name: "Contact", Value: "<" + p.target + ">"})
+	select {
+	case u.update = <-updates:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the user of the call got no UPDATE within 2s")
+	}
+	return u
+}
+
+// acceptUPDATE answers the UPDATE of the peer, and reads its 200 at the
+// peer.
+func (u *updatedReInvite) acceptUPDATE(t *testing.T) {
+	t.Helper()
+	if _, err := u.update.Accept(answer2); err != nil {
+		t.Fatalf("Accept of the UPDATE: %v", err)
+	}
+	for {
+		if m := readDatagram(t, u.p.peer); m.StatusCode == 200 && m.Get("CSeq") == u.update.Request.Get("CSeq") {
+			return
+		}
+	}
+}
+
+// RFC 6141 3.3: the offer and answer of a reliable 183 stay done when
+// the re-INVITE then fails, and so does what came after them. The offer
+// of the peer's UPDATE still waits for its answer, so the UA may not
+// offer (RFC 3311 5.1), and the user answers it as before.
+func TestFailedReINVITEKeepsTheOfferOfAnUPDATEAfterItsReliable183(t *testing.T) {
+	u := reInviteThenUPDATE(t)
+	u.p.respond(u.reinvite, 500, Body{})
+	if r := finalOf(t, u.done); r.resp == nil || r.resp.StatusCode != 500 {
+		t.Fatalf("ReInvite returned %v, %v; want the 500", r.resp, r.err)
+	}
+	offered := make(chan error, 1)
+	go func() {
+		_, err := u.out.Update(offer2)
+		offered <- err
+	}()
+	select {
+	case err := <-offered:
+		if !errors.Is(err, ErrOfferUnanswered) {
+			t.Errorf("Update while the offer of the peer's UPDATE is open: %v, want ErrOfferUnanswered", err)
+		}
+	case <-time.After(time.Second):
+		t.Error("an offer of the UA went out while the offer of the peer's UPDATE was open")
+	}
+	u.acceptUPDATE(t)
+}
