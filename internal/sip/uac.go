@@ -417,6 +417,10 @@ func (c *OutgoingCall) addDialog(dialog Dialog, event string) *CallDialog {
 	d := &CallDialog{c: &c.call, invite: inviteSent}
 	c.dialogs = append(c.dialogs, d)
 	d.start(dialog, event)
+	// The INVITE keeps its RSeq numbers after its final response, so
+	// that a reliable provisional response that comes later still gets
+	// its PRACK (RFC 3262 4).
+	d.expectReliable(dialog.LocalSeq)
 	if len(c.Request.Body) > 0 {
 		// The offer of the INVITE is an offer to every UAS that the
 		// INVITE reaches.
@@ -426,34 +430,63 @@ func (c *OutgoingCall) addDialog(dialog Dialog, event string) *CallDialog {
 	return d
 }
 
+// reliableSeq is RFC 3262 4 for the reliable provisional responses to
+// one INVITE of this UA within one dialog: last is the RSeq of the last
+// one taken in order, 0 before the first, and pracked that of the last
+// one that got its PRACK.
+type reliableSeq struct {
+	last, pracked uint32
+}
+
+// expectReliable starts the RSeq numbers of the INVITE of d with the
+// CSeq number seq. c.mu is held.
+func (d *CallDialog) expectReliable(seq uint32) {
+	if d.reliable == nil {
+		d.reliable = map[uint32]*reliableSeq{}
+	}
+	d.reliable[seq] = &reliableSeq{}
+}
+
+// reliableTo is the RSeq state of the INVITE that resp answers, nil for
+// an INVITE whose reliable provisional responses d does not take. c.mu
+// is held.
+func (d *CallDialog) reliableTo(resp *Message) *reliableSeq {
+	cseq, _ := ParseCSeq(resp.Get("CSeq"))
+	return d.reliable[cseq.Number]
+}
+
 // reliableInOrder is RFC 3262 4 for a reliable provisional response:
 // the one that follows the last in order is taken; a retransmission,
 // or one that comes out of order, is discarded. It reports whether resp
 // is new and in order. c.mu is held.
 func (d *CallDialog) reliableInOrder(resp *Message) bool {
 	c := d.c
+	seq := d.reliableTo(resp)
 	rseq, err := ParseRSeq(resp.Get("RSeq"))
-	if err != nil {
+	switch {
+	case seq == nil:
+		return false
+	case err != nil:
 		c.ua.log.Warn("discarded reliable provisional response", "status", resp.StatusCode, "error", err.Error())
 		return false
 	}
-	if d.lastRSeq != 0 && rseq != d.lastRSeq+1 {
-		if rseq != d.lastRSeq {
+	if seq.last != 0 && rseq != seq.last+1 {
+		if rseq != seq.last {
 			c.ua.log.Warn("discarded reliable provisional response out of order", "status", resp.StatusCode,
-				"rseq", rseq, "last_rseq", d.lastRSeq)
+				"rseq", rseq, "last_rseq", seq.last)
 		}
 		return false
 	}
-	d.lastRSeq = rseq
+	seq.last = rseq
 	return true
 }
 
-// newPRACK builds the PRACK for resp within its early dialog (RFC 3262
-// 4, 7.2). c.mu is held.
+// newPRACK builds the PRACK for resp within its dialog (RFC 3262 4,
+// 7.2). c.mu is held.
 func (d *CallDialog) newPRACK(resp *Message, body Body, headers []HeaderField) *Message {
 	rseq, _ := ParseRSeq(resp.Get("RSeq"))
 	cseq, _ := ParseCSeq(resp.Get("CSeq"))
-	d.prackedRSeq = rseq
+	d.reliableTo(resp).pracked = rseq
 	prack := d.newRequest(PRACK, body, headers)
 	prack.Add("RAck", RAck{RSeq: rseq, CSeq: cseq}.String())
 	return prack
@@ -506,11 +539,15 @@ func (d *CallDialog) autoPRACK(resp *Message) {
 func (c *OutgoingCall) PRACK(resp *Message, body Body, headers ...HeaderField) (*Message, error) {
 	c.mu.Lock()
 	d := c.dialogWith(tagOf(resp.Get("To")))
+	var seq *reliableSeq
+	if d != nil {
+		seq = d.reliableTo(resp)
+	}
 	rseq, err := ParseRSeq(resp.Get("RSeq"))
 	switch {
-	case d == nil || err != nil || !resp.Requires(Option100rel):
+	case seq == nil || err != nil || !resp.Requires(Option100rel):
 		err = errors.New("sip: not a reliable provisional response of this call")
-	case rseq != d.lastRSeq || rseq == d.prackedRSeq:
+	case rseq != seq.last || rseq == seq.pracked:
 		err = errors.New("sip: the response is not the one that waits for its PRACK")
 	default:
 		err = d.usable()
