@@ -204,6 +204,7 @@ func (c *Call) sentToCaller(body sip.Body) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.early.origin = session.Origin
+	c.early.sent = body
 }
 
 // callerOrigin is the o= line of the last session description that went

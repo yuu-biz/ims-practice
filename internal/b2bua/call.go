@@ -264,6 +264,9 @@ func (c *Call) Answer(out *sip.OutgoingCall, resp *sip.Message) {
 		c.log.Info("call released before the caller had the answer")
 		return
 	}
+	if body, ok := c.answerCallerHas(m, session); ok {
+		m.Body = body
+	}
 	c.setContact(resp)
 	c.sentToCaller(m.Body)
 	ack, err := c.in.Accept(m.Body, m.Headers...)

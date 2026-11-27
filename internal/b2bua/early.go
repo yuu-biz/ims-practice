@@ -33,6 +33,10 @@ type earlyDialogs struct {
 	// the caller, in whose session an offer of the Call's own goes
 	// (sentToCaller).
 	origin sdp.Origin
+	// sent is that session description itself, as the role prepared it
+	// for the caller, which a 2xx that has to carry the answer carries
+	// again (answerCallerHas).
+	sent sip.Body
 }
 
 // toCaller is resp, a response of a dialog of out, as the caller may
@@ -174,6 +178,28 @@ func (c *Call) answerFrom(resp *sip.Message) (toCaller, session *sip.Message) {
 	c.log.Info("answered in another early dialog than the one whose session description the caller has",
 		"to_tag", tag, "caller_has", from)
 	return withoutBody(resp), kept
+}
+
+// answerCallerHas is the session description that m, the 2xx as the
+// role prepared it, carries to the caller when it has none: the caller
+// got that of another early dialog (session, answerFrom), and no
+// reliable response brought it. The answer to the offer of the INVITE
+// then has to be in the 2xx, the same as the one in the earlier
+// responses, since the caller takes the first that it gets as the
+// answer (RFC 3261 13.2.1). The session of the dialog that answered
+// goes to the caller in an offer of the Call's own after the 2xx
+// (moveSession). After an INVITE without an offer, the 2xx of that
+// dialog carries the offer of its UAS, which goes on as it is.
+func (c *Call) answerCallerHas(m Message, session *sip.Message) (sip.Body, bool) {
+	if session == nil || len(m.Body.Content) > 0 || len(c.in.Request.Body) == 0 {
+		return sip.Body{}, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sessionToCaller || len(c.early.sent.Content) == 0 {
+		return sip.Body{}, false
+	}
+	return c.early.sent, true
 }
 
 // toTag is the To tag of m.
