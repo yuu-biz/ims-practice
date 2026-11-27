@@ -228,6 +228,10 @@ type CallDialog struct {
 	// ACK, by CSeq number. A second re-INVITE may come before the ACK of
 	// the first (RFC 3261 14.2), so there may be more than one.
 	unacked map[uint32]*InDialogRequest
+	// peerInvite is the UAS side of the last INVITE of the peer in the
+	// dialog, whose reliable provisional responses the PRACKs of the peer
+	// acknowledge (RFC 3262 3); nil while there is none.
+	peerInvite *provisionals
 	// pending are the requests of the peer within the dialog that wait
 	// for their final response, in the order they arrived. A BYE in the
 	// dialog answers every one of them (endPending).
@@ -582,7 +586,7 @@ func (d *CallDialog) receiveRequest(st *ServerTransaction) {
 		c.mu.Unlock()
 		d.endPending(pending)
 	case PRACK:
-		d.in.receivePRACK(st)
+		d.receivePRACK(st)
 	case OPTIONS:
 		// RFC 3261 11.2 and 12.2.2: an OPTIONS within a dialog is
 		// answered like one outside, and changes nothing in the dialog.
