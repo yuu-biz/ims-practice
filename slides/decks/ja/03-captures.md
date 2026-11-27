@@ -2,6 +2,87 @@
 title: キャプチャの読み方とラボ
 footer: ims-practice 勉強会 3. キャプチャとラボ
 lang: ja
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: ue, label: UE, role: 端末, at: [0, 1]}
+  - {id: pcscf, label: P-CSCF, role: 最初の中継点, at: [1, 1]}
+  - {id: icscf, label: I-CSCF, role: 網の入口, at: [1, 0]}
+  - {id: scscf, label: S-CSCF, role: 登録とサービス, at: [2, 1]}
+  - {id: hss, label: HSS, role: 加入者のデータ, at: [2, 0]}
+  - {id: bridge, label: ims0, role: Docker のブリッジ, at: [1, 2]}
+  - {id: capture, label: capture, role: tcpdump, at: [0, 2]}
+  - {id: pcap, label: pcap, role: captures/ のファイル, at: [0, 3]}
+  - {id: lab, label: Lab, role: ラボ。HEP を受ける, at: [2, 2]}
+  - {id: ue-a, label: UE 1, role: 発信側, at: [0, 3]}
+  - {id: as-o, label: MMTel AS, role: 発信側の AS, at: [1, 3]}
+  - {id: as-t, label: MMTel AS, role: 着信側の AS, at: [2, 3]}
+  - {id: ue-b, label: UE 2, role: 着信側, at: [3, 3]}
+events:
+  # ネットワークは 1 つ、ファイルも 1 つ
+  - {id: ue-on, rel: つながる, from: ue, to: bridge}
+  - {id: pcscf-on, rel: つながる, from: pcscf, to: bridge}
+  - {id: scscf-on, rel: つながる, from: scscf, to: bridge}
+  - {id: hss-on, rel: つながる, from: hss, to: bridge}
+  - {id: listens, rel: 聞く, from: capture, to: bridge}
+  - {id: writes, rel: 書く, from: capture, to: pcap}
+  # HEP のコピー
+  - id: invite
+    msg: INVITE
+    from: pcscf
+    to: scscf
+    proto: SIP
+  - id: copy-sent
+    msg: HEP
+    from: pcscf
+    to: lab
+    proto: UDP 9060
+    note: (送った側のコピー)
+  - id: copy-received
+    msg: HEP
+    from: scscf
+    to: lab
+    proto: UDP 9060
+    note: (受け取った側のコピー)
+  - id: join
+    do: 1 本の矢印にまとめる
+    at: lab
+    fields:
+      - まとめる条件: 送信元、宛先、中身が同じ
+      - 別の矢印になるもの: まったく同じ中身の再送
+  # ラボが推定するもの
+  - id: register
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+  - id: mar
+    msg: MAR
+    from: scscf
+    to: hss
+    proto: Cx
+    fields:
+      - Session-Id: SIP の Call-ID とは無関係
+  - id: link
+    do: Cx を SIP に結び付ける
+    at: lab
+    fields:
+      - Cx: 同じノードが 2 秒以内に最後に受け取った、同じ利用者を指す SIP のリクエスト
+      - Rx: P-CSCF がそのアドレスから最後に受け取った SDP 付きのメッセージか REGISTER
+  # 1 つの通話と、複数のダイアログ
+  - {id: dialog-1, rel: ダイアログ 1, from: ue-a, to: as-o, proto: SIP}
+  - {id: dialog-2, rel: ダイアログ 2, from: as-o, to: as-t, proto: SIP}
+  - {id: dialog-3, rel: ダイアログ 3, from: as-t, to: ue-b, proto: SIP}
+  - id: one-call
+    do: icid-value で 1 つの通話にする
+    at: lab
+    fields:
+      - icid-value: 3 つのダイアログで同じ
+      - Dialogs: 3
+```
+
 ---
 
 # キャプチャの読み方とラボ
@@ -28,6 +109,29 @@ ims-practice 勉強会 第 3 回（キャプチャはどこから来るか、ど
 ---
 
 ## ネットワークは 1 つ、ファイルも 1 つ
+
+```ims-scene
+id: one-file
+nodes: [ue, pcscf, scscf, hss, bridge, capture, pcap]
+lead: ノードはすべて 1 つのブリッジにつながっているので、ノードのあいだのやり取りの全体が 1 つのファイルに入ります。
+steps:
+  - id: bridge
+    title: ノードはすべて 1 つのネットワークにいる
+    show: [ue-on, pcscf-on, scscf-on, hss-on]
+    focus: [bridge]
+    text: 1 つの Docker のネットワーク（172.28.0.0/24）です。図では 4 つだけを描いています。
+  - id: listen
+    title: capture がブリッジを聞く
+    show: [listens]
+    focus: [capture, bridge]
+    text: キャプチャ用のコンテナが最初に起動し、ノードはそのあとで起動します。ノードが最初に送るメッセージもファイルに入ります。
+  - id: file
+    title: 起動するたびに新しいファイル
+    show: [writes]
+    focus: [capture, pcap]
+    text: ファイルの名前は起動した時刻です。第 10 回では、3 つのブリッジにそれぞれ capture とファイルができます。
+```
+
 
 ```text
             captures/ims-<UTC の起動時刻>.pcap
@@ -123,6 +227,27 @@ docker compose stop scscf
 
 ## ファイルの中のコピー
 
+```ims-scene
+id: copies
+nodes: [pcscf, scscf, lab]
+lead: ラボが知っているのは、ノードが送るコピーだけです。
+steps:
+  - id: message
+    title: ノードからノードへのメッセージ
+    show: [invite]
+    text: キャプチャには、このメッセージが 1 つ入ります。
+  - id: sent
+    title: 送った側がコピーを送る
+    show: [copy-sent]
+    text: 設定に `hep` の項目があるノードは、送受信した SIP と Diameter のコピーを UDP の 9060 番でラボに送ります。
+  - id: received
+    title: 受け取った側もコピーを送る
+    show: [copy-received]
+    checkpoint: true
+    text: コピーも 9060 番あての UDP としてキャプチャに入ります。`not udp.port == 9060` で隠します。
+```
+
+
 - ノードは、送受信した SIP と Diameter のメッセージのコピーを、UDP の 9060 番で待つラボに送れます。コピーの形式は HEP のバージョン 3 です。
 - ノードは、設定に `hep` の項目があるとコピーを送ります。UE シミュレータは `-hep lab:9060` を付けると送ります。どちらも無ければ、何も送りません。
 - コピーも 9060 番あての UDP のパケットとしてキャプチャに入ります。Wireshark には HEP を解読する機能が標準では無いので、`not udp.port == 9060` で隠します。
@@ -167,6 +292,24 @@ docker compose up -d --build
 
 ## ラダー図の組み立て方。2 つのコピーを 1 本の矢印に
 
+```ims-scene
+id: one-arrow
+nodes: [pcscf, scscf, lab]
+lead: 1 本の矢印が、ネットワーク上の 1 つのメッセージにあたります。
+steps:
+  - id: two
+    title: 1 つのメッセージに、コピーが 2 つ
+    only: [invite, copy-sent, copy-received]
+    active: copy-received
+    text: 送った側と受け取った側の両方から届きます。
+  - id: join
+    title: ラボが 1 本の矢印にまとめる
+    show: [join]
+    focus: [lab]
+    text: 送信元、宛先、中身が同じなら 1 本です。まったく同じ中身の再送は、別の矢印になります。
+```
+
+
 ```text
   送信側のコピー  ---+
                      +--> 送信元、宛先、中身が同じなら 1 本の矢印
@@ -183,6 +326,29 @@ docker compose up -d --build
 
 ## ラボが推定するもの。Cx と Rx
 
+```ims-scene
+id: infer
+nodes: [icscf, scscf, hss, lab]
+lead: Cx のメッセージには、どの SIP のリクエストのために送ったかが書かれていません。ラボは手順の決まりで結び付けます。
+steps:
+  - id: register
+    title: S-CSCF が REGISTER を受け取る
+    show: [register]
+    text: SIP のリクエストには Call-ID があります。
+  - id: mar
+    title: S-CSCF が MAR を送る
+    show: [mar]
+    text: Diameter の Session-Id は、SIP の Call-ID と無関係です。
+  - id: link
+    title: ラボが結び付ける
+    show: [link]
+    focus: [lab]
+    text: |
+      結び付きはメッセージには書かれていません。ラボが推定したものです。
+      矢印を選ぶと、詳細の **Link to this ladder** に出ます。
+```
+
+
 - Cx のメッセージには、どの SIP のリクエストのために送ったかを示すものがありません。Diameter の Session-Id と SIP の Call-ID は無関係です。
 - そこでラボは手順の決まりで結び付けます。Cx のリクエストは、同じノードが 2 秒以内に最後に受け取った SIP のリクエストのうち、同じ利用者を指すものに属するとします。
 - Rx のセッションも同じように結び付けます（TS 29.214 A.1、A.4）。最初の AAR が UE を示すのはアドレスだけなので、P-CSCF がそのアドレスから最後に受け取った SDP 付きのメッセージか REGISTER に属するとします。
@@ -193,6 +359,30 @@ docker compose up -d --build
 ---
 
 ## 1 つの通話と、複数のダイアログ
+
+```ims-scene
+id: dialogs
+nodes: [ue-a, as-o, as-t, ue-b, lab]
+lead: MMTel AS は routeing B2BUA なので、2 人のあいだの通話が 3 つのダイアログになります。途中の CSCF は省いて描いています。
+steps:
+  - id: first
+    title: UE 1 と発信側の AS のダイアログ
+    show: [dialog-1]
+    text: AS は S-CSCF から届いた INVITE に自分で答えます。
+  - id: more
+    title: AS が自分の Call-ID で新しい INVITE を送る
+    show: [dialog-2, dialog-3]
+    checkpoint: true
+    text: 着信側の AS も同じようにします。ダイアログは 3 つになります。
+  - id: icid
+    title: ラボは icid-value で 1 つの通話にまとめる
+    show: [one-call]
+    focus: [lab]
+    text: |
+      網の中では、どのダイアログにも発信側の P-CSCF が入れた同じ icid-value があります。
+      ラボは Dialogs の列に数を出し、1 つのラダー図にすべてを描きます。
+```
+
 
 ```text
   UE 1 --- ダイアログ 1 --- MMTel AS --- 2 --- MMTel AS --- 3 --- UE 2
