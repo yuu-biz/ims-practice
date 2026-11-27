@@ -1098,8 +1098,11 @@ func (p *PCSCF) association(st *sip.ServerTransaction, privateID string) (Associ
 // 5.2.2.3): with a non-zero interval it creates or refreshes the IP
 // association and stores Service-Route and P-Associated-URI, and
 // returns the association with the interval; with zero it removes the
-// association. over names the security associations that the contact
-// is registered over.
+// association. A REGISTER without a Contact only fetches the bindings
+// (RFC 3261 10.2.3) and changes none (10.3 step 6), so its 200 leaves
+// the association as it is, with nothing to watch or subscribe to.
+// over names the security associations that the contact is registered
+// over.
 func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, privateID string, old Association, over SPIs, log *slog.Logger) (Association, time.Duration, bool, error) {
 	ctx := context.Background()
 	end := func() error {
@@ -1108,6 +1111,15 @@ func (p *PCSCF) registered(st *sip.ServerTransaction, resp *sip.Message, private
 			err = p.endAssociation(a, log)
 		}
 		return err
+	}
+	if st.Request.Get("Contact") == "" {
+		// The 200 lists the contacts of the user, and the request names
+		// none of them as this UE's, so it gives the P-CSCF nothing to
+		// write: an association made from it would have no contact. Nor
+		// does a 200 without a Contact end the association, since the
+		// fetch removed no binding.
+		log.Info("REGISTER without a Contact: the IP association stays")
+		return Association{}, 0, false, nil
 	}
 	interval := grantedInterval(resp)
 	if interval == 0 {

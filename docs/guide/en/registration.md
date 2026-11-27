@@ -197,7 +197,7 @@ The 200 OK carries what the UE and the P-CSCF need afterwards (TS 24.229 5.4.1.2
 - **Contact** with `+g.3gpp.smsip` and `expires=3600`. The S-CSCF keeps the parameters of the contact with the binding, and lists them here. Later it matches the caller preferences of a request against them (RFC 3841, TS 24.229 5.4.3.3): a short message from the IP-SM-GW asks for a contact with this feature tag. The UE asked for 600000 seconds; the S-CSCF shortened it to its configured maximum.
 - **Authentication-Info** with `rspauth`. It proves that the S-CSCF knows H(A1) too (RFC 2617 3.2.3). The UE checks it.
 
-When the P-CSCF sees the 200 OK, it creates the IP association for the UE's address and stores the Service-Route and the identities (TS 24.229 5.2.2.1 and 5.2.2.3).
+When the P-CSCF sees the 200 OK, it creates the IP association for the UE's address and stores the Service-Route and the identities (TS 24.229 5.2.2.1 and 5.2.2.3). A REGISTER without a Contact only fetches the bindings and changes none (RFC 3261 10.2.3 and 10.3 step 6). The P-CSCF passes the 200 to it on and leaves the IP association as it is.
 
 ## Subscribe to the registration state
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -531,6 +532,82 @@ func TestDeregistrationOverTCP(t *testing.T) {
 		t.Errorf("the IP association of the UE lasts until %v after its deregistration", a.Expires)
 	}
 	h.noSecurityAssociations("the deregistration")
+}
+
+// A REGISTER without a Contact only fetches the bindings (RFC 3261
+// 10.2.3) and changes none (10.3 step 6), so the 200 to it, which lists
+// the contact of the UE with its remaining expiry, leaves what the
+// P-CSCF holds of the registration as it is: the IP association with its
+// contact, expiry and security association set, and the security
+// associations themselves. Requests to the UE still reach it. The reg
+// event subscription of the user is not asked for again.
+func TestFetchingBindingsKeepsTheIPAssociation(t *testing.T) {
+	h := newAKAHarness(t, true)
+	h.registerOverUDP()
+	ctx := context.Background()
+	source := sip.Destination{Transport: sip.UDP, Addr: h.ueKey()}
+	before, ok, _ := h.store.Association(ctx, source)
+	if !ok || before.Contact != h.contact || before.SPIs == (SPIs{}) {
+		t.Fatalf("after the registration the IP association is %+v, %v; want the UE's contact and its SPIs", before, ok)
+	}
+	sasBefore, _, _ := h.store.SecurityAssociations(ctx, h.ueKey())
+	subscribes := func() (n int) {
+		for {
+			select {
+			case m := <-h.received:
+				if m.Method == sip.SUBSCRIBE {
+					n++
+				}
+			default:
+				return n
+			}
+		}
+	}
+	// The P-CSCF subscribes once the 200 has gone to the UE.
+	select {
+	case <-h.subscriptions:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the P-CSCF did not subscribe to the reg event package after the registration")
+	}
+	subscribes()
+
+	query := h.aRegister("6629fae49393a05397450978507c4ef1", "")
+	query.Remove("Contact")
+	if r := h.send(h.ueProtected, h.protected, query); r.StatusCode != 200 || r.Get("Contact") == "" {
+		t.Fatalf("REGISTER without a Contact got %d with Contact %q, want the 200 of the home network that lists the contact", r.StatusCode, r.Get("Contact"))
+	}
+
+	after, ok, _ := h.store.Association(ctx, source)
+	if !ok || !reflect.DeepEqual(after, before) {
+		t.Errorf("after the fetch the IP association is %+v, %v; want it as it was, %+v", after, ok, before)
+	}
+	sasAfter, ok, _ := h.store.SecurityAssociations(ctx, h.ueKey())
+	// The answer to a REGISTER that fetches may move the lifetime of the
+	// set on, as any 200 does, but never replaces the set.
+	sasBefore.Expires, sasAfter.Expires = time.Time{}, time.Time{}
+	if !ok || !reflect.DeepEqual(sasAfter, sasBefore) {
+		t.Errorf("after the fetch the security associations are %+v, %v; want the set they were, %+v", sasAfter, ok, sasBefore)
+	}
+	if came(watch, func() bool { return subscribes() > 0 }) {
+		t.Error("the P-CSCF subscribed to the reg event package again after the fetch")
+	}
+
+	invite := &sip.Message{Method: sip.INVITE, RequestURI: h.contact}
+	invite.Add("Max-Forwards", "70")
+	invite.Add("Route", fmt.Sprintf("<sip:term@pcscf.%s:%d;lr>", domain, h.protected.LocalAddr().Port()))
+	invite.Add("From", "<sip:001010000000002@"+domain+">;tag="+sip.NewTag())
+	invite.Add("To", "<"+impu+">")
+	invite.Add("Call-ID", sip.NewCallID())
+	invite.Add("CSeq", "1 INVITE")
+	invite.Add("Contact", "<sip:caller@"+h.home.LocalAddr().String()+">")
+	if r := h.send(h.home, h.protected, invite); r.StatusCode != 486 {
+		t.Fatalf("INVITE to the UE after the fetch got %d, want the 486 of the UE", r.StatusCode)
+	}
+	select {
+	case <-h.toUE:
+	case <-time.After(time.Second):
+		t.Error("the INVITE did not reach the UE")
+	}
 }
 
 // TS 24.229 5.2.2.3: a 500 or a 504 to a REGISTER deletes the IP
