@@ -53,6 +53,17 @@ func (r Registration) merge(old Registration) Registration {
 	return r
 }
 
+// isThirdPartyRegister reports whether a REGISTER, or the response to
+// one, belongs to a third-party registration. A UE registers itself, so
+// its From and To name the same identity. In the REGISTER that the
+// S-CSCF sends to an application server, From is the S-CSCF and To is
+// the user (TS 24.229 5.4.1.7 items b and c; RFC 3261 10.2). Its 200
+// says nothing of the user's own binding: the Contact is the S-CSCF's.
+func isThirdPartyRegister(m *sip.Message) bool {
+	from, to := m.Get("From"), m.Get("To")
+	return from != "" && to != "" && addressURI(from) != addressURI(to)
+}
+
 // registerIMPI is the private user identity that a REGISTER names in the
 // username of its Authorization (TS 24.229 5.1.1.2.1), or "".
 func registerIMPI(register *sip.Message) string {

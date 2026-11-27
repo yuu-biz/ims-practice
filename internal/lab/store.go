@@ -258,6 +258,11 @@ func joined(legs []*Call) Call {
 }
 
 func (st *store) applyToRegistrations(e *callIDEntry, s *sip.Message, m Message) []Registration {
+	// The messages of a third-party REGISTER stay in the log under their
+	// own Call-ID, but they are no registration of the user's.
+	if cseqMethod(s) == sip.REGISTER && isThirdPartyRegister(s) {
+		return nil
+	}
 	if s.Method == sip.REGISTER {
 		if impi := registerIMPI(s); impi != "" {
 			e.registerIMPI = impi
