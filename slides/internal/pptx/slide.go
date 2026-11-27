@@ -54,7 +54,7 @@ func (w *slideWriter) elements(page layout.Page, elements []layout.Element) {
 // the child offset and extent of the group equal its own.
 func (w *slideWriter) group(page layout.Page, g *layout.Group) {
 	id := w.nextID()
-	fmt.Fprintf(&w.b, `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="%d" name="Group %d"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>`, id, id)
+	fmt.Fprintf(&w.b, `<p:grpSp><p:nvGrpSpPr><p:cNvPr id="%d" name="%s"/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>`, id, shapeName(g.Name, "Group", id))
 	fmt.Fprintf(&w.b, `<p:grpSpPr><a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/><a:chOff x="%d" y="%d"/><a:chExt cx="%d" cy="%d"/></a:xfrm></p:grpSpPr>`,
 		emu(g.X), emu(g.Y), emu(g.W), emu(g.H), emu(g.X), emu(g.Y), emu(g.W), emu(g.H))
 	w.elements(page, g.Elements)
@@ -81,13 +81,32 @@ func xfrm(x, y, width, height float64) string {
 	return fmt.Sprintf(`<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>`, emu(x), emu(y), emu(width), emu(height))
 }
 
+// shapeName is the name of a shape: the name that the layout gave it,
+// such as "node icscf", or the kind of the shape and its id.
+func shapeName(name, kind string, id int) string {
+	if name != "" {
+		return escape(name)
+	}
+	return fmt.Sprintf("%s %d", kind, id)
+}
+
 func fillAndLine(fill, line string) string {
+	return fillAndOutline(fill, line, 0.75, false)
+}
+
+// fillAndOutline is the fill and the outline of a shape; width is the
+// width of the outline in points.
+func fillAndOutline(fill, line string, width float64, dash bool) string {
 	s := `<a:noFill/>`
 	if fill != "" {
 		s = solidFill(fill)
 	}
 	if line != "" {
-		s += `<a:ln w="9525">` + solidFill(line) + `</a:ln>`
+		s += fmt.Sprintf(`<a:ln w="%d">`, emu(width)) + solidFill(line)
+		if dash {
+			s += `<a:prstDash val="dash"/>`
+		}
+		s += `</a:ln>`
 	} else {
 		s += `<a:ln><a:noFill/></a:ln>`
 	}
@@ -122,9 +141,17 @@ func (w *slideWriter) textBox(page layout.Page, t *layout.TextBox) {
 	if ph != "" {
 		fmt.Fprintf(&w.b, `<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s %d"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr>%s</p:nvPr></p:nvSpPr>`, id, name, id, ph)
 	} else {
-		fmt.Fprintf(&w.b, `<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s %d"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>`, id, name, id)
+		fmt.Fprintf(&w.b, `<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr>`, id, shapeName(t.Name, name, id))
 	}
-	w.b.WriteString(`<p:spPr>` + xfrm(t.X, t.Y, t.W, t.H) + `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom>` + fillAndLine(t.Fill, t.Line) + `</p:spPr>`)
+	geometry := "rect"
+	if t.Round {
+		geometry = "roundRect"
+	}
+	lineWidth := t.LineWidth
+	if lineWidth == 0 {
+		lineWidth = 0.75
+	}
+	w.b.WriteString(`<p:spPr>` + xfrm(t.X, t.Y, t.W, t.H) + `<a:prstGeom prst="` + geometry + `"><a:avLst/></a:prstGeom>` + fillAndOutline(t.Fill, t.Line, lineWidth, false) + `</p:spPr>`)
 	wrap := "square"
 	if t.NoWrap {
 		wrap = "none"
@@ -261,12 +288,15 @@ func (w *slideWriter) line(l *layout.Line) {
 	if l.Y2 < l.Y1 {
 		flip += ` flipV="1"`
 	}
-	fmt.Fprintf(&w.b, `<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="%d" name="Line %d"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>`, id, id)
+	fmt.Fprintf(&w.b, `<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="%d" name="%s"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>`, id, shapeName(l.Name, "Line", id))
 	fmt.Fprintf(&w.b, `<p:spPr><a:xfrm%s><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="straightConnector1"><a:avLst/></a:prstGeom>`,
 		flip, emu(x), emu(y), emu(max(l.X1, l.X2)-x), emu(max(l.Y1, l.Y2)-y))
 	fmt.Fprintf(&w.b, `<a:ln w="%d">%s`, emu(l.Width), solidFill(l.Color))
-	if l.Dash {
+	switch {
+	case l.Dash:
 		w.b.WriteString(`<a:prstDash val="dash"/>`)
+	case l.Dot:
+		w.b.WriteString(`<a:prstDash val="sysDot"/>`)
 	}
 	if l.HeadStart {
 		w.b.WriteString(`<a:headEnd type="triangle" w="med" len="med"/>`)
@@ -283,6 +313,6 @@ func (w *slideWriter) rect(r *layout.Rect) {
 	if r.Round {
 		geometry = "roundRect"
 	}
-	fmt.Fprintf(&w.b, `<p:sp><p:nvSpPr><p:cNvPr id="%d" name="Shape %d"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`, id, id)
-	w.b.WriteString(`<p:spPr>` + xfrm(r.X, r.Y, r.W, r.H) + `<a:prstGeom prst="` + geometry + `"><a:avLst/></a:prstGeom>` + fillAndLine(r.Fill, r.Line) + `</p:spPr></p:sp>`)
+	fmt.Fprintf(&w.b, `<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>`, id, shapeName(r.Name, "Shape", id))
+	w.b.WriteString(`<p:spPr>` + xfrm(r.X, r.Y, r.W, r.H) + `<a:prstGeom prst="` + geometry + `"><a:avLst/></a:prstGeom>` + fillAndOutline(r.Fill, r.Line, 0.75, r.Dash) + `</p:spPr></p:sp>`)
 }

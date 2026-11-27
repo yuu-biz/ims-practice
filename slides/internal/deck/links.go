@@ -17,7 +17,7 @@ func CheckLinks(d *Deck) []error {
 	var problems []error
 	anchors := map[string]map[string]bool{}
 	for _, slide := range d.Slides {
-		for _, href := range Links(slide) {
+		for _, href := range d.Links(slide) {
 			if strings.Contains(href, "://") || strings.HasPrefix(href, "mailto:") {
 				continue
 			}
@@ -48,9 +48,9 @@ func CheckLinks(d *Deck) []error {
 }
 
 // Links returns the addresses that a slide links to, in order.
-func Links(slide Slide) []string {
+func (d *Deck) Links(slide Slide) []string {
 	var links []string
-	for _, spans := range Lines(slide) {
+	for _, spans := range d.Lines(slide) {
 		for _, span := range spans {
 			if span.Href != "" {
 				links = append(links, span.Href)
@@ -63,9 +63,9 @@ func Links(slide Slide) []string {
 // Lines returns every line of text of a slide, in order: the title and
 // the lines of its paragraphs, quotes, list items and table cells. Code
 // blocks and ladder diagrams are not among them.
-func Lines(slide Slide) [][]Span {
+func (d *Deck) Lines(slide Slide) [][]Span {
 	lines := [][]Span{slide.Title}
-	for _, column := range slide.Columns {
+	for _, column := range d.Sections(slide) {
 		for _, b := range column {
 			switch b := b.(type) {
 			case Paragraph:

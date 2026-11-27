@@ -14,6 +14,7 @@ import (
 
 	"github.com/yuu-biz/ims-practice/slides/internal/deck"
 	"github.com/yuu-biz/ims-practice/slides/internal/html"
+	"github.com/yuu-biz/ims-practice/slides/internal/layout"
 	"github.com/yuu-biz/ims-practice/slides/internal/pptx"
 )
 
@@ -41,21 +42,21 @@ func TestDecks(t *testing.T) {
 		for _, f := range z.File {
 			switch {
 			case strings.HasPrefix(f.Name, "ppt/slides/_rels/"):
-				checkHyperlinks(t, d.deck, f)
+				checkHyperlinks(t, d.deck, d.pages, f)
 			case strings.HasPrefix(f.Name, "ppt/slides/slide"):
 				slides++
 			case strings.Contains(f.Name, "notes"), strings.HasPrefix(f.Name, "ppt/media/"):
 				t.Errorf("%s: the pptx has %s", d.deck.Path, f.Name)
 			}
 		}
-		if slides != len(d.deck.Slides) {
-			t.Errorf("%s: %d slides in the pptx, %d in the deck", d.deck.Path, slides, len(d.deck.Slides))
+		if slides != len(d.pages) {
+			t.Errorf("%s: %d slides in the pptx, %d pages laid out", d.deck.Path, slides, len(d.pages))
 		}
 		out.Reset()
 		if err := html.Write(&out, d.deck, d.pages); err != nil {
 			t.Fatalf("%s: %v", d.deck.Path, err)
 		}
-		if n := strings.Count(out.String(), "<section "); n != len(d.deck.Slides) {
+		if n := strings.Count(out.String(), `<section class="slide `); n != len(d.deck.Slides) {
 			t.Errorf("%s: %d slides in the HTML, %d in the deck", d.deck.Path, n, len(d.deck.Slides))
 		}
 	}
@@ -69,7 +70,7 @@ var uriReference = regexp.MustCompile(`^(?:[A-Za-z0-9._~:/?#\[\]@!$&'()*+,;=-]|%
 // slide are URI references, as the Open Packaging Conventions ask of
 // the target of a relationship, and that decoding them gives back the
 // links of the slide in the source, Japanese anchors included.
-func checkHyperlinks(t *testing.T, d *deck.Deck, f *zip.File) {
+func checkHyperlinks(t *testing.T, d *deck.Deck, pages []layout.Page, f *zip.File) {
 	t.Helper()
 	r, err := f.Open()
 	if err != nil {
@@ -109,10 +110,19 @@ func checkHyperlinks(t *testing.T, d *deck.Deck, f *zip.File) {
 		}
 		decoded = append(decoded, link)
 	}
-	links := deck.Links(d.Slides[number-1])
+	page := pages[number-1]
+	slide := d.Slides[page.Slide-1]
+	links := d.Links(slide)
 	slices.Sort(links)
 	slices.Sort(decoded)
-	if !slices.Equal(links, decoded) {
+	if slide.Scene == nil && !slices.Equal(links, decoded) {
 		t.Errorf("%s: slide %d: the hyperlinks decode to %q, the source has %q", d.Path, number, decoded, links)
+	}
+	// The pages of a scene share its links: each link of a page has to
+	// be a link of the slide.
+	for _, link := range decoded {
+		if slide.Scene != nil && !slices.Contains(links, link) {
+			t.Errorf("%s: page %d: the hyperlink %q is not in the source of slide %d", d.Path, number, link, page.Slide)
+		}
 	}
 }

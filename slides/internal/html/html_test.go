@@ -33,11 +33,11 @@ func build(t *testing.T) string {
 
 func TestOneSectionPerSlide(t *testing.T) {
 	page := build(t)
-	if n := strings.Count(page, "<section "); n != 2 {
+	if n := strings.Count(page, `<section class="slide `); n != 2 {
 		t.Errorf("%d sections, want 2", n)
 	}
 	for _, want := range []string{
-		`<html lang="ja">`, `<title>A &lt;sample&gt;</title>`, `<section id="2" class="slide content"`,
+		`<html lang="ja">`, `<title>A &lt;sample&gt;</title>`, `<section class="slide page content" id="2"`,
 		`<code>a &lt; b</code>`, `<a href="../guide.md#step">`, `text-align:right`, `<th `,
 	} {
 		if !strings.Contains(page, want) {

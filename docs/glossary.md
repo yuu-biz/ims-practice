@@ -393,6 +393,8 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | OOM | Out of memory | The state in which a system has no memory left; Linux then stops a process. | システムのメモリが尽きた状態。Linux は、このときプロセスを止める。 |
 | CLI / UI | Command-line interface / User interface | A program that is used by typing commands, and the part of a program that a person uses, such as a web page. | コマンドを打って使うプログラムと、Web のページのように、人が使うプログラムの部分。 |
 | HTML / PDF / YAML | HyperText Markup Language / Portable Document Format / YAML Ain't Markup Language | The format of web pages, a format of documents to print, and a text format of configuration files. | Web のページの形式、印刷するための文書の形式、設定ファイルのテキストの形式。 |
+| CSS | Cascading Style Sheets | The language that gives a web page its look: sizes, colours, places. A CSS pixel is the unit of length of a web page, which the browser scales to the screen. | Web のページの見た目（大きさ、色、位置）を決める言語。CSS のピクセルは Web のページの長さの単位で、ブラウザが画面に合わせて拡大、縮小する。 |
+| EMU | English Metric Unit | The unit of length of the files of Office, such as a pptx: 914400 to an inch, 12700 to a point. | pptx など Office のファイルの長さの単位。1 インチが 914400、1 ポイントが 12700。 |
 | FAQ | Frequently asked questions | A page of questions that are often asked, with their answers. | よく聞かれる質問と、その答えを並べたページ。 |
 
 ## Cloud / クラウド
