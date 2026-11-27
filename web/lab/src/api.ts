@@ -158,6 +158,12 @@ export interface UECall {
 export interface UESession {
   // Null until the offer and the answer have settled one.
   codec: UECodec | null;
+  // The format this UE receives, as its own SDP numbers it (RFC 3264
+  // 5.1, 6.1). The received counts of media are made with this one. Null
+  // with codec.
+  receive_codec: UECodec | null;
+  // What went through the media so far.
+  media: UEMediaStats;
   // The direction of the audio stream in this UE's last SDP and in the
   // peer's (RFC 3264 6.1).
   direction: string;
@@ -178,6 +184,16 @@ export interface UESession {
   ringback: string;
   dtmf_sent: string;
   dtmf_received: string;
+}
+
+// RTP packets and AMR frames are different units: one packet carries one
+// or more frames (RFC 4867 4.3).
+export interface UEMediaStats {
+  packets_sent: number;
+  packets_received: number;
+  // Counted for AMR and AMR-WB only, 0 for the rest.
+  frames_sent: number;
+  frames_received: number;
 }
 
 export interface UECodec {
@@ -812,6 +828,8 @@ function parseUESession(value: unknown): UESession {
   const o = object(value);
   return {
     codec: o["codec"] === undefined || o["codec"] === null ? null : parseUECodec(o["codec"]),
+    receive_codec: o["receive_codec"] === undefined || o["receive_codec"] === null ? null : parseUECodec(o["receive_codec"]),
+    media: parseUEMediaStats(o["media"]),
     direction: optionalString(o, "direction") ?? "",
     peer_direction: optionalString(o, "peer_direction") ?? "",
     preconditions: o["preconditions"] === undefined || o["preconditions"] === null ? null : parsePreconditions(o["preconditions"]),
@@ -821,6 +839,16 @@ function parseUESession(value: unknown): UESession {
     ringback: optionalString(o, "ringback") ?? "",
     dtmf_sent: optionalString(o, "dtmf_sent") ?? "",
     dtmf_received: optionalString(o, "dtmf_received") ?? "",
+  };
+}
+
+function parseUEMediaStats(value: unknown): UEMediaStats {
+  const o = object(value);
+  return {
+    packets_sent: number(o, "packets_sent"),
+    packets_received: number(o, "packets_received"),
+    frames_sent: optionalNumber(o, "frames_sent") ?? 0,
+    frames_received: optionalNumber(o, "frames_received") ?? 0,
   };
 }
 

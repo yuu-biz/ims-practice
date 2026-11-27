@@ -9,6 +9,7 @@ import {
   putAnswerPolicy,
   type UECall,
   type UESentSMS,
+  type UECodec,
   type UESession,
   type UESimulator,
 } from "../src/api.ts";
@@ -139,6 +140,8 @@ const answeredSession: UESession = {
       { segment: "remote", direction: "recv", reserved: false, strength: "optional", confirm: true },
     ],
   },
+  receive_codec: { name: "AMR-WB", payload_type: 97, clock_rate: 16000, payload_format: "octet-aligned", telephone_event: 101 },
+  media: { packets_sent: 12, packets_received: 10, frames_sent: 12, frames_received: 10 },
   media_resources: true,
   reservation_needed: true,
   held: false,
@@ -247,12 +250,14 @@ describe("the session of a call", () => {
       media_resources: false,
       reservation_needed: true,
       held: true,
-      media: { packets_sent: 0, packets_received: 0, rtcp_sent: 0, rtcp_received: 0 },
+      media: { packets_sent: 0, packets_received: 3, rtcp_sent: 0, rtcp_received: 0 },
     };
     serve(200, JSON.stringify([{ name: "phone1", reachable: true, status: { ...idle, call: { ...ringing, state: "active", session } } }]));
     const [ue] = await fetchUESimulators();
     expect(ue?.reachable && ue.status.call?.session).toEqual({
       codec: { name: "AMR", payload_type: 97, clock_rate: 8000, payload_format: "", telephone_event: null },
+      receive_codec: null,
+      media: { packets_sent: 0, packets_received: 3, frames_sent: 0, frames_received: 0 },
       direction: "sendonly",
       peer_direction: "recvonly",
       preconditions: { met: false, rows: [{ segment: "local", direction: "send", reserved: false, strength: "mandatory", confirm: false }] },
@@ -267,11 +272,32 @@ describe("the session of a call", () => {
 
   it("describes the codec, the directions, the preconditions and the DTMF digits", () => {
     expect(describeSession({ ...answeredSession, held: true, direction: "sendonly", peer_direction: "recvonly" })).toEqual([
-      "AMR-WB/16000, payload type 96, bandwidth-efficient, DTMF payload type 100",
+      "format sent (peer's SDP): AMR-WB/16000, payload type 96, bandwidth-efficient, DTMF payload type 100",
+      "format received (this UE's SDP): AMR-WB/16000, payload type 97, octet-aligned, DTMF payload type 101",
+      "RTP packets received: 10 (sent 12)",
+      "AMR frames received: 10 (sent 12)",
       "sendonly, the peer recvonly, held by this UE",
       "preconditions met: local send reserved (mandatory); remote recv not reserved (optional, confirm)",
       "media resources reserved",
       "DTMF sent 12#, received none",
+    ]);
+  });
+
+  it("counts RTP packets apart from AMR frames, and gives no frames for a call that is not AMR", () => {
+    const pcmu: UECodec = { name: "PCMU", payload_type: 0, clock_rate: 8000, payload_format: "", telephone_event: null };
+    const g711: UESession = {
+      ...answeredSession,
+      codec: pcmu,
+      receive_codec: pcmu,
+      media: { packets_sent: 5, packets_received: 4, frames_sent: 0, frames_received: 0 },
+      preconditions: null,
+      dtmf_sent: "",
+    };
+    expect(describeSession(g711).slice(0, 4)).toEqual([
+      "format sent (peer's SDP): PCMU/8000, payload type 0",
+      "format received (this UE's SDP): PCMU/8000, payload type 0",
+      "RTP packets received: 4 (sent 5)",
+      "AMR frames received: not applicable (the codec is not AMR)",
     ]);
   });
 
@@ -283,7 +309,10 @@ describe("the session of a call", () => {
   it("says that the access network needs no reservation", () => {
     const softphone: UESession = { ...answeredSession, preconditions: null, reservation_needed: false, dtmf_sent: "" };
     expect(describeSession(softphone)).toEqual([
-      "AMR-WB/16000, payload type 96, bandwidth-efficient, DTMF payload type 100",
+      "format sent (peer's SDP): AMR-WB/16000, payload type 96, bandwidth-efficient, DTMF payload type 100",
+      "format received (this UE's SDP): AMR-WB/16000, payload type 97, octet-aligned, DTMF payload type 101",
+      "RTP packets received: 10 (sent 12)",
+      "AMR frames received: 10 (sent 12)",
       "sendrecv, the peer sendrecv",
       "no reservation of media resources needed on this access network",
     ]);
