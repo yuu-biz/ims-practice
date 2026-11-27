@@ -68,6 +68,56 @@ func TestMediaComponentsOfACallFromTheUE(t *testing.T) {
 	}
 }
 
+// TestBandwidthAtSessionLevel takes a "b=" line before the first "m="
+// line for a stream without one of its own, and the stream's own line
+// over it (RFC 3556 4).
+func TestBandwidthAtSessionLevel(t *testing.T) {
+	// sdpWith puts session before the "t=" line and media after the "m="
+	// line (RFC 8866 5).
+	sdpWith := func(addr, port string, session, media []string) []byte {
+		lines := append([]string{"v=0", "o=- 1 1 IN IP4 " + addr, "s=-", "c=IN IP4 " + addr}, session...)
+		lines = append(lines, "t=0 0", "m=audio "+port+" RTP/AVP 0")
+		lines = append(lines, media...)
+		return sdpOf(append(lines, "a=rtcp-mux", "a=sendrecv")...)
+	}
+	for _, tc := range []struct {
+		name                       string
+		offerSession, offerMedia   []string
+		answerSession, answerMedia []string
+		ul, dl, rr, rs             uint32
+	}{
+		{name: "session level only",
+			offerSession:  []string{"b=AS:80"},
+			answerSession: []string{"b=AS:64", "b=RS:600", "b=RR:2000"},
+			ul:            64000 + 2000 + 600, dl: 80 * 1050, rr: 2000, rs: 600},
+		{name: "the media's lines over the session's",
+			offerSession: []string{"b=AS:100"}, offerMedia: []string{"b=AS:80"},
+			answerSession: []string{"b=AS:100", "b=RS:0", "b=RR:0"}, answerMedia: []string{"b=AS:64", "b=RS:600", "b=RR:2000"},
+			ul: 64000 + 2000 + 600, dl: 80 * 1050, rr: 2000, rs: 600},
+		{name: "RR of the session with AS and RS of the media",
+			offerMedia:    []string{"b=AS:80"},
+			answerSession: []string{"b=RR:2000"}, answerMedia: []string{"b=AS:64", "b=RS:600"},
+			ul: 64000 + 2000 + 600, dl: 80 * 1050, rr: 2000, rs: 600},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			offer := sdpWith(ue, "49000", tc.offerSession, tc.offerMedia)
+			answer := sdpWith(relay, "40000", tc.answerSession, tc.answerMedia)
+			got, err := MediaComponents(OfferAnswer{Offer: offer, Answer: answer, UEOffered: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := got[0]
+			if c.MaxRequestedBandwidthUL == nil || c.MaxRequestedBandwidthDL == nil || c.RRBandwidth == nil || c.RSBandwidth == nil {
+				t.Fatalf("UL %v, DL %v, RR %v, RS %v; want all four", c.MaxRequestedBandwidthUL, c.MaxRequestedBandwidthDL, c.RRBandwidth, c.RSBandwidth)
+			}
+			if *c.MaxRequestedBandwidthUL != tc.ul || *c.MaxRequestedBandwidthDL != tc.dl || *c.RRBandwidth != tc.rr || *c.RSBandwidth != tc.rs {
+				t.Errorf("UL %d, DL %d, RR %d, RS %d; want %d, %d, %d, %d",
+					*c.MaxRequestedBandwidthUL, *c.MaxRequestedBandwidthDL, *c.RRBandwidth, *c.RSBandwidth, tc.ul, tc.dl, tc.rr, tc.rs)
+			}
+		})
+	}
+}
+
 func TestRTCPMuxSharesOneFlowAndAddsRTCPBandwidth(t *testing.T) {
 	offer := sdpOf("v=0", "o=- 1 1 IN IP4 "+ue, "s=-", "c=IN IP4 "+ue, "t=0 0",
 		"m=audio 49000 RTP/AVP 0", "b=AS:80", "a=rtcp-mux", "a=recvonly")

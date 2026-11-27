@@ -75,6 +75,9 @@ func SignallingComponent() MediaComponent {
 // it.
 type mediaLine struct {
 	media sdp.Media
+	// session is the SDP that holds the media, for the "b=" lines
+	// before its first "m=" line.
+	session sdp.Session
 	// address is the connection address of the media, its own or the
 	// session's.
 	address netip.Addr
@@ -94,6 +97,7 @@ func readSDP(b []byte, offer, fromUE bool) ([]mediaLine, error) {
 	for i, m := range s.Media {
 		lines[i] = mediaLine{
 			media:     m,
+			session:   s,
 			address:   s.Address(m).Addr(),
 			direction: s.Direction(m),
 			fromUE:    fromUE,
@@ -216,14 +220,14 @@ func (p linePair) maxRequestedBandwidth(l *mediaLine) *uint32 {
 	if l == nil {
 		return nil
 	}
-	as, ok := l.media.Bandwidth("AS")
+	as, ok := l.bandwidth("AS")
 	if !ok {
 		return nil
 	}
 	bw := uint32(as) * 1000
 	if p.rtcpMux() {
-		rr, hasRR := l.media.Bandwidth("RR")
-		rs, hasRS := l.media.Bandwidth("RS")
+		rr, hasRR := l.bandwidth("RR")
+		rs, hasRS := l.bandwidth("RS")
 		if hasRR || hasRS {
 			bw += uint32(rr + rs)
 		} else {
@@ -233,10 +237,19 @@ func (p linePair) maxRequestedBandwidth(l *mediaLine) *uint32 {
 	return &bw
 }
 
+// bandwidth is the "b=" value of this type that holds for the media:
+// its own, or else the session's (RFC 3556 4, which Table 6.2.1 NOTE 3
+// refers to for b=RS and b=RR). A b=AS of the session is the bandwidth
+// that all its media share, and so the most that any one of them may
+// use.
+func (l *mediaLine) bandwidth(bwtype string) (int, bool) {
+	return l.session.Bandwidth(l.media, bwtype)
+}
+
 // bandwidthOf is a "b=" value as it is, for RR-Bandwidth and
 // RS-Bandwidth (Table 6.2.1), or nil without one.
 func (l *mediaLine) bandwidthOf(bwtype string) *uint32 {
-	v, ok := l.media.Bandwidth(bwtype)
+	v, ok := l.bandwidth(bwtype)
 	if !ok {
 		return nil
 	}
