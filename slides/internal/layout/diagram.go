@@ -151,7 +151,7 @@ func Family(e deck.Event) string {
 	switch p {
 	case "SIP":
 		return "sip"
-	case "DIAMETER", "CX", "SH", "RX", "GX", "SGD", "S6A", "S6D", "RO", "RF", "DX":
+	case "DIAMETER", "CX", "SH", "RX", "GX", "SGD", "S6A", "S6C", "S6D", "RO", "RF", "DX":
 		return "diameter"
 	case "DNS":
 		return "dns"
