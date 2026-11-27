@@ -448,6 +448,11 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 		s.storeFailed(st, err, log)
 		return
 	}
+	contact, contactErr := sip.ParseNameAddr(req.Get("Contact"))
+	if registered && contactErr == nil && sameURI(contact.URI, old.Contact) && outOfOrder(req, old) {
+		s.refuseOutOfOrder(st, old, log)
+		return
+	}
 	assignment := cx.AssignRegistration
 	if registered {
 		assignment = cx.ReRegistration
@@ -476,7 +481,7 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 		s.respond(st, 500, nil)
 		return
 	}
-	if contact, err := sip.ParseNameAddr(req.Get("Contact")); err == nil {
+	if contactErr == nil {
 		reg.Contact = contact.URI
 		reg.ContactParams = bindingParams(contact.Params)
 	}
@@ -528,6 +533,30 @@ func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challeng
 	s.notifyApplicationServers(req, reg, expires, log)
 }
 
+// outOfOrder is RFC 3261 10.3 steps 6 and 7 for the binding that reg
+// holds: a REGISTER with the Call-ID of the binding updates or removes it
+// only with a CSeq higher than the stored one. This keeps a request that
+// the network reordered, such as a de-registration that comes after the
+// re-registration that followed it, from undoing the newer one. A request
+// with another Call-ID is not compared.
+func outOfOrder(req *sip.Message, reg Registration) bool {
+	if req.Get("Call-ID") != reg.CallID {
+		return false
+	}
+	cseq, _ := sip.ParseCSeq(req.Get("CSeq"))
+	return cseq.Number <= reg.CSeq
+}
+
+// refuseOutOfOrder answers a REGISTER that outOfOrder found, and leaves
+// the binding as it is. RFC 3261 10.3 step 7 says only that the request
+// fails; 500 (Server Internal Error) is the code that the same step names
+// for a binding update that fails. No Retry-After goes with it: the same
+// request would fail again, so waiting does not help.
+func (s *SCSCF) refuseOutOfOrder(st *sip.ServerTransaction, reg Registration, log *slog.Logger) {
+	log.Info("REGISTER out of order", "cseq", st.Request.Get("CSeq"), "stored_cseq", reg.CSeq)
+	s.respond(st, 500, nil)
+}
+
 // deregister is TS 24.229 5.4.1.4.1.
 func (s *SCSCF) deregister(st *sip.ServerTransaction, privateID string, wildcard bool, log *slog.Logger) {
 	ctx := context.Background()
@@ -546,6 +575,10 @@ func (s *SCSCF) deregister(st *sip.ServerTransaction, privateID string, wildcard
 			s.respond(st, 481, nil)
 			return
 		}
+	}
+	if outOfOrder(st.Request, reg) {
+		s.refuseOutOfOrder(st, reg, log)
+		return
 	}
 	if err := s.store.DeleteRegistration(ctx, privateID); err != nil {
 		s.storeFailed(st, err, log)

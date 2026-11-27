@@ -247,7 +247,13 @@ func (h *harness) register(callID string, cseq int, expires int, authorization s
 	if contact == "" {
 		contact = ueContact
 	}
-	m.Add("Contact", "<"+contact+">"+h.contactParams+";expires="+strconv.Itoa(expires))
+	if contact == "*" {
+		// RFC 3261 10.2.2: the wildcard comes with Expires: 0.
+		m.Add("Contact", "*")
+		m.Add("Expires", "0")
+	} else {
+		m.Add("Contact", "<"+contact+">"+h.contactParams+";expires="+strconv.Itoa(expires))
+	}
 	m.Add("Path", "<sip:term@pcscf."+domain+":5060;lr>")
 	for _, f := range h.extra {
 		m.Add(f.Name, f.Value)
@@ -625,6 +631,75 @@ func TestFailedReauthenticationKeepsTheRegistrationExpiry(t *testing.T) {
 		t.Fatalf("wrong refresh got %d, want 403", r.StatusCode)
 	}
 	waitForAssignments(t, h.hss, cx.AssignRegistration, cx.AuthenticationFailure, cx.TimeoutDeregistration)
+}
+
+// TestRegisterOutOfOrderLeavesTheBindingAlone: RFC 3261 10.3 steps 6 and
+// 7. A REGISTER with the Call-ID of the stored binding and a CSeq that
+// is not higher than the stored one fails, for the removal of the
+// contact, for its refresh, and for the wildcard removal, and the
+// binding and its expiry stay. A higher CSeq goes through. The
+// de-registration over the IP association has no authentication in its
+// way, so a late one from an earlier transaction would otherwise remove
+// the contact that a newer REGISTER has just registered.
+func TestRegisterOutOfOrderLeavesTheBindingAlone(t *testing.T) {
+	h := newHarness(t, Config{})
+	callID := sip.NewCallID()
+	r := h.register(callID, 1, 600000, initial)
+	auth, _ := answer(t, r, password, "ip-assoc-pending")
+	if r := h.register(callID, 2, 600000, auth); r.StatusCode != 200 {
+		t.Fatalf("registration got %d, want 200", r.StatusCode)
+	}
+	// A re-registration with CSeq 4 (3 got the challenge).
+	r = h.register(callID, 3, 600000, initial)
+	auth, _ = answer(t, r, password, "ip-assoc-yes")
+	if r := h.register(callID, 4, 600000, auth); r.StatusCode != 200 {
+		t.Fatalf("re-registration got %d, want 200", r.StatusCode)
+	}
+	stored, ok, err := h.store.Registration(context.Background(), impi)
+	if err != nil || !ok || stored.CSeq != 4 {
+		t.Fatalf("stored registration = %+v, %v, %v; want CSeq 4", stored, ok, err)
+	}
+
+	dereg := `Digest username="` + impi + `", realm="` + domain + `", nonce="", uri="sip:` + domain + `", response="", integrity-protected="ip-assoc-yes"`
+	for _, cseq := range []int{3, 4} {
+		if r := h.register(callID, cseq, 0, dereg); r.StatusCode != 500 {
+			t.Errorf("de-registration with CSeq %d got %d, want 500", cseq, r.StatusCode)
+		}
+	}
+	// A refresh that answers a challenge with a CSeq that is not higher.
+	r = h.register(callID, 3, 600000, initial)
+	auth, _ = answer(t, r, password, "ip-assoc-yes")
+	if r := h.register(callID, 4, 600000, auth); r.StatusCode != 500 {
+		t.Errorf("refresh with CSeq 4 got %d, want 500", r.StatusCode)
+	}
+	after, ok, err := h.store.Registration(context.Background(), impi)
+	if err != nil || !ok || after.Contact != stored.Contact || !after.Expires.Equal(stored.Expires) || after.CSeq != 4 {
+		t.Fatalf("registration after the refusals = %+v, %v, %v; want %+v", after, ok, err, stored)
+	}
+	if got := h.hss.assignments(); !slices.Equal(got, []cx.ServerAssignmentType{cx.AssignRegistration, cx.ReRegistration}) {
+		t.Errorf("SARs = %v: a refused REGISTER must not reach the HSS", got)
+	}
+
+	h.contact = "*"
+	if r := h.register(callID, 4, 0, dereg); r.StatusCode != 500 {
+		t.Errorf("wildcard de-registration with CSeq 4 got %d, want 500", r.StatusCode)
+	}
+	h.contact = ""
+
+	// A different Call-ID is a different UA registration, whatever its CSeq.
+	other := sip.NewCallID()
+	r = h.register(other, 1, 600000, initial)
+	auth, _ = answer(t, r, password, "ip-assoc-yes")
+	if r := h.register(other, 2, 600000, auth); r.StatusCode != 200 {
+		t.Errorf("refresh with another Call-ID got %d, want 200", r.StatusCode)
+	}
+	// A higher CSeq removes the binding.
+	if r := h.register(other, 3, 0, dereg); r.StatusCode != 200 {
+		t.Errorf("de-registration with a higher CSeq got %d, want 200", r.StatusCode)
+	}
+	if _, ok, _ := h.store.Registration(context.Background(), impi); ok {
+		t.Errorf("the registration is still stored after the de-registration")
+	}
 }
 
 func TestOldNonceWithTheRightPasswordIsStale(t *testing.T) {
