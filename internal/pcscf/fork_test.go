@@ -52,7 +52,7 @@ func (c *rawINVITE) established(t *testing.T) Dialog {
 // other dialog too, and checks that the P-CSCF ends that dialog: its
 // callee gets the ACK and the BYE of the P-CSCF, and the caller nothing
 // of it.
-func (c *rawINVITE) answerFork(t *testing.T) {
+func (c *rawINVITE) answerFork(t *testing.T) (bye *sip.Message) {
 	t.Helper()
 	c.st.Respond(c.fork(200))
 	// The far end takes the ACK and the BYE on goroutines of their own,
@@ -81,16 +81,19 @@ func (c *rawINVITE) answerFork(t *testing.T) {
 			deadline = nil
 		}
 	}
+	return got[sip.BYE]
 }
 
 // wantCallKept checks, for a while, that the call stays as its 200 left
 // it: the Dialog is still call, the relay context sends to the callee of
 // the call, and the PCRF has authorised the answer of that 200 alone and
-// released nothing.
+// released nothing. The CSeqs of the parties may have grown, as a
+// request of the other dialog counts in them (subsequent).
 func (c *rawINVITE) wantCallKept(t *testing.T, call Dialog) {
 	t.Helper()
 	changed := func() bool {
 		d, ok, _ := c.store.UpdateDialog(context.Background(), call.Key, func(*Dialog) {})
+		call.Caller.CSeq, call.Callee.CSeq = max(call.Caller.CSeq, d.Caller.CSeq), max(call.Callee.CSeq, d.Callee.CSeq)
 		switch {
 		case !ok:
 			t.Error("the dialog of the call is gone")
@@ -214,4 +217,34 @@ func TestRequestOfAnotherForkLeavesTheCallAsItIs(t *testing.T) {
 		noRequest(t, "the UE", c.ueGot)
 		c.wantCallKept(t, call)
 	})
+}
+
+// TestTheBYEOfAnotherForkFollowsTheCallersRequestsInIt: the caller may
+// send requests within the other dialog while it is early, after the
+// 200 of the call, such as an INFO. The BYE with which the P-CSCF ends
+// that dialog once its 200 comes takes a CSeq above them, or the callee
+// of that dialog would answer it 500 and stay in the dialog (RFC 3261
+// 12.2.2).
+func TestTheBYEOfAnotherForkFollowsTheCallersRequestsInIt(t *testing.T) {
+	c := newRawINVITEWith(t, &fakePolicy{})
+	ringing := c.fork(180)
+	ringing.Remove("Content-Type")
+	ringing.Body = nil
+	c.st.Respond(ringing)
+	call := c.established(t)
+
+	if r := c.through(t, c.ue, c.inFork("INFO", false, 7)); r.StatusCode != 200 {
+		t.Fatalf("the INFO got %d, want the 200 of the far end", r.StatusCode)
+	}
+	if m := <-c.farGot; m.Method != "INFO" {
+		t.Fatalf("the far end got %s, want the INFO", m.Method)
+	}
+	bye := c.answerFork(t)
+	if bye == nil {
+		t.Fatal("no BYE in the other dialog")
+	}
+	if cseq, err := sip.ParseCSeq(bye.Get("CSeq")); err != nil || cseq.Number <= 7 {
+		t.Errorf("the BYE in the other dialog has CSeq %q, want a number above the 7 of the caller's INFO", bye.Get("CSeq"))
+	}
+	c.wantCallKept(t, call)
 }
