@@ -240,7 +240,10 @@ func (g *FiveGC) EstablishPDUSession(ctx context.Context, imsi string, m ULNASTr
 			PacketFilters: []PacketFilter{{Direction: Bidirectional, Identifier: 1, MatchAll: true}},
 		},
 	}
-	g.store.PutPDUSession(session)
+	// The UE may have been deregistered since the check above.
+	if err := g.store.PutPDUSessionIfRegistered(session); err != nil {
+		return none, err
+	}
 	g.log.Info("PDU session set up", "imsi", imsi, "pdu_session_id", req.PDUSessionID, "address", addr.String(), "dnn", g.cfg.DNN)
 
 	accept.AuthorizedQoSRules = []QoSRule{session.DefaultQoSFlow.qosRule(true)}
