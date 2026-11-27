@@ -51,6 +51,86 @@ func TestRejectedOfferPutsTheRelayBack(t *testing.T) {
 	}
 }
 
+// TestCancelledReInvitePutsTheRelayBack: the UE gives the change of the
+// session up and cancels its re-INVITE, because the resources of the new
+// session could not be reserved (RFC 3261 9.1, TS 24.229 6.1.4.2 item
+// b). The P-CSCF is a proxy, so it cancels the branch it forwarded and
+// passes the Reason of the CANCEL on (RFC 3261 16.10, RFC 3326 2). The
+// far end has made no change of the session and answers 487, which
+// leaves the session as it was before the re-INVITE (RFC 3261 14.1, RFC
+// 6141 3.3 and 3.8), so the access termination sends to the old port of
+// the UE again. The call stays up.
+func TestCancelledReInvitePutsTheRelayBack(t *testing.T) {
+	h, pcrf, relay := newPolicyHarness(t)
+	c := newUpCall(t, h)
+	before := relay.remote("1", agw.Access)
+	// The far end rings and holds the final response until the CANCEL
+	// comes. Its 180 carries no session description, so nothing of the
+	// session has changed.
+	cancel := make(chan *sip.Message, 1)
+	c.in.Handle(func(r *sip.InDialogRequest) {
+		if r.Request.Method != sip.INVITE {
+			r.Accept(sip.Body{})
+			return
+		}
+		go r.Progress(180, sip.Body{})
+		select {
+		case <-r.Cancelled():
+		case <-time.After(10 * time.Second):
+			t.Error("the CANCEL did not reach the far end")
+		}
+		cancel <- r.CancelRequest()
+		r.Reject(487)
+	})
+
+	reason := sip.NewReason(sip.ReasonSIP, 487, "resources not reserved")
+	ringing := make(chan *sip.Message, 2)
+	reinvited := make(chan *sip.Message, 1)
+	go func() {
+		resp, err := c.out.ReInviteWith(sip.ReInvitation{
+			Body:          sdpBody(sdp.Offer("2", moved)),
+			OnProvisional: func(resp *sip.Message) { ringing <- resp },
+		})
+		if err != nil {
+			t.Errorf("re-INVITE: %v", err)
+		}
+		reinvited <- resp
+	}()
+	select {
+	case resp := <-ringing:
+		if resp.StatusCode != 180 {
+			t.Fatalf("the UE got %d, want the 180 of the far end", resp.StatusCode)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the 180 did not reach the UE")
+	}
+	if err := c.out.CancelReInvite(reason.Header()); err != nil {
+		t.Fatalf("CancelReInvite: %v", err)
+	}
+	select {
+	case resp := <-reinvited:
+		if resp == nil || resp.StatusCode != 487 {
+			t.Fatalf("the cancelled re-INVITE got %v, want the 487 of the far end", resp)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the cancelled re-INVITE got no final response")
+	}
+	select {
+	case got := <-cancel:
+		if got == nil || got.Get("Reason") != reason.String() {
+			t.Errorf("the CANCEL at the far end has Reason %q, want %q", got.Get("Reason"), reason.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the far end did not report the CANCEL")
+	}
+
+	if got := relay.remote("1", agw.Access); got != before {
+		t.Errorf("the access termination sends to %v after the cancelled re-INVITE, want %v again", got, before)
+	}
+	wantCallUp(t, h, pcrf, relay, c.key)
+	hangUp(t, h, c.out, pcrf, relay, c.key)
+}
+
 // TestRejectedOfferGoesBackToTheLastOfferAndAnswer: a re-INVITE of the
 // UE moves its media, and the far end answers from a new port too. A
 // later offer of each party is turned down, and each termination goes
