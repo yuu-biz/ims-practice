@@ -71,8 +71,12 @@ func diagramSVG(b *strings.Builder, d *deck.Deck, s deck.Slide, diagram *layout.
 		if len(n.Role) > 0 {
 			labelY = cy - 2
 		}
-		fmt.Fprintf(b, `<g class="node" data-id="%s" data-state="%s"><rect x="%s" y="%s" width="%s" height="%s" rx="10"/><text class="name" x="%s" y="%s">%s</text>`,
-			n.ID, nodeState(n.ID), num(n.Box.X), num(n.Box.Y), num(n.Box.W), num(n.Box.H), num(cx), num(labelY), html.EscapeString(n.Label))
+		size := ""
+		if n.NameSize > 0 && n.NameSize < layout.DiagramNodeSize {
+			size = fmt.Sprintf(` style="font-size:%spx"`, num(n.NameSize))
+		}
+		fmt.Fprintf(b, `<g class="node" data-id="%s" data-state="%s"><rect x="%s" y="%s" width="%s" height="%s" rx="10"/><text class="name" x="%s" y="%s"%s>%s</text>`,
+			n.ID, nodeState(n.ID), num(n.Box.X), num(n.Box.Y), num(n.Box.W), num(n.Box.H), num(cx), num(labelY), size, html.EscapeString(n.Label))
 		if len(n.Role) > 0 {
 			fmt.Fprintf(b, `<text class="role" x="%s" y="%s">%s</text>`, num(cx), num(cy+18), spansText(n.Role))
 		}

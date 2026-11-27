@@ -53,6 +53,9 @@ type NodeShape struct {
 	Box   Box
 	Label string
 	Role  []deck.Span
+	// NameSize is the size of the name: DiagramNodeSize, or smaller for
+	// a long name, such as that of a field of a Go type.
+	NameSize float64
 }
 
 // GroupShape is the frame around the nodes of a group, with its name in
@@ -251,11 +254,17 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 		cy := diagramMargin + (n.Row-minRow+0.5)*mapCellH
 		b := Box{cx - mapNodeW/2, cy - mapNodeH/2, mapNodeW, mapNodeH}
 		boxes[id] = b
-		d.Nodes = append(d.Nodes, NodeShape{ID: id, Box: b, Label: n.Label, Role: n.Role})
-		d.Bounds = d.Bounds.union(b)
-		if w := textWidth(n.Label, DiagramNodeSize, false, true); w > mapNodeW-8 {
-			d.Problems = append(d.Problems, fmt.Sprintf("the name of node %s is wider than its box", id))
+		// A long name gets smaller, down to 70% of the size; below that
+		// it is too small next to the others, and the check fails.
+		size := DiagramNodeSize
+		if w := textWidth(n.Label, size, false, true); w > mapNodeW-8 {
+			size = math.Floor(size*(mapNodeW-8)/w*2) / 2
+			if size < DiagramNodeSize*0.7 {
+				d.Problems = append(d.Problems, fmt.Sprintf("the name of node %s is wider than its box", id))
+			}
 		}
+		d.Nodes = append(d.Nodes, NodeShape{ID: id, Box: b, Label: n.Label, Role: n.Role, NameSize: size})
+		d.Bounds = d.Bounds.union(b)
 		if w := textWidth(deck.PlainText(n.Role), DiagramRoleSize, false, false); w > mapNodeW-8 {
 			d.Problems = append(d.Problems, fmt.Sprintf("the role of node %s is wider than its box; say it in fewer words", id))
 		}
