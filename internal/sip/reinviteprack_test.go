@@ -1,8 +1,11 @@
 package sip
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -540,5 +543,38 @@ func TestReliableResponseWithABodyThatIsNotSDPCarriesNoOffer(t *testing.T) {
 	}
 	if ack := readDatagram(t, p.peer); ack.Method != ACK || string(ack.Body) != string(answer2.Content) {
 		t.Errorf("got %s with %q, want the ACK with the answer", startLine(ack), ack.Body)
+	}
+}
+
+// RFC 3262 5: the PRACK of a reliable response with an offer carries the
+// answer, which only the user has. A user of ReInvite takes no
+// provisional responses, so that PRACK cannot go out. The UA does not
+// make an answer up, and says in its log why the UAS gets no PRACK.
+func TestOfferInAReliableResponseThatTheUserDoesNotTakeIsLogged(t *testing.T) {
+	var mu sync.Mutex
+	var logs bytes.Buffer
+	tr := listenLayer(t, testLogger(t))
+	callerUA, err := NewUA(tr, UAConfig{SentBy: tr.LocalAddr().String(), Timers: slowTimers, OnCall: noCalls,
+		Contact: "sip:001010000000001@" + tr.LocalAddr().String()}, slog.New(slog.NewTextHandler(lockedWriter{&mu, &logs}, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(callerUA.Close)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	done := reInvite(out, Body{})
+	reinvite := readDatagram(t, p.peer)
+	progress := reliable(reinvite, 183, 1, p.target)
+	offer2.addTo(progress)
+	send(t, p.peer, progress, callerUA.Stack())
+	expectSilence(t, p.peer, 3*slowTimers.T1, "no PRACK without the answer")
+	mu.Lock()
+	logged := strings.Contains(logs.String(), "nobody takes")
+	mu.Unlock()
+	if !logged {
+		t.Error("the UA did not log that the offer of the 183 has nobody to answer it")
+	}
+	p.respond(reinvite, 500, Body{})
+	if r := finalOf(t, done); r.resp == nil || r.resp.StatusCode != 500 {
+		t.Fatalf("ReInvite returned %v, %v; want the 500", r.resp, r.err)
 	}
 }

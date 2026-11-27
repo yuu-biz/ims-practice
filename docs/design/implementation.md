@@ -79,6 +79,8 @@ SIP のスタックは re-INVITE でも、最初の INVITE と同じく RFC 3262
 
 B2BUA が re-INVITE の暫定応答を中継するときは、この 2 つを使います。`OnProvisional` で受けた暫定応答をもう一方のレグに渡し、そのレグから届いた PRACK の本文で `CallDialog.PRACK` を呼びます。もう一方のレグに信頼できる暫定応答を送るには、re-INVITE を受けた側（UAS）が暫定応答を返す口が、`InDialogRequest` に要ります。
 
+オファーの無い re-INVITE を `ReInvite` で送り、相手が信頼できる暫定応答でオファーを返すと、その暫定応答に PRACK を返す者がいません。PRACK にはアンサーを入れますが、利用者は暫定応答を受け取らず、スタックはアンサーを作らないからです。このときスタックは PRACK を送らず、警告をログに書きます。UAS は暫定応答を 64*T1 のあいだ送り直したあと、re-INVITE を 5xx で断ります（RFC 3262 3）。スタックがアンサーを作らないのは、SDP を読まないスタックが作ったアンサーは、利用者の持つセッションと食い違うからです。今、オファーの無い re-INVITE を送るのは、受けた re-INVITE を中継するノード（B2BUA と、会議の参加者の re-INVITE を MRFC に渡す MMTel AS）だけです。MRFC は re-INVITE にすぐ 200 で答えるので、この形になるのは、B2BUA の先の相手が信頼できる暫定応答でオファーを返したときに限られます。オファーの無い re-INVITE を送る利用者は、`ReInviteWith` に `OnProvisional` を渡し、オファーのある暫定応答を受け取ったら、アンサーを付けて `CallDialog.PRACK` を呼びます。
+
 ## 呼処理のノードを Go にした理由
 
 同じ処理（SIP の解析と 401 の生成、Diameter の CER/CEA と DWR/DWA、Cx の MAR）を Go と Rust で試作して比べました。
