@@ -120,6 +120,31 @@ func TestRequestWithinADialogRequiringAKnownExtension(t *testing.T) {
 	}
 }
 
+// RFC 3261 8.2: the method is inspected before the header fields, so a
+// request within a dialog whose method the UA does not take there gets
+// 405 (Method Not Allowed), whatever its Require lists: a PRACK at the
+// UAC, and an INFO in a call without a user to answer it.
+func TestRequestWithinADialogOfAMethodNotTakenAndAnUnknownExtension(t *testing.T) {
+	for _, tc := range []struct {
+		method    Method
+		onRequest func(*InDialogRequest)
+	}{
+		{PRACK, func(r *InDialogRequest) { r.Accept(Body{}) }},
+		{"INFO", nil},
+	} {
+		t.Run(string(tc.method), func(t *testing.T) {
+			callerUA := newUA(t, testTimers, "001010000000001", noCalls)
+			_, p := rawAnswer(t, callerUA, Invitation{OnRequest: tc.onRequest})
+			p.request(tc.method, Body{}, HeaderField{Name: "Require", Value: "foo"})
+			resp := readDatagram(t, p.peer)
+			if resp.StatusCode != 405 || resp.Get("Allow") == "" || resp.Get("Unsupported") != "" {
+				t.Errorf("got %s with Allow %q and Unsupported %q, want 405 with Allow only",
+					startLine(resp), resp.Get("Allow"), resp.Get("Unsupported"))
+			}
+		})
+	}
+}
+
 // RFC 3261 8.2.2.3: Require is ignored in a CANCEL. The CANCEL of a
 // re-INVITE still gets 200, and the re-INVITE 487.
 func TestCANCELWithAnUnknownRequire(t *testing.T) {

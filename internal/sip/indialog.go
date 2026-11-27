@@ -202,17 +202,11 @@ func (r *InDialogRequest) settle(resp *Message, accepted bool) {
 }
 
 // receiveOther takes a request of a method that the UA does not handle
-// by itself. The user of the call answers it; without a handler it gets
-// 405 (RFC 3261 8.2.1).
+// by itself, for the user of the call to answer. Without a user, the
+// method is one the dialog does not take (takes).
 func (d *CallDialog) receiveOther(st *ServerTransaction) {
 	c := d.c
 	c.mu.Lock()
-	handler := c.onRequest
-	if handler == nil {
-		c.mu.Unlock()
-		c.ua.respondNotAllowed(st)
-		return
-	}
 	if st.Request.Method == REFER && len(st.Request.GetAll("Refer-To")) != 1 {
 		// RFC 3515 2.4.2: a REFER has exactly one Refer-To.
 		c.mu.Unlock()
