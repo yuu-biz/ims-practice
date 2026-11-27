@@ -209,6 +209,77 @@ func TestThirdPartyRegisterThatFails(t *testing.T) {
 	}
 }
 
+// chargingVector is the P-Charging-Vector of a REGISTER of the UE, with
+// icid as its icid-value. The third-party REGISTER carries the same
+// icid-value (TS 24.229 5.4.1.7 item h), which tells the server which
+// REGISTER of the UE each third-party REGISTER came from.
+func chargingVector(icid string) []sip.HeaderField {
+	return []sip.HeaderField{{Name: "P-Charging-Vector", Value: "icid-value=" + icid + ";orig-ioi=" + domain}}
+}
+
+// TestAnOlderThirdPartyRegisterThatFailsKeepsTheRegistration: the
+// third-party REGISTERs go out on goroutines of their own, so the one of
+// a re-registration can be answered while the one of the registration
+// before it is still out. The failure of that older request says nothing
+// about the registration that stands, whose own request the server
+// answered, so the default handling of TS 24.229 5.4.1.7 leaves the user
+// registered. A re-registration of the same contact keeps the contact id
+// of the binding (5.4.2.1.2), so the id does not tell the two apart.
+// TestThirdPartyRegisterThatFails sees the same criterion deregister the
+// user when the request of the registration that stands fails.
+func TestAnOlderThirdPartyRegisterThatFailsKeepsTheRegistration(t *testing.T) {
+	got := make(chan *sip.Message, 8)
+	release := make(chan struct{})
+	// The server holds the third-party REGISTER of the registration until
+	// the test releases it, and fails it then. It answers the one of the
+	// re-registration at once.
+	as := newStack(t, func(st *sip.ServerTransaction) {
+		got <- st.Request
+		code := 200
+		if icidOf(st.Request) == "icid-1" {
+			select {
+			case <-release:
+			case <-time.After(3 * time.Second):
+				t.Error("the third-party REGISTER of the registration was never released")
+			}
+			code = 503
+		}
+		st.Respond(sip.NewResponse(st.Request, code, sip.NewTag()))
+	})
+	h := newServiceHarness(t, []ifc.InitialFilterCriteria{registerCriterion(0, asURI, ifc.SessionTerminated)},
+		map[string]netip.AddrPort{asHost: as.LocalAddr()})
+
+	callID := sip.NewCallID()
+	h.extra = chargingVector("icid-1")
+	h.registerUser(callID)
+	received(t, got)
+
+	// The same contact again, which refreshes the binding.
+	h.extra = chargingVector("icid-2")
+	auth, _ := answer(t, h.register(callID, 3, 600000, initial), password, "ip-assoc-yes")
+	if r := h.register(callID, 4, 600000, auth); r.StatusCode != 200 {
+		t.Fatalf("re-registration got %d", r.StatusCode)
+	}
+	if m := received(t, got); icidOf(m) != "icid-2" {
+		t.Fatalf("the second third-party REGISTER has icid-value %q, want the one of the re-registration", icidOf(m))
+	}
+	close(release)
+
+	deregistered := func() bool { return slices.Contains(h.hss.assignments(), cx.AdministrativeDeregistration) }
+	if came(watch, deregistered) {
+		t.Errorf("SARs = %v, want no deregistration after the older third-party REGISTER failed", h.hss.assignments())
+	}
+	reg, ok, err := h.store.Registration(context.Background(), impi)
+	if err != nil || !ok || reg.CSeq != 4 {
+		t.Errorf("the stored registration is for CSeq %d: %v, %v; want the re-registration, CSeq 4", reg.CSeq, ok, err)
+	}
+	// A call of the user still goes on to the I-CSCF, as it does while
+	// the user is registered.
+	if r := h.invite("sip:001010000000002@"+domain, orig, impu); r.StatusCode != 486 {
+		t.Errorf("INVITE of the user got %d, want the 486 of the next hop", r.StatusCode)
+	}
+}
+
 // TestAThirdPartyRegisterThatTheStopCutsIsNoFailure: the S-CSCF stops
 // while the server of a SESSION_TERMINATED criterion has not answered
 // the third-party REGISTER yet. The end of the stack tells nothing of

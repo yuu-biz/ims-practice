@@ -101,6 +101,12 @@ func (s *SCSCF) thirdPartyRegister(req *sip.Message, reg Registration, as ifc.Ap
 // server, which may have answered it, so the registration stays as it
 // is.
 //
+// The default handling ends the registration that reg holds, and only
+// while that is still the registration of the user. The requests go out
+// on goroutines of their own, so the one of a re-registration can be
+// answered while an older one is still out, and the older failure says
+// nothing about the registration that the server knows of.
+//
 // SIMPLIFIED: TS 24.229 5.4.1.7. The term-ioi of the response is not
 // stored: it is for the charging records of the S-CSCF, which no node
 // of this project writes.
@@ -135,8 +141,12 @@ func (s *SCSCF) sendThirdPartyRegister(m *sip.Message, reg Registration, as ifc.
 		log.Warn("the registration stays: the store failed", "error", err.Error())
 		return
 	}
-	if !ok || current.ContactID != reg.ContactID {
-		// Already deregistered, or another contact has taken its place.
+	if !ok || !current.sameBinding(reg) {
+		// The registration is gone, another contact has taken its place,
+		// or a later REGISTER of the same contact has refreshed it. The
+		// third-party REGISTER of that later one speaks for the
+		// registration that stands, so this failure says nothing about it.
+		log.Info("no default handling: the registration of this third-party REGISTER is not the one that stands")
 		return
 	}
 	if err := s.deregisterByNetwork(ctx, current, reginfo.Rejected); err != nil {
