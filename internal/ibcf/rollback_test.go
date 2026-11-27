@@ -523,3 +523,88 @@ func TestRejectedOfferAfterAReliableAnswerKeepsIt(t *testing.T) {
 	}
 	p.waitReleased(t)
 }
+
+// TestCancelledReInvitePutsTheTrGWBack: UE A1 gives the change of the
+// session up and cancels its re-INVITE, because the resources of the new
+// session could not be reserved (RFC 3261 9.1, TS 24.229 6.1.4.2 item
+// b). The CANCEL crosses both IBCFs with its Reason, which stays on a
+// request at the boundary (RFC 3326 2, TS 24.229 4.4.7), and reaches UE
+// B1, which has made no change of the session and answers 487 (RFC 6141
+// 3.3, 3.8). The session stays as it was before the re-INVITE (RFC 3261
+// 14.1), so IBCF-A puts TrGW-A back on the old port of UE A1.
+func TestCancelledReInvitePutsTheTrGWBack(t *testing.T) {
+	p := newPair(t, nil)
+	call, in, _, _ := p.answeredCall(t)
+	reason := sip.NewReason(sip.ReasonSIP, 487, "resources not reserved")
+	// UE B1 rings and holds the final response until the CANCEL comes.
+	// Its 180 carries no session description, so nothing of the session
+	// has changed anywhere.
+	cancel := make(chan *sip.Message, 1)
+	in.Handle(func(r *sip.InDialogRequest) {
+		if r.Request.Method != sip.INVITE {
+			r.Accept(sip.Body{})
+			return
+		}
+		go r.Progress(180, sip.Body{})
+		select {
+		case <-r.Cancelled():
+		case <-time.After(10 * time.Second):
+			t.Error("the CANCEL did not reach UE B1")
+		}
+		cancel <- r.CancelRequest()
+		r.Reject(487)
+	})
+
+	ringing := make(chan *sip.Message, 2)
+	reinvited := make(chan *sip.Message, 1)
+	go func() {
+		resp, err := call.ReInviteWith(sip.ReInvitation{
+			Body:          p.a.offerAt(t, p.a.media.Port()+2, 2),
+			OnProvisional: func(resp *sip.Message) { ringing <- resp },
+		})
+		if err != nil {
+			t.Errorf("re-INVITE: %v", err)
+		}
+		reinvited <- resp
+	}()
+	select {
+	case resp := <-ringing:
+		if resp.StatusCode != 180 {
+			t.Fatalf("UE A1 got %d, want the 180 of UE B1", resp.StatusCode)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the 180 did not reach UE A1")
+	}
+	if err := call.CancelReInvite(reason.Header()); err != nil {
+		t.Fatalf("CancelReInvite: %v", err)
+	}
+	select {
+	case resp := <-reinvited:
+		if resp == nil || resp.StatusCode != 487 {
+			t.Fatalf("the cancelled re-INVITE got %v, want 487", resp)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the cancelled re-INVITE got no final response")
+	}
+	select {
+	case got := <-cancel:
+		if got == nil || got.Get("Reason") != reason.String() {
+			t.Errorf("the CANCEL at UE B1 has Reason %q, want %q", got.Get("Reason"), reason.String())
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("UE B1 did not report the CANCEL")
+	}
+
+	// IBCF-A answered the re-INVITE of UE A1 with 487 itself, since no
+	// reliable provisional response had carried its session description,
+	// so the 487 of UE B1 reaches it after that (RFC 6141 3.3). TrGW-A
+	// goes back when it does.
+	waitFor(t, "TrGW-A back on "+p.a.media.String()+" after the cancelled re-INVITE", func() bool {
+		return onlyContext(t, p.a.trgw).remote[ibcf.CoreSide] == p.a.media
+	})
+	if err := call.Bye(); err != nil {
+		t.Fatalf("BYE: %v", err)
+	}
+	waitDone(t, "the callee's call after the caller's BYE", in.Done())
+	p.waitReleased(t)
+}
