@@ -531,18 +531,40 @@ type ofr struct {
 
 func (s *Store) ofrKey(request string) string { return s.c.Key("ofr", request) }
 
-// BeginOFR writes the record only where there is none, so that of
-// several instances that begin the same request one wins. A record that
-// has expired is gone with its time to live.
-func (s *Store) BeginOFR(ctx context.Context, request string, _, expires time.Time) (bool, error) {
-	_, err := kvjson.CompareAndSwap(ctx, s.c, s.ofrKey(request), "", ofr{Expires: expires}, s.c.TTLUntil(expires))
-	switch {
-	case errors.Is(err, kvstore.ErrConflict):
-		return false, nil
-	case err != nil:
-		return false, err
+// beginRounds bounds the rounds of a BeginOFR whose record keeps
+// changing between its read and its write: one that expires at that
+// instant, or one that has expired and that another instance replaces
+// first. One more round is the most that either needs.
+const beginRounds = 3
+
+// BeginOFR writes the record only where there is none, or over one that
+// has expired by now but that its time to live has not taken away yet,
+// so that of several instances that begin the same request one wins.
+func (s *Store) BeginOFR(ctx context.Context, request string, now, expires time.Time) (bool, error) {
+	key := s.ofrKey(request)
+	version := ""
+	for range beginRounds {
+		_, err := kvjson.CompareAndSwap(ctx, s.c, key, version, ofr{Expires: expires}, s.c.TTLUntil(expires))
+		switch {
+		case err == nil:
+			return true, nil
+		case !errors.Is(err, kvstore.ErrConflict):
+			return false, err
+		}
+		var there ofr
+		v, err := kvjson.Read(ctx, s.c, key, &there)
+		switch {
+		case errors.Is(err, kvstore.ErrNotFound):
+			version = ""
+		case err != nil:
+			return false, err
+		case now.Before(there.Expires):
+			return false, nil
+		default:
+			version = v
+		}
 	}
-	return true, nil
+	return false, errors.New("smscstore: the record of the OFR kept changing while it was begun")
 }
 
 func (s *Store) PutOFA(ctx context.Context, request string, a sgd.MOForwardShortMessageAnswer, expires time.Time) error {

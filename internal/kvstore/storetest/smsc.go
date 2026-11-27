@@ -27,6 +27,7 @@ func SMSC(t *testing.T, newPair func(t *testing.T) (smsc.Store, smsc.Store)) {
 		{"OneLeasePerDestination", smscOneLeasePerDestination},
 		{"OFRIsBegunOnce", smscOFRBegunOnce},
 		{"OFAReachesTheCopyOfTheOFR", smscOFA},
+		{"OFRRecordPastItsExpiresIsGone", smscOFRPastItsExpires},
 	})
 }
 
@@ -442,5 +443,21 @@ func smscOFA(t *testing.T, a, b smsc.Store) {
 	}
 	if got, ok := ofa(t, b, "mme;2", now); ok {
 		t.Errorf("OFA of a request no instance began = %+v", got)
+	}
+}
+
+// smscOFRPastItsExpires: a record whose Expires has passed by the clock
+// of the caller counts as gone, whether or not the store has dropped it
+// yet. The same request is a new one then, and its old answer is gone
+// with it.
+func smscOFRPastItsExpires(t *testing.T, a, b smsc.Store) {
+	now := smscNow()
+	later := now.Add(2 * time.Hour)
+	beginOFR(t, a, "mme;1", now, now.Add(time.Hour))
+	if !beginOFR(t, b, "mme;1", later, later.Add(time.Hour)) {
+		t.Error("BeginOFR after the record expired found it begun")
+	}
+	if got, ok := ofa(t, a, "mme;1", later); ok {
+		t.Errorf("OFA of the request begun anew = %+v", got)
 	}
 }

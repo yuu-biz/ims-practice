@@ -160,11 +160,12 @@ type Store interface {
 	Outcome(ctx context.Context, reference string) (Outcome, bool, error)
 	// BeginTFR keeps reference, the delivery of the TFR that request names
 	// (diameter.DuplicateKey), until expires, unless the Store holds a
-	// delivery for request already. It returns the delivery that request
+	// delivery for request at now already; a record whose expiry has
+	// passed by now counts as none. It returns the delivery that request
 	// has: reference for the first copy of the TFR, and the one of the
 	// first copy for every later one. Of several instances that begin the
 	// same request at once, one has its reference kept.
-	BeginTFR(ctx context.Context, request, reference string, expires time.Time) (string, error)
+	BeginTFR(ctx context.Context, request, reference string, now, expires time.Time) (string, error)
 
 	// PutNotReachable sets the IP-SM-GW's own UE-Not-Reachable-for-IP
 	// flag for the user of publicID until expires: a delivery to that
@@ -373,11 +374,12 @@ func (s *MemoryStore) Outcome(_ context.Context, reference string) (Outcome, boo
 }
 
 // BeginTFR keeps the reference until expires, as an external store
-// would with a time to live.
-func (s *MemoryStore) BeginTFR(_ context.Context, request, reference string, expires time.Time) (string, error) {
+// would with a time to live. A record that has expired by now counts as
+// gone, whether or not its timer has taken it away yet.
+func (s *MemoryStore) BeginTFR(_ context.Context, request, reference string, now, expires time.Time) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if first, ok := s.tfrs[request]; ok && time.Now().Before(first.expires) {
+	if first, ok := s.tfrs[request]; ok && now.Before(first.expires) {
 		return first.reference, nil
 	}
 	s.tfrs[request] = storedOutcome{reference: reference, expires: expires}

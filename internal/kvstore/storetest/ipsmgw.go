@@ -477,9 +477,9 @@ func outcomeOf(t *testing.T, s ipsmgw.Store, reference string) (ipsmgw.Outcome, 
 	return o, ok
 }
 
-func beginTFR(t *testing.T, s ipsmgw.Store, request, reference string, expires time.Time) string {
+func beginTFR(t *testing.T, s ipsmgw.Store, request, reference string, now, expires time.Time) string {
 	t.Helper()
-	first, err := s.BeginTFR(context.Background(), request, reference, expires)
+	first, err := s.BeginTFR(context.Background(), request, reference, now, expires)
 	if err != nil {
 		t.Errorf("BeginTFR(%s): %v", request, err)
 	}
@@ -524,7 +524,7 @@ func ipsmgwTFRBegunOnce(t *testing.T, a, b ipsmgw.Store) {
 		if i%2 == 1 {
 			s = b
 		}
-		first := beginTFR(t, s, "sc;1", "ref-"+string(rune('a'+i)), hourHence())
+		first := beginTFR(t, s, "sc;1", "ref-"+string(rune('a'+i)), time.Now(), hourHence())
 		mu.Lock()
 		defer mu.Unlock()
 		given[first]++
@@ -532,14 +532,23 @@ func ipsmgwTFRBegunOnce(t *testing.T, a, b ipsmgw.Store) {
 	if len(given) != 1 {
 		t.Errorf("BeginTFR gave %v, want one delivery for every copy", given)
 	}
-	if got := beginTFR(t, b, "sc;2", "ref-other", hourHence()); got != "ref-other" {
+	if got := beginTFR(t, b, "sc;2", "ref-other", time.Now(), hourHence()); got != "ref-other" {
 		t.Errorf("BeginTFR of another request = %s, want its own delivery", got)
 	}
 
-	beginTFR(t, a, "sc;3", "ref-old", time.Now().Add(short))
+	beginTFR(t, a, "sc;3", "ref-old", time.Now(), time.Now().Add(short))
 	waitOut()
-	if got := beginTFR(t, b, "sc;3", "ref-new", hourHence()); got != "ref-new" {
+	if got := beginTFR(t, b, "sc;3", "ref-new", time.Now(), hourHence()); got != "ref-new" {
 		t.Errorf("BeginTFR after the record expired = %s, want its own delivery", got)
+	}
+
+	// A record whose Expires has passed by the clock of the caller counts
+	// as gone, whether or not the store has dropped it yet.
+	now := time.Now()
+	later := now.Add(2 * time.Hour)
+	beginTFR(t, a, "sc;4", "ref-old", now, now.Add(time.Hour))
+	if got := beginTFR(t, b, "sc;4", "ref-new", later, later.Add(time.Hour)); got != "ref-new" {
+		t.Errorf("BeginTFR after the record expired by its clock = %s, want its own delivery", got)
 	}
 }
 

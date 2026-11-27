@@ -154,7 +154,8 @@ func (g *IPSMGW) mtForwardShortMessage(ctx context.Context, r sgd.MTForwardShort
 	reference := r.SessionID + ";" + sip.NewTag()
 	deadline := time.Now().Add(g.outcomeWait())
 	request := diameter.DuplicateKey(r.OriginHost, r.EndToEndID)
-	first, err := g.store.BeginTFR(ctx, request, reference, time.Now().Add(diameter.DuplicateWindow))
+	now := time.Now()
+	first, err := g.store.BeginTFR(ctx, request, reference, now, now.Add(diameter.DuplicateWindow))
 	switch {
 	case err != nil:
 		log.Warn("the short message was not delivered: the store failed", "error", err.Error())

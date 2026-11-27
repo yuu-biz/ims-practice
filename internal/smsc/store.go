@@ -112,7 +112,8 @@ type Store interface {
 	// BeginOFR records that an instance has taken the OFR that request
 	// names (diameter.DuplicateKey), and keeps the record until expires.
 	// It reports false, and changes nothing, when a record of request is
-	// there at now already: the OFR is a copy of one the SC has seen.
+	// there at now already: the OFR is a copy of one the SC has seen. A
+	// record whose expiry has passed by now counts as none.
 	// Of several instances that begin the same request at once, one
 	// gets true.
 	BeginOFR(ctx context.Context, request string, now, expires time.Time) (bool, error)
