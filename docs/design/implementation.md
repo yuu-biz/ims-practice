@@ -88,7 +88,8 @@ re-INVITE を受けた側（UAS）は次のように動きます。
 - 利用者は `InDialogRequest.Progress` で、re-INVITE に 101〜198 の暫定応答を返します。re-INVITE の Supported か Require に 100rel があれば信頼できる形で送り、無ければ信頼できない形で送ります（RFC 3262 3）。UA はいつも 100rel に対応するので、Require に 100rel のある re-INVITE にも 420 は返しません。
 - 信頼できる暫定応答には、`Require: 100rel` と `RSeq` と、通話の Contact を付けます（RFC 6141 4.5）。RSeq は re-INVITE ごとに乱数から始め、1 つずつ増やします。PRACK が来るまで、T1 から倍々に延ばす間隔で送り直します。64*T1 たっても来なければ re-INVITE に 500 を返し、通話はそのまま続けます（RFC 3262 3）。
 - PRACK に 200 を返すのは、RAck の RSeq と CSeq（番号とメソッド）が、PRACK を待っている暫定応答と合うときだけです。ほかの PRACK には 481 を返します（RFC 3262 3）。`CallDialog` は相手の最後の INVITE（最初の INVITE か re-INVITE）の状態を指しておき、PRACK をそれと照らし合わせます。発信した側（`OutgoingCall`）のダイアログも同じです。
-- `Accept` と `Reject` は、PRACK を待つ `Progress` が返るまで待ちます。SDP のある信頼できる暫定応答が PRACK で確かめられる前に 2xx を送らないためです（RFC 3262 3、5）。
+- `Accept` は、SDP のある信頼できる暫定応答が PRACK を待っているあいだだけ待ちます。その暫定応答が PRACK で確かめられる前に 2xx を送らないためです（RFC 3262 3、5）。`Reject` は PRACK を待ちません。2xx でない最終応答は、PRACK の来ていない暫定応答を追い越してよいからです（RFC 3262 3）。PRACK を待っていた `Progress` は、そのとき `ErrRequestAnswered` を返します。
+- 最終応答のあとに来た PRACK にも、PRACK を待っている暫定応答と合えば 200 を返します（RFC 3262 3）。re-INVITE のオファーとアンサーは最終応答で終わっているので、その PRACK の SDP はアンサーにもオファーにも数えず、200 にも SDP を入れません（RFC 3261 14.1）。
 - CANCEL を受けると、`InDialogRequest.Cancelled` を閉じて利用者に知らせます。SDP のある信頼できる暫定応答をまだ送っていなければ、re-INVITE には PRACK を待たずに 487 を返し、そのあとに来た PRACK にも 200 を返します（RFC 3261 9.2、RFC 3262 3）。送ったあとなら 487 は返さず、re-INVITE を利用者に任せます。利用者は、変更が済んでいれば `Accept` で 2xx を返し、プリコンディションで変更を待たせていれば `Reject(487)` を返します（RFC 6141 3.3、3.8）。
 - SDP のある最初の信頼できる暫定応答が、re-INVITE のオファーへのアンサーです。オファーの無い re-INVITE では、最初の信頼できる暫定応答がオファーを運ばなければならず、アンサーは PRACK で届きます（RFC 3262 5）。どちらの場合も、2xx に SDP は要りません。信頼できない暫定応答の SDP は、オファーにもアンサーにも数えません。
 - 信頼できる暫定応答を送ったあとは、re-INVITE が失敗しても、re-INVITE の Contact で替えた相手の宛先を元に戻しません（RFC 6141 4.6）。
@@ -98,7 +99,7 @@ re-INVITE を受けた側（UAS）は次のように動きます。
 | --- | --- |
 | 最初の INVITE の UAS の状態を `IncomingCall` に置いたまま、re-INVITE の分を別に書く | RSeq の数え方、送り直し、PRACK の照らし合わせが 2 か所に分かれます。片方だけを直すことになるので採りません。 |
 | 1 つの INVITE の UAS の状態を型（`provisionals`）にまとめ、`IncomingCall` と `InDialogRequest` が持つ（採った形） | 2 つの INVITE が、同じ関数（`makeReliable`、`acceptPRACK`）と同じ送り直しの手順（`retransmit`）を使います。 |
-| SDP のある信頼できる暫定応答が PRACK で確かめられる前の `Accept` を、誤りとして返す | PRACK を待つ手順を、利用者がそれぞれ書くことになるので採りません。`Accept` は待ちます。最初の INVITE の `IncomingCall.Accept` と同じです。 |
+| SDP のある信頼できる暫定応答が PRACK で確かめられる前の `Accept` を、誤りとして返す | PRACK を待つ手順を、利用者がそれぞれ書くことになるので採りません。`Accept` は待ちます。最初の INVITE の `IncomingCall.Accept` も待ちます。 |
 
 信頼できる暫定応答で SDP を送ったあとの CANCEL を利用者に任せるのは、変更が済んだかどうかをスタックが決められないためです。RFC 6141 3.3 では、プリコンディションの無いオファーとアンサーが終わった時点で変更は済み、そのとき UAS は CANCEL されても 2xx を返します（3.8）。プリコンディションの有無は SDP に書いてあり、スタックは SDP を読みません。いつも 487 を返す形は、変更が済んだ re-INVITE に 2xx でない最終応答を返すことになるので採りません。B2BUA は `Cancelled` が閉じたらもう一方のレグに CANCEL を送り、そこから来た最終応答を `Accept` か `Reject` で返します。
 
