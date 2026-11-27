@@ -61,6 +61,11 @@ async function fontsOf(page, client) {
 // stateOf describes what the current slide shows, for comparing the
 // ways of reaching a state.
 function stateOf() {
+  // The page runs this function alone, so it holds its own helpers.
+  const box = (e) => {
+    const r = e.getBoundingClientRect();
+    return Math.round(r.width * 10) / 10 + 'x' + Math.round(r.height * 10) / 10;
+  };
   const s = document.querySelector('#stage > .slide:not([hidden])');
   const svg = s.querySelector('svg.diagram');
   const shown = (list) => Array.from(list).filter((e) => !e.hidden).map((e) => e.dataset.step || e.dataset.id).join(',');
@@ -71,13 +76,16 @@ function stateOf() {
     shown(s.querySelectorAll('.panel .step')),
     shown(s.querySelectorAll('.panel .detail .fields')),
     svg ? svg.getAttribute('viewBox') : '',
+    // The height that the narrow layout gives the diagram comes from
+    // --aspect, so it has to follow the view as well.
+    svg ? svg.style.getPropertyValue('--aspect') + ' ' + box(svg) : '',
   ].join('|');
 }
 
 // steps walks a deck forward, back and by address, and returns its
 // problems.
-async function steps(browser, file) {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, reducedMotion: 'reduce' });
+async function steps(browser, file, viewport) {
+  const context = await browser.newContext({ viewport, reducedMotion: 'reduce' });
   const problems = [];
   context.on('request', (r) => {
     if (!r.url().startsWith('file://')) problems.push('asks the network for ' + r.url());
@@ -106,6 +114,9 @@ async function steps(browser, file) {
   const order = forward.map((_, i) => (i * 7) % forward.length).filter((v, i, a) => a.indexOf(v) === i);
   for (const i of order) {
     await page.goto('file://' + file + forward[i].split('|')[0]);
+    // Only the address changed, so the page has not loaded again: a link
+    // or a reload loads it from the start.
+    await page.reload();
     if ((await page.evaluate(stateOf)) !== forward[i]) problems.push('opening ' + forward[i].split('|')[0] + ' shows another state than stepping to it');
   }
   await page.goto('file://' + file + '#no-such-scene/no-step');
@@ -152,13 +163,17 @@ async function main() {
         console.log(`  ${fallback} of ${glyphs} glyphs in fonts that the deck does not name: ` + unnamed.map(([n]) => n).join(', '));
       }
       await page.close();
-      const walk = await steps(browser, file);
-      if (walk.states > 0) {
-        console.log(`  ${walk.states} states, the same forward, back and by address`.replace('the same', walk.problems.length ? 'not all the same' : 'the same'));
-      }
-      for (const p of walk.problems) {
-        console.log('  ' + p);
-        failed = true;
+      // A wide window, and a phone, where the diagram takes the width
+      // of the screen and its height comes from --aspect.
+      for (const [label, viewport] of [['wide', { width: 1280, height: 720 }], ['narrow', { width: 390, height: 844 }]]) {
+        const walk = await steps(browser, file, viewport);
+        if (walk.states > 0) {
+          console.log(`  ${walk.states} states on a ${label} window, the same forward, back and by address`.replace('the same', walk.problems.length ? 'not all the same' : 'the same'));
+        }
+        for (const p of walk.problems) {
+          console.log(`  (${label}) ${p}`);
+          failed = true;
+        }
       }
     }
   } finally {

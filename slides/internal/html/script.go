@@ -86,6 +86,11 @@ const script = `(function () {
       r.setAttribute('width', target[2]); r.setAttribute('height', target[3]);
       mini.setAttribute('aria-label', zoomed ? words.zoomed : '');
     }
+    // The narrow layout gives the diagram the height that --aspect says.
+    // It follows the target of the move, not the view in between, so the
+    // box changes once, when the move starts, and the same stage has the
+    // same box however it was reached.
+    svg.style.setProperty('--aspect', (target[2] / target[3]).toFixed(3));
     if (svg.dataset.raf) cancelAnimationFrame(+svg.dataset.raf);
     if (!animate || root.classList.contains('still') || !from) { set(target); return; }
     const start = performance.now();
@@ -238,10 +243,6 @@ const script = `(function () {
     const viewport = document.getElementById('viewport');
     const scale = Math.min(viewport.clientWidth / 1280, viewport.clientHeight / 720);
     root.style.setProperty('--scale', narrow ? 1 : scale);
-    for (const svg of document.querySelectorAll('#stage svg.diagram')) {
-      const c = cameras.get(svg);
-      if (c) svg.style.setProperty('--aspect', (c[2] / c[3]).toFixed(3));
-    }
   }
 
   // ---- the check mode --------------------------------------------------
