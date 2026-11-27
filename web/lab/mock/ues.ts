@@ -232,6 +232,8 @@ function session(): UESession {
   const row = (segment: string, direction: string) => ({ segment, direction, reserved: true, strength: "mandatory", confirm: false });
   return {
     codec: { name: "AMR-WB", payload_type: 96, clock_rate: 16000, payload_format: "bandwidth-efficient", telephone_event: 100 },
+    receive_codec: { name: "AMR-WB", payload_type: 96, clock_rate: 16000, payload_format: "bandwidth-efficient", telephone_event: 100 },
+    media: { packets_sent: 50, packets_received: 50, frames_sent: 50, frames_received: 50 },
     direction: "sendrecv",
     peer_direction: "sendrecv",
     preconditions: { met: true, rows: [row("local", "send"), row("local", "recv"), row("remote", "send"), row("remote", "recv")] },

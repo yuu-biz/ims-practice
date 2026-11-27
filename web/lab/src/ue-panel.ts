@@ -15,6 +15,7 @@ import type {
   Subscriber,
   SupplementaryService,
   UECall,
+  UECodec,
   UEConference,
   UESentSMS,
   UESession,
@@ -148,19 +149,39 @@ export function describeConference(conference: UEConference): string[] {
   return [conference.uri, ...conference.users.map((u) => `${u.display_text || u.entity}: ${u.status || "status unknown"}`)];
 }
 
-// The session of a call, one line per part: the codec, the SDP
+function describeCodec(codec: UECodec): string {
+  const parts = [`${codec.name}/${codec.clock_rate}`, `payload type ${codec.payload_type}`];
+  if (codec.payload_format !== "") parts.push(codec.payload_format);
+  if (codec.telephone_event !== null) parts.push(`DTMF payload type ${codec.telephone_event}`);
+  return parts.join(", ");
+}
+
+function isAMR(codec: UECodec): boolean {
+  return /^AMR(-WB)?$/i.test(codec.name);
+}
+
+// The session of a call, one line per part: the codec of each side with
+// the RTP packets and AMR frames received, the SDP
 // directions of both sides and hold (RFC 3264 6.1, TS 24.610), the
 // precondition table (RFC 3312 5) and the DTMF digits (RFC 4733).
 export function describeSession(session: UESession): string[] {
   const lines: string[] = [];
-  const { codec } = session;
+  const { codec, receive_codec: receiveCodec, media } = session;
   if (codec === null) {
     lines.push("codec not settled yet");
   } else {
-    const parts = [`${codec.name}/${codec.clock_rate}`, `payload type ${codec.payload_type}`];
-    if (codec.payload_format !== "") parts.push(codec.payload_format);
-    if (codec.telephone_event !== null) parts.push(`DTMF payload type ${codec.telephone_event}`);
-    lines.push(parts.join(", "));
+    // The UE sends with the numbers of the peer's SDP and takes in those
+    // of its own (RFC 3264 5.1, 6.1), so the two can differ.
+    lines.push(`format sent (peer's SDP): ${describeCodec(codec)}`);
+    if (receiveCodec !== null) lines.push(`format received (this UE's SDP): ${describeCodec(receiveCodec)}`);
+    lines.push(`RTP packets received: ${media.packets_received} (sent ${media.packets_sent})`);
+    // A packet holds one or more AMR frames (RFC 4867 4.3), so the two
+    // counts differ, and only an AMR call has frames at all.
+    lines.push(
+      isAMR(receiveCodec ?? codec)
+        ? `AMR frames received: ${media.frames_received} (sent ${media.frames_sent})`
+        : "AMR frames received: not applicable (the codec is not AMR)",
+    );
   }
   if (session.direction !== "") {
     const peer = session.peer_direction === "" ? "" : `, the peer ${session.peer_direction}`;
