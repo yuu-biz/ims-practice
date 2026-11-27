@@ -129,6 +129,18 @@ func splitEvent(value string) (eventType, id string, hasID bool) {
 	return strings.TrimSpace(head), id, hasID
 }
 
+// EventKey is what tells one subscription of a dialog from another in
+// an Event value: its event type and its id parameter, as sameEvent
+// compares them (RFC 6665 8.2.1). Two values with the same key name the
+// same subscription.
+func EventKey(value string) string {
+	t, id, hasID := splitEvent(value)
+	if !hasID {
+		return t
+	}
+	return t + ";id=" + id
+}
+
 // EventType is the event type of an Event value without its
 // parameters, such as "reg" (RFC 6665 8.2.1).
 func EventType(value string) string {

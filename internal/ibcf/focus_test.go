@@ -2,6 +2,7 @@ package ibcf_test
 
 import (
 	"context"
+	"fmt"
 	"net/netip"
 	"strings"
 	"testing"
@@ -279,6 +280,13 @@ func TestConferenceFocusAnswersAcrossTheBorder(t *testing.T) {
 // network A out of it: no endpoint is named by the address of the
 // creator's UE, nor by the IBCF that the focus has as the joining user's
 // Contact.
+//
+// The user then leaves with a BYE. The subscription shares the dialog
+// with the session, so the BYE ends the session only (RFC 5057 5.5, RFC
+// 6665 4.5.2), and each IBCF keeps both legs for the subscription: the
+// focus's NOTIFY that ends it still reaches the user in that dialog (TS
+// 24.147 5.3.3.3), and the user's 200 reaches the focus. Then the
+// dialogs end at every node.
 func TestConferenceStateAcrossTheBorder(t *testing.T) {
 	// The focus takes the identity that a trusted network asserts.
 	p := newPair(t, func(ofB, ofA *interconnect.Profile) {
@@ -314,9 +322,27 @@ func TestConferenceStateAcrossTheBorder(t *testing.T) {
 		t.Fatalf("the creator got %d with Contact %q, want 200 with the conference URI", created.StatusCode, created.Get("Contact"))
 	}
 
-	// The user of network B joins and subscribes within the dialog.
-	notified := make(chan *sip.Message, 8)
-	joined := p.b.invite(t, conference.URI, p.b.offer(t, sdp.VoLTECodecs(), 1, ""), notified)
+	// The user of network B joins and subscribes within the dialog. Its
+	// UA keeps the dialog for the subscription until end, as a UE does
+	// (RFC 5057 5.5).
+	notified := make(chan *sip.InDialogRequest, 8)
+	answer := p.b.answerInDialog(nil)
+	joined, err := p.b.ue.Invite(sip.Invitation{
+		RequestURI: conference.URI,
+		From:       p.b.sipURI(),
+		Route:      []string{p.b.ueRoute},
+		Body:       p.b.offer(t, sdp.VoLTECodecs(), 1, ""),
+		OnRequest: func(r *sip.InDialogRequest) {
+			if r.Request.Method == sip.NOTIFY {
+				notified <- r
+				return
+			}
+			answer(r)
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if resp := final(t, joined); resp.StatusCode != 200 {
 		t.Fatalf("the user of network B got %d to its INVITE to the conference URI", resp.StatusCode)
 	}
@@ -327,17 +353,11 @@ func TestConferenceStateAcrossTheBorder(t *testing.T) {
 	if err != nil || resp.StatusCode != 200 {
 		t.Fatalf("SUBSCRIBE within the dialog: %v %v", resp, err)
 	}
-	var notify *sip.Message
-	for notify == nil {
-		select {
-		case r := <-notified:
-			if r.Method == sip.NOTIFY {
-				notify = r
-			}
-		case <-time.After(5 * time.Second):
-			t.Fatal("no NOTIFY reached the user of network B")
-		}
+	end, err := joined.AddSubscriptionUsage()
+	if err != nil {
+		t.Fatal(err)
 	}
+	notify := nextNOTIFY(t, notified, "the first NOTIFY to the user of network B")
 	doc, err := confinfo.Parse(notify.Body)
 	if err != nil {
 		t.Fatalf("the NOTIFY has no conference-info: %v\n%s", err, notify.Body)
@@ -351,16 +371,88 @@ func TestConferenceStateAcrossTheBorder(t *testing.T) {
 		}
 	}
 
+	session, _ := joined.Dialog()
 	if err := joined.Bye(); err != nil {
-		t.Fatalf("BYE: %v", err)
+		t.Fatalf("BYE of the user of network B, which wants a 200: %v", err)
 	}
 	waitDone(t, "the call of the user of network B", joined.Done())
+	var last *sip.Message
+	for last == nil {
+		n := nextNOTIFY(t, notified, "a NOTIFY to the user of network B after its BYE")
+		if state, _ := sip.ParseSubscriptionState(n.Get("Subscription-State")); state.State == sip.SubscriptionTerminated {
+			last = n
+		}
+	}
+	end()
+	if state, err := sip.ParseSubscriptionState(last.Get("Subscription-State")); last.Get("Call-ID") != session.ID.CallID ||
+		err != nil || state.Reason != sip.ReasonNoResource {
+		t.Errorf("the user of network B got the last NOTIFY in Call-ID %q with Subscription-State %q, want Call-ID %q and terminated with reason noresource",
+			last.Get("Call-ID"), last.Get("Subscription-State"), session.ID.CallID)
+	}
+	var answered *sip.Message
+	waitFor(t, "the response of the user of network B to the last NOTIFY at the focus", func() bool {
+		answered = answerToLastNOTIFY(p.a)
+		return answered != nil
+	})
+	if answered.StatusCode != 200 {
+		t.Errorf("the focus got %d to its last NOTIFY, want the 200 of the user of network B", answered.StatusCode)
+	}
+
+	// RFC 3261 12.2.2: once the subscription has ended, no node on the
+	// path knows the dialog, and a request within it gets 481.
+	ended, _ := joined.Dialog()
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if resp := p.b.send(t, ended.NewRequest(sip.OPTIONS)); resp.StatusCode == 481 {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatalf("an OPTIONS within the old dialog of the user of network B still gets %d 5 s after the last NOTIFY, want 481", resp.StatusCode)
+		}
+	}
+
 	if err := creator.Bye(); err != nil {
 		t.Fatalf("BYE of the creator: %v", err)
 	}
 	p.waitReleased(t)
 	assertHidden(t, p.b, planA)
 	assertHidden(t, p.a, planB)
+}
+
+// nextNOTIFY waits for what, a NOTIFY within a dialog, and answers it
+// with 200.
+func nextNOTIFY(t *testing.T, notified <-chan *sip.InDialogRequest, what string) *sip.Message {
+	t.Helper()
+	select {
+	case r := <-notified:
+		if _, err := r.Accept(sip.Body{}); err != nil {
+			t.Fatalf("200 to %s: %v", what, err)
+		}
+		return r.Request
+	case <-time.After(5 * time.Second):
+		t.Fatalf("%s did not come", what)
+	}
+	return nil
+}
+
+// answerToLastNOTIFY is the final response that the focus of network n
+// received to its NOTIFY that ended a subscription, as that NOTIFY
+// entered an IBCF instance of n, or nil before it has one.
+func answerToLastNOTIFY(n *network) *sip.Message {
+	type request struct{ callID, cseq string }
+	last := map[request]bool{}
+	for i := range n.instances {
+		for _, m := range n.rec.requests(fmt.Sprintf("ibcf%d-internal", i+1), sip.NOTIFY) {
+			if state, err := sip.ParseSubscriptionState(m.Get("Subscription-State")); err == nil && state.State == sip.SubscriptionTerminated {
+				last[request{m.Get("Call-ID"), m.Get("CSeq")}] = true
+			}
+		}
+	}
+	for _, c := range n.rec.received() {
+		m := c.Message
+		if c.node == "mmtel" && !m.IsRequest() && m.StatusCode >= 200 && last[request{m.Get("Call-ID"), m.Get("CSeq")}] {
+			return m
+		}
+	}
+	return nil
 }
 
 // The three-way session of GSMA IR.92 2.3.3 with a user of the other
