@@ -14,6 +14,13 @@
 // named fonts has, such as the "⊕" of the VoLTE deck, is drawn from
 // another font on any machine; it is listed but does not fail.
 //
+// Then it steps through each deck that has scenes: forward from the
+// first slide to the last step, back to the first, and once more by
+// opening the address of every state, in another order. Each state has
+// to look the same each way: the same events drawn and in the same
+// state, the same nodes in focus, the same text and fields, the same
+// view. It also fails when the page asks the network for anything.
+//
 // Run it in slides/ after the build, with Playwright and its Chromium
 // installed (it loads nothing else):
 //
@@ -49,6 +56,62 @@ async function fontsOf(page, client) {
     }
   }
   return used;
+}
+
+// stateOf describes what the current slide shows, for comparing the
+// ways of reaching a state.
+function stateOf() {
+  const s = document.querySelector('#stage > .slide:not([hidden])');
+  const svg = s.querySelector('svg.diagram');
+  const shown = (list) => Array.from(list).filter((e) => !e.hidden).map((e) => e.dataset.step || e.dataset.id).join(',');
+  return [
+    location.hash,
+    Array.from(s.querySelectorAll('.event')).map((g) => g.dataset.id + ':' + g.dataset.state).join(','),
+    Array.from(s.querySelectorAll('.world .node')).map((g) => g.dataset.id + ':' + g.dataset.state).join(','),
+    shown(s.querySelectorAll('.panel .step')),
+    shown(s.querySelectorAll('.panel .detail .fields')),
+    svg ? svg.getAttribute('viewBox') : '',
+  ].join('|');
+}
+
+// steps walks a deck forward, back and by address, and returns its
+// problems.
+async function steps(browser, file) {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 }, reducedMotion: 'reduce' });
+  const problems = [];
+  context.on('request', (r) => {
+    if (!r.url().startsWith('file://')) problems.push('asks the network for ' + r.url());
+  });
+  const page = await context.newPage();
+  page.on('pageerror', (e) => problems.push('script error: ' + e));
+  await page.goto('file://' + file);
+  const scenes = await page.evaluate(() => document.querySelectorAll('#stage > .scene').length);
+  if (scenes === 0) {
+    await context.close();
+    return { states: 0, problems };
+  }
+  const forward = [];
+  for (;;) {
+    forward.push(await page.evaluate(stateOf));
+    if (await page.evaluate(() => document.getElementById('next').disabled)) break;
+    await page.keyboard.press('ArrowRight');
+  }
+  for (let i = forward.length - 1; i >= 0; i--) {
+    const state = await page.evaluate(stateOf);
+    if (state !== forward[i]) problems.push('stepping back to ' + forward[i].split('|')[0] + ' shows another state');
+    await page.keyboard.press('ArrowLeft');
+  }
+  // Every seventh state from the end, round the deck: an order that is
+  // neither forward nor back.
+  const order = forward.map((_, i) => (i * 7) % forward.length).filter((v, i, a) => a.indexOf(v) === i);
+  for (const i of order) {
+    await page.goto('file://' + file + forward[i].split('|')[0]);
+    if ((await page.evaluate(stateOf)) !== forward[i]) problems.push('opening ' + forward[i].split('|')[0] + ' shows another state than stepping to it');
+  }
+  await page.goto('file://' + file + '#no-such-scene/no-step');
+  if (!(await page.evaluate(stateOf)).startsWith(forward[0].split('|')[0])) problems.push('an unknown address does not open the first slide');
+  await context.close();
+  return { states: forward.length, problems };
 }
 
 async function main() {
@@ -89,6 +152,14 @@ async function main() {
         console.log(`  ${fallback} of ${glyphs} glyphs in fonts that the deck does not name: ` + unnamed.map(([n]) => n).join(', '));
       }
       await page.close();
+      const walk = await steps(browser, file);
+      if (walk.states > 0) {
+        console.log(`  ${walk.states} states, the same forward, back and by address`.replace('the same', walk.problems.length ? 'not all the same' : 'the same'));
+      }
+      for (const p of walk.problems) {
+        console.log('  ' + p);
+        failed = true;
+      }
     }
   } finally {
     await browser.close();
@@ -97,7 +168,7 @@ async function main() {
     console.log('FAIL');
     process.exit(1);
   }
-  console.log(`${decks.length} decks: no box overflows, and the fonts that each deck names drew its text`);
+  console.log(`${decks.length} decks: no box overflows, the fonts that each deck names drew its text, every step of every scene looks the same however it is reached, and nothing is asked of the network`);
 }
 
 main().catch((err) => {
