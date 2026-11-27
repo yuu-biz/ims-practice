@@ -516,3 +516,29 @@ func TestReliableResponseWithAnotherTagIsNotOfTheDialog(t *testing.T) {
 		t.Fatalf("ReInviteWith returned %v, %v; want the 200", r.resp, r.err)
 	}
 }
+
+// RFC 3261 13.2.1: only a session description is an offer or an answer.
+// A reliable 183 whose body is of another type, such as one that a
+// service puts there, carries no offer for a re-INVITE without one: it
+// gets its PRACK from the UA, and the offer comes in the 2xx.
+func TestReliableResponseWithABodyThatIsNotSDPCarriesNoOffer(t *testing.T) {
+	callerUA := newUA(t, slowTimers, "001010000000001", noCalls)
+	out, p := rawAnswer(t, callerUA, Invitation{})
+	done := reInvite(out, Body{})
+	reinvite := readDatagram(t, p.peer)
+	progress := reliable(reinvite, 183, 1, p.target)
+	Body{Type: "text/plain", Content: []byte("connecting")}.addTo(progress)
+	send(t, p.peer, progress, callerUA.Stack())
+	p.respond(readPRACK(t, p, "1 2 INVITE", "3 PRACK"), 200, Body{})
+
+	p.respond(reinvite, 200, offer2, HeaderField{Name: "Contact", Value: "<" + p.target + ">"})
+	if r := finalOf(t, done); r.err != nil || r.resp.StatusCode != 200 {
+		t.Fatalf("ReInvite returned %v, %v; want the 200", r.resp, r.err)
+	}
+	if err := out.Ack(answer2); err != nil {
+		t.Fatalf("Ack with the answer to the offer of the 2xx: %v", err)
+	}
+	if ack := readDatagram(t, p.peer); ack.Method != ACK || string(ack.Body) != string(answer2.Content) {
+		t.Errorf("got %s with %q, want the ACK with the answer", startLine(ack), ack.Body)
+	}
+}

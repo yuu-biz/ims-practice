@@ -752,7 +752,7 @@ func (d *CallDialog) reInviteProvisional(resp *Message, r *reInviteSent) bool {
 	// RFC 6141 4.3: the target stays refreshed even when the re-INVITE
 	// then fails.
 	d.dialog.refreshTarget(resp)
-	if len(resp.Body) > 0 && !r.described {
+	if HasSessionDescription(resp) && !r.described {
 		r.described = true
 		if r.offers {
 			d.offerEvent(AnswerReceived)
