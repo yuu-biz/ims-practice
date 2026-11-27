@@ -424,8 +424,19 @@ func waitingFor(c sgd.SMDeliveryCause) *sgd.SMDeliveryCause { return &c }
 //
 // A TFR that went out and got no answer stays with its node: the
 // IP-SM-GW may have delivered it, and the short message waits for the
-// next attempt rather than reach the UE twice. Nor does a TFR to an MME
-// go to another MME, as it carries the number of that MME for MT SMS.
+// next attempt rather than go to the UE through a second IP-SM-GW at
+// once. Nor does a TFR to an MME go to another MME, as it carries the
+// number of that MME for MT SMS.
+//
+// SIMPLIFIED: RFC 6733 3 and 5.5.4. A TFR that got no answer is not sent
+// again as a copy, with the T flag and the same End-to-End Identifier,
+// which the IP-SM-GW would answer from the delivery of the first one.
+// The next attempt is a new TFR with an End-to-End Identifier of its
+// own, so if the IP-SM-GW had delivered the short message and only its
+// TFA was lost, the UE gets the short message twice. Each attempt is a
+// new request of whichever instance holds the queue of the recipient at
+// the time; a copy would need the request and its identifier kept with
+// the queue.
 func (c *SMSC) forward(ctx context.Context, node servingNode, userName string, tpdu []byte, log *slog.Logger) *failure {
 	f := c.forwardTo(ctx, node, userName, tpdu, log)
 	if f == nil || !f.notBegun || node.kind != nodeIPSMGW {
