@@ -75,9 +75,12 @@ type InDialogRequest struct {
 	// provisionals are the responses of the re-INVITE before its final
 	// one (Progress). described tells that a reliable one has carried
 	// its session description: the answer to its offer, or the offer
-	// when it had none (RFC 3262 5); it is guarded by the mu of the call.
+	// when it had none (RFC 3262 5). offerRSeq is the RSeq of that
+	// response when it carried the offer, whose answer comes in its
+	// PRACK; 0 otherwise. Both are guarded by the mu of the call.
 	provisionals
 	described bool
+	offerRSeq uint32
 
 	// session is what the UA answers to the session timer of a re-INVITE
 	// or UPDATE within the confirmed dialog; nil for any other request.
@@ -208,9 +211,10 @@ func (r *InDialogRequest) settle(resp *Message, accepted bool) {
 	case r.described:
 		// A reliable provisional response of the re-INVITE carried its
 		// session description (RFC 3262 5). An offer there that has no
-		// answer yet goes with the re-INVITE (RFC 3261 14.1); an answer
-		// that went there has been taken.
-		if d.offer == OfferLocal {
+		// answer in a PRACK yet goes with the re-INVITE (RFC 3261 14.1).
+		// An answer that went there has been taken, and an offer that
+		// this UA made after the exchange, in an UPDATE, stays open.
+		if r.offerRSeq > r.prackedRSeq {
 			d.offerEvent(OfferRejected)
 		}
 	case r.Offer && accepted:
@@ -1060,11 +1064,15 @@ func (r *InDialogRequest) Progress(code int, body Body, headers ...HeaderField) 
 	addHeaders(resp, headers)
 	body.addTo(resp)
 	if r.reliable {
-		if err := r.sessionSent(body); err != nil {
+		offers, err := r.sessionSent(body)
+		if err != nil {
 			c.mu.Unlock()
 			return err
 		}
 		r.makeReliable(resp)
+		if offers {
+			r.offerRSeq = r.rseq
+		}
 		// RFC 6141 4.6: the target refresh of the re-INVITE holds from
 		// now on, whatever its final response.
 		r.prevTarget = ""
@@ -1109,24 +1117,24 @@ var errNoOfferInReliable = errors.New("sip: the first reliable provisional respo
 // response to the re-INVITE: the first session description is the
 // answer to the offer of the re-INVITE, or, when it had none, the offer,
 // which the first reliable response MUST carry. A later one changes
-// nothing. c.mu is held.
-func (r *InDialogRequest) sessionSent(body Body) error {
+// nothing. It reports whether body is that offer. c.mu is held.
+func (r *InDialogRequest) sessionSent(body Body) (offers bool, err error) {
 	switch {
 	case r.described:
-		return nil
+		return false, nil
 	case len(body.Content) == 0 && !r.Offer:
-		return errNoOfferInReliable
+		return false, errNoOfferInReliable
 	case len(body.Content) == 0:
-		return nil
+		return false, nil
 	}
 	event := OfferSent
 	if r.Offer {
 		event = AnswerSent
 	}
 	if err := r.d.offerEvent(event); err != nil {
-		return err
+		return false, err
 	}
 	r.described = true
 	r.d.sent(body)
-	return nil
+	return !r.Offer, nil
 }

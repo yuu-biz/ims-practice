@@ -612,3 +612,104 @@ func TestRelayPRACKOfAReINVITE(t *testing.T) {
 		})
 	}
 }
+
+// readRequest reads from the raw peer until a request of method comes.
+func readRequest(t *testing.T, p *rawCallee, method Method) *Message {
+	t.Helper()
+	for {
+		if m := readDatagram(t, p.peer); m.Method == method {
+			return m
+		}
+	}
+}
+
+// RFC 3261 14.1 and RFC 3311 5.1: a re-INVITE without an offer got the
+// offer of this UA in a reliable 183 and the answer in its PRACK; this
+// UA then offered again in an UPDATE. When the re-INVITE fails, the
+// exchange of the 183 is done, and the offer of the UPDATE still waits
+// for its answer, so no third offer may go.
+func TestFailedReINVITEKeepsTheOfferThatCameAfterItsReliableOne(t *testing.T) {
+	reject := make(chan struct{})
+	results := make(chan error, 2)
+	in, p := rawCall(t, testTimers, func(r *InDialogRequest) {
+		if r.Request.Method == PRACK {
+			_, err := r.Accept(Body{})
+			results <- err
+			return
+		}
+		if err := r.Progress(183, offer2); err != nil {
+			results <- err
+			return
+		}
+		<-reject
+		results <- r.Reject(488)
+	})
+	reinvite := reInviteFrom(p, Body{}, supports100rel)
+	prack := prackFrom(p, readProvisional(t, p), answer2)
+	if resp := readFinal(t, p, prack.Get("CSeq")); resp.StatusCode != 200 {
+		t.Fatalf("PRACK with the answer got %s, want 200", startLine(resp))
+	}
+	if err := returned(t, results, "Accept of the PRACK"); err != nil {
+		t.Fatal(err)
+	}
+	updated := make(chan reInviteDone, 1)
+	go func() {
+		resp, err := in.Update(holdOffer)
+		updated <- reInviteDone{resp, err}
+	}()
+	update := readRequest(t, p, UPDATE)
+
+	close(reject)
+	if final := readFinal(t, p, reinvite.Get("CSeq")); final.StatusCode != 488 {
+		t.Fatalf("re-INVITE got %s, want 488", startLine(final))
+	}
+	ackNonOK(t, p, reinvite)
+	if err := returned(t, results, "Reject"); err != nil {
+		t.Fatal(err)
+	}
+	third := make(chan error, 1)
+	go func() {
+		_, err := in.Update(offer2)
+		third <- err
+	}()
+	select {
+	case err := <-third:
+		if !errors.Is(err, ErrOfferPending) {
+			t.Errorf("Update while the offer of the first UPDATE is open: %v, want ErrOfferPending", err)
+		}
+	case <-time.After(time.Second):
+		t.Error("an offer went out while the offer of the UPDATE was open")
+	}
+	p.respond(update, 200, holdAnswer, HeaderField{Name: "Contact", Value: "<" + p.target + ">"})
+	if r := finalOf(t, updated); r.err != nil || r.resp.StatusCode != 200 {
+		t.Errorf("Update returned %v, %v; want the 200", r.resp, r.err)
+	}
+}
+
+// RFC 3261 14.1: the offer of a reliable 183 to a re-INVITE without an
+// offer has no answer while its PRACK has not come, and goes with the
+// re-INVITE when that fails, here for want of the PRACK. The UA may then
+// offer again.
+func TestFailedReINVITEDropsTheOfferOfItsUnacknowledged183(t *testing.T) {
+	in, p := rawCall(t, fastTimers, func(r *InDialogRequest) { r.Progress(183, offer2) })
+	reinvite := reInviteFrom(p, Body{}, supports100rel)
+	if final := readFinal(t, p, reinvite.Get("CSeq")); final.StatusCode != 500 {
+		t.Fatalf("re-INVITE got %s, want 500", startLine(final))
+	}
+	ackNonOK(t, p, reinvite)
+	updated := make(chan reInviteDone, 1)
+	go func() {
+		resp, err := in.Update(holdOffer)
+		updated <- reInviteDone{resp, err}
+	}()
+	select {
+	case r := <-updated:
+		t.Fatalf("Update after the 500 returned %v, %v; want the UPDATE to go out", r.resp, r.err)
+	case <-time.After(10 * fastTimers.T1):
+	}
+	update := readRequest(t, p, UPDATE)
+	p.respond(update, 200, holdAnswer, HeaderField{Name: "Contact", Value: "<" + p.target + ">"})
+	if r := finalOf(t, updated); r.err != nil || r.resp.StatusCode != 200 {
+		t.Errorf("Update returned %v, %v; want the 200", r.resp, r.err)
+	}
+}

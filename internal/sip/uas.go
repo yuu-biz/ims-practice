@@ -59,10 +59,12 @@ type provisionals struct {
 	relay bool
 	// rseq is the RSeq of the last reliable provisional response, and
 	// unacked that response while it waits for its PRACK; pracked is
-	// closed when the PRACK comes.
-	rseq    uint32
-	unacked *Message
-	pracked chan struct{}
+	// closed when the PRACK comes. prackedRSeq is the RSeq of the last
+	// one whose PRACK came, 0 before the first.
+	rseq        uint32
+	unacked     *Message
+	pracked     chan struct{}
+	prackedRSeq uint32
 }
 
 // receiveInvite is RFC 3261 8.2 and 13.3.1 for an INVITE outside a
@@ -413,7 +415,7 @@ func (d *CallDialog) acceptPRACK(st *ServerTransaction) bool {
 			r.Offer = true
 		}
 	}
-	p.unacked = nil
+	p.unacked, p.prackedRSeq = nil, rack.RSeq
 	close(p.pracked)
 	switch {
 	case c.onRequest != nil && (len(req.Body) > 0 || p.relay):
