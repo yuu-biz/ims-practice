@@ -20,11 +20,14 @@ type fakeFocus struct {
 	uri     string
 	refers  chan *sip.Message
 	session chan *sip.IncomingCall
+	// ends gets the end of the usage of each subscription that the focus
+	// takes within the dialog (sip.CallDialog.AddSubscriptionUsage).
+	ends chan func()
 }
 
 func startFakeFocus(t *testing.T) *fakeFocus {
 	t.Helper()
-	f := &fakeFocus{refers: make(chan *sip.Message, 2), session: make(chan *sip.IncomingCall, 1)}
+	f := &fakeFocus{refers: make(chan *sip.Message, 2), session: make(chan *sip.IncomingCall, 1), ends: make(chan func(), 1)}
 	tr := listenTransport(t)
 	f.uri = "sip:conf-1@" + tr.LocalAddr().String()
 	var err error
@@ -60,6 +63,13 @@ func (f *fakeFocus) inDialog(t *testing.T, ic *sip.IncomingCall, r *sip.InDialog
 			s.Notify(200)
 		}
 	case sip.SUBSCRIBE:
+		end, err := ic.AddSubscriptionUsage()
+		if err != nil {
+			t.Error(err)
+			r.Reject(500)
+			return
+		}
+		f.ends <- end
 		r.Accept(sip.Body{}, sip.HeaderField{Name: "Expires", Value: "3600"})
 		doc := confinfo.Conference{URI: f.uri, MaximumUserCount: 6, Participants: []confinfo.Participant{
 			{User: impu, Endpoint: impu, Status: confinfo.Connected}}}
@@ -82,6 +92,100 @@ func (f *fakeFocus) inDialog(t *testing.T, ic *sip.IncomingCall, r *sip.InDialog
 // user=phone and the Replaces of the UE's call with it (5.3.1.5.3).
 func TestConferenceOfTheUE(t *testing.T) {
 	f := startFakeFocus(t)
+	conf, ended, cancel, _ := conferenceOfTheUE(t, f)
+	defer cancel()
+	if conf.URI != f.uri {
+		t.Errorf("conference URI %q, want the Contact of the focus %q", conf.URI, f.uri)
+	}
+	if ic := <-f.session; ic.Request.RequestURI != "sip:mmtel@conf-factory."+domain {
+		t.Errorf("INVITE to %q, want the default conference factory URI", ic.Request.RequestURI)
+	}
+	subscribeWithin(t, conf)
+	if users := conf.Users(); users[0].Entity != impu || users[0].Status != "connected" {
+		t.Errorf("users %v, want the UE connected", users)
+	}
+	defer (<-f.ends)()
+
+	call := sip.Dialog{ID: sip.DialogID{CallID: "call-1@example", LocalTag: "mine", RemoteTag: "theirs"}}
+	status, err := conf.Invite("tel:+12025550102", call)
+	if err != nil || status != 200 {
+		t.Fatalf("Invite got %d, %v; want 200", status, err)
+	}
+	rt, err := sip.ParseReferTo((<-f.refers).Get("Refer-To"))
+	if err != nil || rt.URI != "sip:+12025550102@"+domain+";user=phone" || rt.Replaces == nil ||
+		*rt.Replaces != (sip.Replaces{CallID: "call-1@example", ToTag: "theirs", FromTag: "mine"}) {
+		t.Errorf("Refer-To is %+v (%v), want the peer's number with user=phone and the Replaces of the call", rt, err)
+	}
+	cancel()
+	<-ended
+}
+
+// TestTheUEKeepsItsDialogForTheLastNOTIFY is TS 24.147 5.3.3.3 at the
+// UE, with RFC 5057 5.5 and RFC 6665 4.5.2: a UE that subscribed within
+// the dialog of its conference session and hangs up still takes the
+// NOTIFY that ends the subscription in that dialog, after the 200 to
+// its BYE, and answers it 200. Once it has, the UE no longer knows the
+// dialog (RFC 5057 4), and a request within it gets 481 (RFC 3261
+// 12.2.2).
+func TestTheUEKeepsItsDialogForTheLastNOTIFY(t *testing.T) {
+	f := startFakeFocus(t)
+	conf, ended, cancel, at := conferenceOfTheUE(t, f)
+	defer cancel()
+	ic := <-f.session
+	subscribeWithin(t, conf)
+	endAtTheFocus := <-f.ends
+	defer endAtTheFocus()
+
+	cancel()
+	<-ended
+	select {
+	case <-ic.Done():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the focus got no BYE")
+	}
+	d, _ := ic.Dialog()
+	resp, err := ic.Send(sip.NOTIFY, sip.Body{}, sip.HeaderField{Name: "Event", Value: confinfo.EventPackage},
+		sip.HeaderField{Name: "Subscription-State", Value: "terminated;reason=noresource"})
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("the NOTIFY after the BYE got %v, %v; want 200", resp, err)
+	}
+	endAtTheFocus()
+
+	ct, err := f.ua.Stack().SendRequest(d.NewRequest(sip.OPTIONS), sip.Destination{Transport: sip.UDP, Addr: at})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var final *sip.Message
+	for resp := range ct.Responses() {
+		final = resp
+	}
+	if final == nil || final.StatusCode != 481 {
+		t.Errorf("an OPTIONS within the dialog after the last NOTIFY got %v, want 481", final)
+	}
+}
+
+// subscribeWithin subscribes conf to the conference, which the fake
+// focus takes within the dialog only, and waits for the first NOTIFY.
+func subscribeWithin(t *testing.T, conf *ue.Conference) {
+	t.Helper()
+	if err := conf.Subscribe(); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	deadline := time.After(5 * time.Second)
+	for len(conf.Users()) == 0 {
+		select {
+		case <-conf.Changed():
+		case <-deadline:
+			t.Fatal("no NOTIFY within the dialog reached the conference")
+		}
+	}
+}
+
+// conferenceOfTheUE is a UE that has created a conference at f. cancel
+// hangs up, and ended gets the end of the call. at is the address of
+// the UE.
+func conferenceOfTheUE(t *testing.T, f *fakeFocus) (conf *ue.Conference, ended <-chan error, cancel func(), at netip.AddrPort) {
+	t.Helper()
 	tr := listenTransport(t)
 	addr := tr.LocalAddr()
 	cfg := ue.Config{PrivateIdentity: impi, PublicIdentity: impu, Password: password, HomeDomain: domain,
@@ -104,45 +208,12 @@ func TestConferenceOfTheUE(t *testing.T) {
 	}
 	t.Cleanup(func() { media.Close() })
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	conf, ended, err := u.CreateConference(ctx, ua, directRegistration, media, ue.Speech{}, ue.CallOptions{})
+	conf, ended, err = u.CreateConference(ctx, ua, directRegistration, media, ue.Speech{}, ue.CallOptions{})
 	if err != nil {
+		cancel()
 		t.Fatal(err)
 	}
-	if conf.URI != f.uri {
-		t.Errorf("conference URI %q, want the Contact of the focus %q", conf.URI, f.uri)
-	}
-	if ic := <-f.session; ic.Request.RequestURI != "sip:mmtel@conf-factory."+domain {
-		t.Errorf("INVITE to %q, want the default conference factory URI", ic.Request.RequestURI)
-	}
-	if err := conf.Subscribe(); err != nil {
-		t.Fatalf("Subscribe: %v", err)
-	}
-	deadline := time.After(5 * time.Second)
-	for len(conf.Users()) == 0 {
-		select {
-		case <-conf.Changed():
-		case <-deadline:
-			t.Fatal("no NOTIFY within the dialog reached the conference")
-		}
-	}
-	if users := conf.Users(); users[0].Entity != impu || users[0].Status != "connected" {
-		t.Errorf("users %v, want the UE connected", users)
-	}
-
-	call := sip.Dialog{ID: sip.DialogID{CallID: "call-1@example", LocalTag: "mine", RemoteTag: "theirs"}}
-	status, err := conf.Invite("tel:+12025550102", call)
-	if err != nil || status != 200 {
-		t.Fatalf("Invite got %d, %v; want 200", status, err)
-	}
-	rt, err := sip.ParseReferTo((<-f.refers).Get("Refer-To"))
-	if err != nil || rt.URI != "sip:+12025550102@"+domain+";user=phone" || rt.Replaces == nil ||
-		*rt.Replaces != (sip.Replaces{CallID: "call-1@example", ToTag: "theirs", FromTag: "mine"}) {
-		t.Errorf("Refer-To is %+v (%v), want the peer's number with user=phone and the Replaces of the call", rt, err)
-	}
-	cancel()
-	<-ended
+	return conf, ended, cancel, addr
 }
 
 // TestWaitingCallRingsWithCallWaiting is TS 24.615 4.5.5.3.2 d: the 180
