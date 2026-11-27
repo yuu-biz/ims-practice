@@ -218,6 +218,47 @@ func TestLinesThatNoStepDrawsTogetherShareALane(t *testing.T) {
 	}
 }
 
+// TestLadderHeadsSayTheRole makes sure that the head of a lifeline says
+// the role of its node, so that one AS in two roles makes two heads
+// that a reader can tell apart, and that the pptx writes it too.
+func TestLadderHeadsSayTheRole(t *testing.T) {
+	source := "---\ntitle: T\nfooter: F\nlang: en\nformat: visual\n---\n\n```ims-model\nnodes:\n" +
+		"  - {id: s, label: S-CSCF, at: [0, 0]}\n" +
+		"  - {id: as, label: MMTel AS, role: the user's services, at: [1, 0]}\n" +
+		"  - {id: focus, label: MMTel AS, role: conference focus, at: [2, 0]}\nevents:\n" +
+		"  - {id: inv, msg: INVITE, from: s, to: focus, proto: SIP}\n```\n\n---\n\n# T\n\n---\n\n## S\n\n" +
+		"```ims-scene\nid: l\nview: ladder\nnodes: [s, as, focus]\nsteps:\n  - {id: x, title: X, show: [inv], text: Y}\n```\n"
+	d, err := deck.Parse("heads.md", source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagram := Draw(d.Model, d.Slides[1].Scene)
+	roles := map[string]string{}
+	for _, l := range diagram.Lines {
+		roles[l.ID] = deck.PlainText(l.Role)
+	}
+	if roles["as"] != "the user's services" || roles["focus"] != "conference focus" || roles["s"] != "" {
+		t.Errorf("roles = %v", roles)
+	}
+	pages, problems := Deck(d)
+	if len(problems) > 0 {
+		t.Fatal(problems)
+	}
+	found := false
+	for _, e := range pages[1].Elements {
+		if g, ok := e.(*Group); ok {
+			for _, e := range g.Elements {
+				if box, ok := e.(*TextBox); ok && box.Name == "node focus" {
+					found = strings.Contains(Text(Page{Elements: []Element{box}}), "conference focus")
+				}
+			}
+		}
+	}
+	if !found {
+		t.Error("the head of focus on the page does not say its role")
+	}
+}
+
 // TestS6cIsDiameter makes sure that the interface of the SMS router and
 // the HSS is drawn in the style of Diameter.
 func TestS6cIsDiameter(t *testing.T) {

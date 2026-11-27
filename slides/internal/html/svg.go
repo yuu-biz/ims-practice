@@ -130,8 +130,20 @@ func diagramSVG(b *strings.Builder, d *deck.Deck, s deck.Slide, diagram *layout.
 		fmt.Fprintf(b, `<rect class="band" x="%s" y="0" width="%s" height="%s"/>`, num(diagram.Bounds.X), num(diagram.Bounds.W), num(diagram.Lines[0].Head.Y+diagram.Lines[0].Head.H+10))
 		for _, l := range diagram.Lines {
 			cx, cy := l.Head.Center()
-			fmt.Fprintf(b, `<g class="node" data-id="%s" data-state="%s"><rect x="%s" y="%s" width="%s" height="%s" rx="8"/><text class="name" x="%s" y="%s">%s</text></g>`,
-				l.ID, nodeState(l.ID), num(l.Head.X), num(l.Head.Y), num(l.Head.W), num(l.Head.H), num(cx), num(cy+6), html.EscapeString(l.Label))
+			nameY := cy + 6
+			if len(l.Role) > 0 {
+				nameY = cy - 1
+			}
+			fmt.Fprintf(b, `<g class="node" data-id="%s" data-state="%s"><rect x="%s" y="%s" width="%s" height="%s" rx="8"/><text class="name" x="%s" y="%s">%s</text>`,
+				l.ID, nodeState(l.ID), num(l.Head.X), num(l.Head.Y), num(l.Head.W), num(l.Head.H), num(cx), num(nameY), html.EscapeString(l.Label))
+			if len(l.Role) > 0 {
+				size := ""
+				if l.RoleSize < layout.DiagramRoleSize {
+					size = fmt.Sprintf(` style="font-size:%spx"`, num(l.RoleSize))
+				}
+				fmt.Fprintf(b, `<text class="role" x="%s" y="%s"%s>%s</text>`, num(cx), num(cy+16), size, spansText(l.Role))
+			}
+			b.WriteString("</g>")
 		}
 		b.WriteString("</g>")
 	}
