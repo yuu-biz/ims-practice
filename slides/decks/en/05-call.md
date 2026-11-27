@@ -43,8 +43,7 @@ events:
     proto: HTTP
     note: (context 1)
     fields:
-      - Terminations: An access one (towards UE 1) and a core one (towards the network)
-      - Where the access one sends: The address in UE 1's SDP
+      - Terminations: An access one (towards UE 1) and a core one (towards the network), with nowhere to send yet
   - id: ctx1-ok
     msg: 200 OK
     from: agw
@@ -53,6 +52,20 @@ events:
     note: (context 1)
     fields:
       - What comes back: The ID of the context, and the addresses of its two terminations
+  - id: set1-put
+    msg: PUT .../terminations/access
+    from: pcscf
+    to: agw
+    proto: HTTP
+    note: (context 1)
+    fields:
+      - Where it sends: The address in UE 1's SDP
+  - id: set1-ok
+    msg: 200 OK
+    from: agw
+    to: pcscf
+    proto: HTTP
+    note: (context 1)
   - id: p-rewrite
     do: adds headers, rewrites the SDP
     at: pcscf
@@ -258,8 +271,7 @@ events:
     proto: HTTP
     note: (context 2)
     fields:
-      - Terminations: An access one (towards UE 2) and a core one (towards the network)
-      - Where the core one sends: The address in the offer, the core termination of context 1
+      - Terminations: An access one (towards UE 2) and a core one (towards the network), with nowhere to send yet
   - id: ctx2-ok
     msg: 200 OK
     from: agw
@@ -268,6 +280,20 @@ events:
     note: (context 2)
     fields:
       - What comes back: The ID of the context, and the addresses of its two terminations
+  - id: set2-put
+    msg: PUT .../terminations/core
+    from: pcscf
+    to: agw
+    proto: HTTP
+    note: (context 2)
+    fields:
+      - Where it sends: The address in the offer, the core termination of context 1
+  - id: set2-ok
+    msg: 200 OK
+    from: agw
+    to: pcscf
+    proto: HTTP
+    note: (context 2)
   - id: inv-p-ue2
     msg: INVITE
     from: pcscf
@@ -481,7 +507,7 @@ events:
     at: ue2
     fields:
       - When: Every mandatory precondition is met
-      - Here: Both UEs have their resources, so right after the 183
+      - Here: Both UEs have their resources, so as soon as the 183 has its PRACK
   - id: r180-ue2-p
     msg: "180"
     from: ue2
@@ -1135,6 +1161,14 @@ steps:
     show: [ctx1-ok]
     zoom: [ue1, agw, ue2, pcscf]
     text: The relay answers with the addresses of the two terminations.
+  - id: set
+    title: It tells the access termination where to send
+    show: [set1-put, set1-ok]
+    hide: [ctx1-post, ctx1-ok]
+    active: set1-put
+    detail: [set1-put]
+    zoom: [ue1, agw, ue2, pcscf]
+    text: The POST that makes the context says nowhere to send. The address in UE 1's SDP comes in the PUT after it.
   - id: rewrite
     title: The P-CSCF adds headers and rewrites the SDP
     show: [p-rewrite]
@@ -1362,9 +1396,14 @@ steps:
     active: ctx2-post
     detail: [ctx2-post, ctx2-ok]
     zoom: [ue1, agw, ue2, pcscf]
-    text: |
-      The core termination sends to the address in the offer, the core termination of context 1.
-      Each pass of the P-CSCF handles its own side only.
+    text: Each pass of the P-CSCF handles its own side only.
+  - id: set
+    title: It tells the core termination where to send
+    show: [set2-put, set2-ok]
+    active: set2-put
+    detail: [set2-put]
+    zoom: [ue1, agw, ue2, pcscf]
+    text: It sends to the address in the offer, the core termination of context 1. This too comes in a PUT.
   - id: deliver
     title: The INVITE reaches UE 2
     show: [inv-p-ue2]
@@ -1417,13 +1456,18 @@ steps:
     text: The P-CSCF rewrites the SDP to name the core termination of context 2. The far end of dialog 3 is the callee's AS.
   - id: dialog2
     title: The AS copies the 183 onto the next dialog
-    only: [r183-as-s2, r183-s-i, r183-i-s, r183-s-as2]
+    only: [r183-as-s2, r183-s-i]
     zoom: [icscf, hss, scscf, mmtel]
     active: r183-s-i
     detail: []
-    text: |
-      A response follows the Via of the INVITE, so it passes the I-CSCF too.
-      It passes the S-CSCF twice and reaches the caller's AS.
+    text: A response follows the Via of the INVITE, so it passes the I-CSCF too.
+  - id: dialog2-back
+    title: The 183 reaches the caller's AS
+    show: [r183-i-s, r183-s-as2]
+    zoom: [icscf, hss, scscf, mmtel]
+    active: r183-s-as2
+    detail: []
+    text: From the I-CSCF it goes back to the S-CSCF, its second pass there, and on to the caller's AS.
   - id: dialog1
     title: The 183 reaches the caller's P-CSCF
     only: [r183-as-s1, r183-s-p1]
@@ -1475,12 +1519,19 @@ steps:
       The AS at the far end of dialog 1 answers 200 at once.
   - id: dialog2
     title: The AS sends a PRACK of its own on the next dialog
-    only: [prack-as-s2, prack-s-as2, pok-as-s2, pok-s-as2]
+    only: [prack-as-s2, prack-s-as2]
     zoom: [icscf, hss, scscf, mmtel]
-    active: prack-as-s2
+    active: prack-s-as2
+    detail: []
+    text: The PRACK of dialog 2 goes from the caller's AS through the S-CSCF to the callee's AS. It skips the I-CSCF.
+  - id: dialog2-ok
+    title: The callee's AS answers the PRACK with 200
+    show: [pok-as-s2, pok-s-as2]
+    zoom: [icscf, hss, scscf, mmtel]
+    active: pok-s-as2
     detail: []
     checkpoint: true
-    text: The PRACK of dialog 2 passes the S-CSCF to the callee's AS. It skips the I-CSCF.
+    text: The 200 goes back the same way to the caller's AS.
   - id: dialog3
     title: The PRACK reaches UE 2, which answers 200
     only: [prack-as-s3, prack-s-p3, prack-p-ue2, pok-ue2-p, pok-p-s3, pok-s-as3]
@@ -1534,13 +1585,27 @@ steps:
       The AS acknowledges UE 2's 200 on its own dialog at once.
       So the ACK to UE 2 can come before the 200 to UE 1.
   - id: dialog2
-    title: The 200 OK and the ACK of dialog 2
-    only: [ok-as-s2, ok-s-i, ok-i-s, ok-s-as2, ack-as-s2, ack-s-as2]
+    title: The 200 OK of dialog 2 passes the I-CSCF
+    only: [ok-as-s2, ok-s-i]
     zoom: [icscf, hss, scscf, mmtel]
     active: ok-s-i
     detail: []
+    text: The 200 OK follows the Via, so it passes the I-CSCF as the 183 did.
+  - id: dialog2-back
+    title: The 200 OK reaches the caller's AS
+    show: [ok-i-s, ok-s-as2]
+    zoom: [icscf, hss, scscf, mmtel]
+    active: ok-s-as2
+    detail: []
+    text: From the I-CSCF it goes back to the S-CSCF and on to the caller's AS.
+  - id: dialog2-ack
+    title: The caller's AS sends the ACK
+    only: [ack-as-s2, ack-s-as2]
+    zoom: [icscf, hss, scscf, mmtel]
+    active: ack-s-as2
+    detail: []
     checkpoint: true
-    text: The 200 OK follows the Via and passes the I-CSCF. The ACK follows the route set and skips it.
+    text: The ACK follows the route set, so it skips the I-CSCF.
   - id: dialog1
     title: The 200 OK reaches UE 1
     only: [ok-as-s1, ok-s-p1, ok-p-ue1]
@@ -1561,7 +1626,7 @@ steps:
 | ACK | Follows the route set. It is not part of the INVITE transaction. |
 
 - UE 2 sends the 200 OK again, with growing intervals, until the ACK arrives.
-- A callee whose resources are not there yet sends no 180 until they are. Both UEs here have theirs, so the 180 follows the 183 at once.
+- A callee whose resources are not there yet sends no 180 until they are. Both UEs here have theirs, so the 180 goes as soon as the 183 has its PRACK.
 - The AS acknowledges UE 2's 200 on its own dialog at once, so the ACK to UE 2 can come before the 200 to UE 1.
 
 > Guide: [10](../../../docs/guide/en/call.md#10-ue-2-rings-then-answers-180-and-200-ok) and [11](../../../docs/guide/en/call.md#11-ue-1-confirms-ack). RFC 3312 6. TS 24.229 5.1.4.1. IR.92 2.4.1. RFC 3261 13.3.1.4, 13.2.1, 13.2.2.4. RFC 3262 5.
@@ -1673,13 +1738,18 @@ steps:
       No SIP message shows the removal: the P-CSCF calls the API of the relay.
   - id: dialog2
     title: The AS sends a BYE of its own on the next dialog
-    only: [bye-as-s2, bye-s-as2, bok-as-s2, bok-s-as2]
+    only: [bye-as-s2, bye-s-as2]
     zoom: [icscf, hss, scscf, mmtel]
-    active: bye-as-s2
+    active: bye-s-as2
     detail: []
-    text: |
-      The BYE and the 200 of dialog 2 go between the two ASs through the S-CSCF.
-      The 200 to UE 1 and the BYE to UE 2 may come in either order.
+    text: The BYE of dialog 2 goes from the caller's AS through the S-CSCF to the callee's AS. The 200 to UE 1 and the BYE to UE 2 may come in either order.
+  - id: dialog2-ok
+    title: The callee's AS answers the BYE with 200
+    show: [bok-as-s2, bok-s-as2]
+    zoom: [icscf, hss, scscf, mmtel]
+    active: bok-s-as2
+    detail: []
+    text: The 200 goes back the same way to the caller's AS.
   - id: dialog3
     title: The BYE reaches UE 2
     only: [bye-as-s3, bye-s-p3, bye-p-ue2]
