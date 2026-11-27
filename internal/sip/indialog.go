@@ -576,7 +576,10 @@ var ErrInviteInProgress = errors.New("sip: an INVITE transaction is in progress 
 // it takes the provisional responses to it.
 type ReInvitation struct {
 	// Body is normally the offer. Without one, the re-INVITE asks the
-	// peer for an offer.
+	// peer for an offer, which may come in a reliable provisional
+	// response. The PRACK of that response carries the answer (RFC 3262
+	// 5), which the user sends with PRACK once OnProvisional has handed
+	// it the response.
 	Body Body
 	// Headers are further header fields of the re-INVITE.
 	Headers []HeaderField
@@ -586,16 +589,25 @@ type ReInvitation struct {
 	// order (RFC 3262 4). It runs in the goroutine of ReInviteWith, which
 	// reads the next response only once it returns, so it should hand
 	// any wait, such as for a PRACK of its own, to a goroutine. A B2BUA
-	// passes each response on to its other leg here.
+	// that relays the provisional responses passes each one on to its
+	// other leg here.
 	OnProvisional func(*Message)
 	// ManualPRACK leaves the PRACK for each reliable provisional response
-	// to the user, who sends it with PRACK. A B2BUA sets it to relay the
-	// PRACK of its other leg, with its body.
+	// to the user, who sends it with PRACK, and so needs OnProvisional
+	// too. A B2BUA that relays the PRACK of its other leg, with its body,
+	// sets it.
 	ManualPRACK bool
 }
 
 // ReInvite is ReInviteWith for a re-INVITE with body and headers, whose
-// provisional responses the UA takes by itself.
+// provisional responses the UA takes by itself. It is for a re-INVITE
+// with an offer. One without an offer may get the offer of the peer in
+// a reliable provisional response, whose PRACK has to carry the answer
+// (RFC 3262 5): only the user has it, and ReInvite does not hand the
+// response over. The UA then logs a warning and sends no PRACK, and the
+// UAS gives the re-INVITE up with a 5xx after 64*T1 (RFC 3262 3). A user
+// that sends a re-INVITE without an offer uses ReInviteWith with
+// OnProvisional.
 func (d *CallDialog) ReInvite(body Body, headers ...HeaderField) (*Message, error) {
 	return d.ReInviteWith(ReInvitation{Body: body, Headers: headers})
 }
@@ -663,7 +675,7 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 	t := d.takeTurn()
 	c.mu.Unlock()
 
-	reinvite := reInviteSent{offers: offers, manualPRACK: re.ManualPRACK}
+	reinvite := reInviteSent{offers: offers, manualPRACK: re.ManualPRACK, handsOver: re.OnProvisional != nil}
 	var final *Message
 	ct, err := t.send(c, req)
 	if err == nil {
@@ -722,6 +734,9 @@ type reInviteSent struct {
 	// offers tells that the re-INVITE carried the offer.
 	offers      bool
 	manualPRACK bool
+	// handsOver tells that the user takes the provisional responses
+	// (OnProvisional).
+	handsOver bool
 	// described tells that a reliable provisional response has carried
 	// the session description of the re-INVITE: the answer to its
 	// offer, or the offer when it had none (RFC 3262 5).
@@ -761,9 +776,14 @@ func (d *CallDialog) reInviteProvisional(resp *Message, r *reInviteSent) bool {
 			r.offerRSeq = rseq
 		}
 	}
-	// The response with the offer waits for the user's answer.
-	if !r.manualPRACK && rseq != r.offerRSeq {
+	switch {
+	case !r.manualPRACK && rseq != r.offerRSeq:
 		d.autoPRACK(resp)
+	case !r.handsOver:
+		// The PRACK is the user's, for ManualPRACK or for the answer to the
+		// offer of resp, but the user never gets resp.
+		c.ua.log.Warn("nobody takes the reliable provisional response to the re-INVITE, which gets no PRACK",
+			"status", resp.StatusCode, "call_id", resp.Get("Call-ID"), "rseq", rseq, "offer", rseq == r.offerRSeq)
 	}
 	return true
 }
