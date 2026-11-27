@@ -187,6 +187,8 @@ UE はパスワードと nonce からダイジェストの応答を計算し（R
 - **Call-ID** は 1 回目と同じで、**CSeq** は 1 つ増えます。
 - **Authorization** には、nonce、`cnonce`、`nc=00000001`、`qop=auth`、`response` が入ります。
 
+S-CSCF は、登録と一緒に Call-ID と CSeq を保存します。同じ Call-ID の REGISTER が Contact を変えたり消したりできるのは、その CSeq が保存した値より大きいときだけです（RFC 3261 10.3 の手順 6 と 7）。そうでなければ、S-CSCF は 500 を返し、Contact とその有効期間をそのままにします。新しい再登録のあとに遅れて届いた登録解除が、いまの Contact を消してしまうのを防ぐためです。RFC 3261 は、このような要求は失敗するとだけ書いていて、応答コードを定めていません。そこで、同じ手順が、バインディングの更新に失敗したときのコードとして挙げている 500 を使います。
+
 P-CSCF は Authorization ヘッダに `integrity-protected="ip-assoc-pending"` を付けます（TS 24.229 5.2.2.3）。この REGISTER が認証の要求への答えで、IP の対応付け（IP association）がまだ無いことを S-CSCF に伝えるためです。
 
 ### 8. I-CSCF がもう一度 HSS に問い合わせる

@@ -169,6 +169,8 @@ The UE computes the digest response from its password and the nonce (RFC 2617 3.
 - The **Call-ID** is the same as in the first REGISTER, and **CSeq** goes up by one.
 - **Authorization** now holds the nonce, `cnonce`, `nc=00000001`, `qop=auth` and the `response`.
 
+The S-CSCF stores the Call-ID and CSeq with the registration. A later REGISTER with the same Call-ID changes or removes the contact only if its CSeq is higher than the stored one (RFC 3261 10.3 steps 6 and 7). Otherwise the S-CSCF answers 500 and keeps the contact and its expiry. This stops a de-registration that arrives late, after a newer re-registration, from removing the current contact. RFC 3261 says only that such a request fails and names no code, so 500 is the code the same step gives for a binding update that fails.
+
 The P-CSCF adds `integrity-protected="ip-assoc-pending"` to the Authorization header (TS 24.229 5.2.2.3). It tells the S-CSCF that this REGISTER answers a challenge and that no IP association exists yet.
 
 ### 8. The I-CSCF asks the HSS again
