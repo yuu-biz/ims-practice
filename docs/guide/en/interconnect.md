@@ -374,14 +374,15 @@ The far end may answer the offer in a reliable 183 and wait for the resources of
  |  183: RSeq   |                |              |
  |<-------------|                |              |
  |  PRACK: RAck |                |              |
- |------------->|  PRACK: RAck   |              |
- |              |===============>|  PRACK: RAck |
+ |------------->|                |              |
+ |  200         |                |              |
+ |<-------------|  PRACK: RAck   |              |
+ |              |===============>|              |
+ |              |  200           |              |
+ |              |<===============|  PRACK: RAck |
  |              |                |------------->|
  |              |                |  200         |
- |              |  200           |<-------------|
- |              |<===============|              |
- |  200         |                |              |
- |<-------------|                |              |
+ |              |                |<-------------|
  |  UPDATE: the resources are reserved          |
  |------------->|  UPDATE        |              |
  |              |===============>|  UPDATE      |
@@ -402,7 +403,7 @@ The far end may answer the offer in a reliable 183 and wait for the resources of
  |              |                |------------->|
 ```
 
-- **Each 183 belongs to the dialog it goes in**, with an RSeq of that dialog, and so does the PRACK that acknowledges it. The IBCF acknowledges the 183 of its other leg with a PRACK of its own, once the side that sent the re-INVITE has acknowledged its copy, so the PRACKs go from end to end as they would without the IBCF (RFC 3262 4). The RAck of each PRACK names the RSeq and the CSeq of its own dialog (RFC 3262 7.2). A new offer that a side puts in its PRACK goes on in that PRACK (RFC 3262 5), through the TrGW like any other SDP.
+- **Each 183 belongs to the dialog it goes in**, with an RSeq of that dialog, and so does the PRACK that acknowledges it. The IBCF acknowledges the 183 of its other leg with a PRACK of its own, once the side that sent the re-INVITE has acknowledged its copy, so the PRACKs go from end to end as they would without the IBCF (RFC 3262 4). Each IBCF answers a PRACK without a body with 200 at once, as a UA does, and then sends its own on: a 200 that waited for the one of the far end would have the side retransmit its PRACK meanwhile (RFC 3261 17.1.2.2). The RAck of each PRACK names the RSeq and the CSeq of its own dialog (RFC 3262 7.2). A new offer that a side puts in its PRACK goes on in that PRACK (RFC 3262 5), through the TrGW like any other SDP.
 - **A reliable copy for a reliable response only.** The IBCF copies a provisional response reliably when it came reliably and the re-INVITE offered 100rel. One that came without 100rel is copied without it too, even where the re-INVITE offered it: the session description in such a response is no answer, and a reliable copy would have the side that sent the re-INVITE take it for the answer and leave the answer that follows unread (RFC 3261 13.2.1). RFC 3262 3 leaves the choice to the UAS, which the IBCF is in that dialog. The SDP of such a response still goes through the TrGW, since the side that sent it may receive media there from now on.
 - **The answer went in the 183, so the 200 to the re-INVITE carries none** (RFC 3261 13.2.1, RFC 3262 5). A side that offered no 100rel got its copy unreliably, and takes the session description of the 2xx alone: the 200 that the IBCF sends it carries the answer of the reliable 183 instead of the empty body of the 200 that came.
 - **The re-INVITE does not hold its own PRACK and UPDATE up.** The IBCF sends the requests of one side on in the order they came, each once the one before has its response, so that the far end never gets them the other way round (RFC 3261 12.2.2). A re-INVITE has its final response only at the end of this flow, so the requests after it may go as soon as the far end has answered it with a provisional response: the far end has the re-INVITE by then, with the CSeq that the IBCF gave it.
