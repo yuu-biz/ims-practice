@@ -37,8 +37,9 @@ var transports = []struct {
 
 // Resolver sends DNS queries to one server.
 type Resolver struct {
-	server     string // host:port
-	client     *dns.Client
+	server     string          // host:port
+	client     *dns.Client     // UDP
+	tcpClient  *dns.Client     // for a truncated UDP answer; frames each message with a 2-octet length (RFC 1035 4.2.2)
 	transports []sip.Transport // the ones this node can use, in preference order
 	log        *slog.Logger
 }
@@ -57,7 +58,7 @@ func NewResolver(server string, supported []sip.Transport, log *slog.Logger) (*R
 		}
 		server = net.JoinHostPort(conf.Servers[0], conf.Port)
 	}
-	return &Resolver{server: server, client: &dns.Client{}, transports: supported, log: log}, nil
+	return &Resolver{server: server, client: &dns.Client{}, tcpClient: &dns.Client{Net: "tcp"}, transports: supported, log: log}, nil
 }
 
 // Locate returns the targets for a SIP URI's host, port and transport
@@ -240,17 +241,19 @@ func (r *Resolver) addresses(ctx context.Context, host string, transport sip.Tra
 // query sends one query of qtype for name to the server, and returns
 // the records of the answer section.
 //
-// SIMPLIFIED: RFC 7766 4 and 5 and RFC 1035 4.2.1. A resolver must
-// support TCP as well as UDP, and a server that cannot fit its response
-// into a UDP message truncates it and sets the TC bit, which tells the
-// resolver to ask again over TCP. This one asks over UDP only and reads
-// a truncated response as it came, so the records that did not fit are
-// lost without a word. The zones of this project answer each query
-// with a few records, far below the 512 octets of a UDP message.
+// A server that cannot fit its answer into a UDP message sets the TC
+// bit and leaves out the records that did not fit. The resolver then
+// asks the same question again over TCP and uses that answer instead
+// (RFC 7766 5, RFC 1035 4.2.1). If TCP fails, the query fails: the
+// partial answer would hide records, and could read as "no such record".
 func (r *Resolver) query(ctx context.Context, name string, qtype uint16) ([]dns.RR, error) {
 	m := new(dns.Msg)
 	m.SetQuestion(dns.Fqdn(name), qtype)
 	resp, _, err := r.client.ExchangeContext(ctx, m, r.server)
+	if err == nil && resp.Truncated {
+		r.log.Info("dns answer truncated, asking again over tcp", "type", dns.TypeToString[qtype], "name", dns.Fqdn(name))
+		resp, _, err = r.tcpClient.ExchangeContext(ctx, m, r.server)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("sipdns: %s %s: %w", dns.TypeToString[qtype], name, err)
 	}
