@@ -996,7 +996,7 @@ func (s *session) save() error {
 		return nil
 	}
 	codec, _ := stream.Codec.AMRFormat()
-	amrCall := stream.Codec.Name == sdp.NameAMR || stream.Codec.Name == sdp.NameAMRWB
+	amrCall := stream.Codec.Is(sdp.NameAMR) || stream.Codec.Is(sdp.NameAMRWB)
 	received, _ := s.media.Received()
 	if amrCall {
 		attrs = append(attrs, "frames_sent", stats.FramesSent, "frames_received", stats.FramesReceived)

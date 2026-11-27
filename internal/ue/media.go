@@ -197,12 +197,12 @@ func (m *Media) SetStream(s Stream) error {
 			return err
 		}
 		format = f
-	} else if s.Codec.Name != sdp.NamePCMU {
+	} else if !s.Codec.Is(sdp.NamePCMU) {
 		return fmt.Errorf("codec %s is none the UE plays", s.Codec.Name)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.stream != nil && m.stream.Codec.Name != s.Codec.Name && m.started {
+	if m.stream != nil && !m.stream.Codec.Is(s.Codec.Name) && m.started {
 		return fmt.Errorf("the codec of the call cannot change from %s to %s", m.stream.Codec.Name, s.Codec.Name)
 	}
 	m.stream, m.format = &s, format
@@ -212,7 +212,7 @@ func (m *Media) SetStream(s Stream) error {
 	return nil
 }
 
-func isAMR(c sdp.Codec) bool { return c.Name == sdp.NameAMR || c.Name == sdp.NameAMRWB }
+func isAMR(c sdp.Codec) bool { return c.Is(sdp.NameAMR) || c.Is(sdp.NameAMRWB) }
 
 // SetFlow says which way RTP may go now.
 func (m *Media) SetFlow(f Flow) {
@@ -317,8 +317,8 @@ func (m *Media) Start(speech Speech) error {
 	if m.stream == nil {
 		return errors.New("no stream to send")
 	}
-	switch m.stream.Codec.Name {
-	case sdp.NamePCMU:
+	switch {
+	case m.stream.Codec.Is(sdp.NamePCMU):
 		n := wav.SampleRate * sdp.Ptime / 1000
 		for i := 0; i+n <= len(speech.PCM); i += n {
 			m.speech = append(m.speech, g711.Encode(speech.PCM[i:i+n]))
