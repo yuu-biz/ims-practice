@@ -17,9 +17,9 @@ import (
 func (c Codec) AMRFormat() (amr.Format, error) {
 	var f amr.Format
 	switch {
-	case c.is(NameAMRWB) && c.ClockRate == 16000:
+	case c.Is(NameAMRWB) && c.ClockRate == 16000:
 		f.Codec = amr.AMRWB
-	case c.is(NameAMR) && c.ClockRate == 8000:
+	case c.Is(NameAMR) && c.ClockRate == 8000:
 		f.Codec = amr.AMR
 	default:
 		return amr.Format{}, fmt.Errorf("sdp: payload type %d (%s/%d) is not AMR or AMR-WB", c.PayloadType, c.Name, c.ClockRate)
