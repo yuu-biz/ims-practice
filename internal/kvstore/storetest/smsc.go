@@ -20,6 +20,7 @@ func SMSC(t *testing.T, newPair func(t *testing.T) (smsc.Store, smsc.Store)) {
 	run(t, newPair, []testCase[smsc.Store]{
 		{"ClaimsInOrderOfTime", smscClaimsInOrderOfTime},
 		{"QueueHoldsWhatWasEnqueued", smscQueueHoldsWhatWasEnqueued},
+		{"StoreOwnsMessageUserData", smscStoreOwnsMessageUserData},
 		{"LeaseRunsOut", smscLeaseRunsOut},
 		{"Release", smscRelease},
 		{"Alert", smscAlert},
@@ -205,6 +206,73 @@ func smscQueueHoldsWhatWasEnqueued(t *testing.T, a, b smsc.Store) {
 		got := queue(t, b, l)
 		if len(got) != 1 || !sameJSON(t, got[0], want) {
 			t.Errorf("queue of %s = %+v, want %+v", want.Destination, got, want)
+		}
+	}
+}
+
+// smscStoreOwnsMessageUserData: the body of a message is a slice, so a
+// copy of the struct alone would share it. Changing the message after
+// Enqueue, or the messages Queue returned, must not change what the
+// Store holds.
+func smscStoreOwnsMessageUserData(t *testing.T, a, b smsc.Store) {
+	t0 := smscNow()
+	deliver := smscMessage("m1", bob, t0)
+	report := smsc.Message{
+		ID:          "m2",
+		Destination: alice,
+		StatusReport: &sms.StatusReport{
+			MessageReference:       7,
+			RecipientAddress:       sms.Address{TypeOfNumber: sms.TONInternational, NumberingPlan: sms.NPIISDNTelephone, Digits: bob},
+			ServiceCentreTimeStamp: t0,
+			DischargeTime:          t0.Add(time.Second),
+			Status:                 sms.StatusReceivedBySME,
+			OptionalParameters: sms.OptionalParameters{
+				UserData: sms.UserData{Length: 3, Data: []byte{0x01, 0x02, 0x03}},
+			},
+		},
+		Expires: t0.Add(time.Hour),
+	}
+	body := func(m smsc.Message) []byte {
+		if m.Deliver != nil {
+			return m.Deliver.UserData.Data
+		}
+		return m.StatusReport.UserData.Data
+	}
+	// The Store gets its own copy of what the test keeps to compare with.
+	want := map[string][]byte{
+		deliver.ID: append([]byte(nil), body(deliver)...),
+		report.ID:  append([]byte(nil), body(report)...),
+	}
+
+	enqueue(t, a, deliver, t0)
+	enqueue(t, a, report, t0)
+	// The caller changes its message after Enqueue returned.
+	for _, m := range []smsc.Message{deliver, report} {
+		body(m)[0] ^= 0xff
+	}
+
+	for _, dest := range []string{bob, alice} {
+		l, ok := claim(t, b, dest, t0, time.Minute)
+		if !ok {
+			t.Fatalf("%s is not due", dest)
+		}
+		got := queue(t, b, l)
+		if len(got) != 1 {
+			t.Fatalf("queue of %s = %+v, want one message", dest, got)
+		}
+		if !reflect.DeepEqual(body(got[0]), want[got[0].ID]) {
+			t.Errorf("%s: body after the caller changed its message = %x, want %x", got[0].ID, body(got[0]), want[got[0].ID])
+		}
+		// The caller changes what Queue returned, to a value that is
+		// neither the stored one nor the one changed above, so that a
+		// body shared with either shows.
+		body(got[0])[0] = want[got[0].ID][0] + 1
+		again := queue(t, b, l)
+		if len(again) != 1 {
+			t.Fatalf("queue of %s = %+v, want one message", dest, again)
+		}
+		if !reflect.DeepEqual(body(again[0]), want[got[0].ID]) {
+			t.Errorf("%s: body after the caller changed a returned message = %x, want %x", got[0].ID, body(again[0]), want[got[0].ID])
 		}
 	}
 }
