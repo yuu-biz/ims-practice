@@ -96,6 +96,9 @@ type forkedCallee struct {
 	// refuses, when it is not zero, is the status with which the dialog
 	// that answered refuses an offer within the dialog.
 	refuses int
+	// unreliable, when it is not zero, is the branch whose 183 goes
+	// without 100rel.
+	unreliable int
 }
 
 func newForkedCallee(t *testing.T, offers bool) *forkedCallee {
@@ -127,7 +130,7 @@ func (f *forkedCallee) response(req *sip.Message, code, i int, body sip.Body) *s
 		resp.Add("Record-Route", rr)
 	}
 	resp.Add("Contact", fmt.Sprintf("<sip:branch-%d@%s>", i, f.stack.LocalAddr()))
-	if code < 200 {
+	if code < 200 && i != f.unreliable {
 		resp.AddOption("Require", sip.Option100rel)
 		resp.Add("RSeq", "1")
 	}
@@ -365,4 +368,50 @@ func TestSessionOfTheEarlyDialogThatAnsweredAfterGlare(t *testing.T) {
 			again.Method, again.Body, first.Body)
 	}
 	out.Bye()
+}
+
+// The first dialog shows its session in a 183 that is not reliable, and
+// the second answers in a reliable 183 and its 200. No reliable response
+// has brought the caller a session description before the 200, so the
+// 200 carries the answer, the same as the one in the first 183, which
+// the caller took as the answer (RFC 3261 13.2.1), whether or not the
+// caller offered 100rel. The Call then offers the caller the session of
+// the dialog that answered.
+func TestAnswerAfterAnUnreliableSessionOfAnotherEarlyDialog(t *testing.T) {
+	for _, offers100rel := range []bool{true, false} {
+		t.Run(fmt.Sprintf("100rel %t", offers100rel), func(t *testing.T) {
+			f := newForkedCallee(t, false)
+			f.unreliable = 1
+			b2b := newB2BUA(t, &hooks{}, f.uri())
+			offers := make(chan *sip.Message, 2)
+			caller := newUA(t, "caller", func(in *sip.IncomingCall) { in.Reject(480) })
+			inv := invitation(t, b2b, answerOffers(offers))
+			inv.Body = callerSession(1)
+			if !offers100rel {
+				inv.Headers = append(inv.Headers, sip.HeaderField{Name: "Supported", Value: sip.OptionTimer})
+			}
+			out, err := caller.Invite(inv)
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := within(t, "183 of the first dialog", out.Responses())
+			if first.StatusCode != 183 || first.Requires(sip.Option100rel) || mediaOf(t, first.Body) != 41001 {
+				t.Fatalf("the caller got %v, want an unreliable 183 with the session of the first dialog", first)
+			}
+			f.next <- struct{}{}
+			if second := within(t, "183 of the second dialog", out.Responses()); len(second.Body) != 0 {
+				t.Errorf("the caller got a second session description in its early dialog:\n%s", second.Body)
+			}
+			f.next <- struct{}{}
+			_, final := finalOf(t, out)
+			if final.StatusCode != 200 || string(final.Body) != string(first.Body) {
+				t.Fatalf("the call got %d with\n%s\nwant 200 with the answer of the first 183\n%s", final.StatusCode, final.Body, first.Body)
+			}
+			req := within(t, "the offer at the caller", offers)
+			if got := mediaOf(t, req.Body); got != 41002 {
+				t.Errorf("the %s points the caller's media at port %d, want 41002 of the dialog that answered", req.Method, got)
+			}
+			out.Bye()
+		})
+	}
 }
