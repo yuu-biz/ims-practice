@@ -108,7 +108,7 @@ ims-practice 勉強会 第 3 回（キャプチャはどこから来るか、ど
 
 ---
 
-## ネットワークは 1 つ、ファイルも 1 つ
+## キャプチャは 1 つのファイルにまとまる
 
 ```ims-scene
 id: one-file
@@ -193,7 +193,7 @@ sip || diameter.cmd.code >= 300 || dns.qry.type == 35 || dns.qry.type == 33
 
 ---
 
-## UE が登録する前からファイルに入っているもの
+## 登録の前から記録されているもの
 
 フィルタは `diameter` です。
 
@@ -225,7 +225,7 @@ docker compose stop scscf
 
 ---
 
-## ファイルの中のコピー
+## ラボに届くメッセージのコピー
 
 ```ims-scene
 id: copies
@@ -290,7 +290,7 @@ docker compose up -d --build
 
 ---
 
-## シーケンス図の組み立て方。2 つのコピーを 1 本の矢印に
+## シーケンス図の組み立て方
 
 ```ims-scene
 id: one-arrow
@@ -324,7 +324,7 @@ steps:
 
 ---
 
-## ラボが推定するもの。Cx と Rx
+## ラボが推定する Cx と Rx
 
 ```ims-scene
 id: infer
@@ -358,7 +358,7 @@ steps:
 
 ---
 
-## 1 つの通話と、複数のダイアログ
+## 1 つの通話に複数のダイアログ
 
 ```ims-scene
 id: dialogs
@@ -397,7 +397,7 @@ steps:
 
 ---
 
-## キャプチャに無い、ただ 1 つのメッセージ
+## キャプチャに写らないメッセージ
 
 ```text
   S-CSCF            ラボのシーケンス図              pcap
