@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/precondition"
 	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 	"github.com/yuu-biz/ims-practice/internal/ue"
@@ -73,8 +74,26 @@ func (p *barePeer) readUntil(what string, want func(*sip.Message) bool) *sip.Mes
 	}
 }
 
-// bareCall is a call of the bare peer that the UE has answered, without
-// preconditions: the offer of the peer has none.
+// noneWithin fails when the UE sends a message for which want is true
+// within d.
+func (p *barePeer) noneWithin(d time.Duration, why string, want func(*sip.Message) bool) {
+	p.t.Helper()
+	buf := make([]byte, 65535)
+	deadline := time.Now().Add(d)
+	for {
+		p.conn.SetReadDeadline(deadline)
+		n, err := p.conn.Read(buf)
+		if err != nil {
+			return
+		}
+		if m, err := sip.Parse(buf[:n]); err == nil && want(m) {
+			p.t.Errorf("%s, but the UE sent %s %s", why, m.Method, m.Get("CSeq"))
+			return
+		}
+	}
+}
+
+// bareCall is a call of the bare peer that the UE has answered.
 type bareCall struct {
 	t        *testing.T
 	c        *calledUE
@@ -83,9 +102,16 @@ type bareCall struct {
 	dialog   sip.Dialog // as the peer has it
 	contact  sip.HeaderField
 	answered chan error
+	// precond is the precondition table of the peer, nil for a call
+	// without preconditions.
+	precond *precondition.Table
 }
 
-func newBareCall(t *testing.T) *bareCall {
+// newBareCall has the bare peer call the UE. With preconditions, the
+// peer has its resources reserved from the start and needs no
+// confirmation (RFC 3312 5), so the UE answers in a reliable 183 and
+// alerts at once; the peer acknowledges each reliable response.
+func newBareCall(t *testing.T, preconditions bool) *bareCall {
 	t.Helper()
 	b := &bareCall{t: t, c: newCalledUE(t, ue.CallConfig{}), answered: make(chan error, 1)}
 	sessions := make(chan *ue.Session, 1)
@@ -120,15 +146,47 @@ func newBareCall(t *testing.T) *bareCall {
 	invite.Add("Call-ID", sip.NewCallID())
 	invite.Add("CSeq", "1 INVITE")
 	invite.Add(b.contact.Name, b.contact.Value)
+	if preconditions {
+		b.precond = precondition.NewSegmented(precondition.Originating, precondition.Mandatory, precondition.Optional)
+		b.precond.SetReserved(precondition.SendRecv, true)
+		offer.Media[0].SetPreconditions(b.precond.Offer())
+		invite.Add("Supported", sip.Option100rel+", "+sip.OptionPrecondition)
+	}
 	invite.Add("Content-Type", "application/sdp")
 	invite.Body = offer.Bytes()
 	b.p.request(invite)
-	ok := b.p.readUntil("200 to the INVITE", func(m *sip.Message) bool { return m.StatusCode == 200 })
+	var early *sip.Dialog
+	var ok *sip.Message
+	for ok == nil {
+		resp := b.p.readUntil("200 to the INVITE", func(m *sip.Message) bool {
+			return !m.IsRequest() && m.StatusCode > 100 && m.Get("CSeq") == "1 INVITE"
+		})
+		switch {
+		case resp.StatusCode >= 200:
+			ok = resp
+		case resp.Requires(sip.Option100rel):
+			if early == nil {
+				d, err := sip.NewUACDialog(invite, resp)
+				if err != nil {
+					t.Fatal(err)
+				}
+				early = &d
+			}
+			rseq, _ := sip.ParseRSeq(resp.Get("RSeq"))
+			prack := early.NewRequest(sip.PRACK)
+			prack.Add("Max-Forwards", "70")
+			prack.Add("RAck", sip.RAck{RSeq: rseq, CSeq: sip.CSeq{Number: 1, Method: sip.INVITE}}.String())
+			b.p.request(prack)
+		}
+	}
 	b.dialog, err = sip.NewUACDialog(invite, ok)
 	if err != nil {
 		t.Fatal(err)
 	}
 	b.dialog.LocalSeq = 1
+	if early != nil {
+		b.dialog.LocalSeq = early.LocalSeq
+	}
 	ack := &sip.Message{Method: sip.ACK, RequestURI: b.dialog.RemoteTarget}
 	ack.Add("Max-Forwards", "70")
 	ack.Add("From", invite.Get("From"))
@@ -155,7 +213,8 @@ func (b *bareCall) hold() (<-chan error, *sip.Message) {
 }
 
 // answer is the peer's answer to offer, an SDP of the UE, with the media
-// of the peer at port.
+// of the peer at port, and the preconditions of the peer in a call that
+// uses them.
 func (b *bareCall) answer(offer []byte, port uint16) sip.Body {
 	b.t.Helper()
 	o, err := sdp.Parse(offer)
@@ -165,6 +224,16 @@ func (b *bareCall) answer(offer []byte, port uint16) sip.Body {
 	a, err := sdp.Answer(o, "1", loopback(port))
 	if err != nil {
 		b.t.Fatal(err)
+	}
+	if b.precond != nil {
+		offered, err := o.AudioMedia().Preconditions()
+		if err == nil {
+			offered, err = b.precond.Answer(offered)
+		}
+		if err != nil {
+			b.t.Fatal(err)
+		}
+		a.AudioMedia().SetPreconditions(offered)
 	}
 	return sip.Body{Type: "application/sdp", Content: a.Bytes()}
 }
@@ -236,7 +305,7 @@ func (b *bareCall) hangUp(noMediaOK bool) {
 // 183 with a PRACK, and the 200 that follows carries no SDP (RFC 3261
 // 13.2.1), so the hold rests on the answer of the 183.
 func TestHoldAnsweredInAReliable183(t *testing.T) {
-	b := newBareCall(t)
+	b := newBareCall(t, false)
 	held, reinvite := b.hold()
 	b.progress(reinvite, b.answer(reinvite.Body, b.c.callerMedia.Port()))
 	b.final(reinvite, 200, sip.Body{})
@@ -257,7 +326,7 @@ func TestHoldAnsweredInAReliable183(t *testing.T) {
 // offers that session in a new re-INVITE, after which both sides have
 // the same view of it again (RFC 6141 3.4).
 func TestHoldFailedAfterAReliable183IsUndoneWithANewOffer(t *testing.T) {
-	b := newBareCall(t)
+	b := newBareCall(t, false)
 	before, _ := b.c.media.Stream()
 	held, reinvite := b.hold()
 	// The answer moves the peer's media, which the UE takes at once.
@@ -299,7 +368,7 @@ func TestHoldFailedAfterAReliable183IsUndoneWithANewOffer(t *testing.T) {
 // session after it, so the 200 leaves the session as the UPDATE made it
 // (RFC 3261 13.2.1, RFC 3311 5.1).
 func TestUPDATEOfThePeerAfterTheAnswerOfAHoldStays(t *testing.T) {
-	b := newBareCall(t)
+	b := newBareCall(t, false)
 	held, reinvite := b.hold()
 	b.progress(reinvite, b.answer(reinvite.Body, b.c.callerMedia.Port()))
 
@@ -332,7 +401,7 @@ func TestUPDATEOfThePeerAfterTheAnswerOfAHoldStays(t *testing.T) {
 // the SIP stack takes it too, so the answer of the hold is that of the
 // 200.
 func TestHoldTakesNoAnswerFromABodyThatIsNotSDP(t *testing.T) {
-	b := newBareCall(t)
+	b := newBareCall(t, false)
 	held, reinvite := b.hold()
 	b.progress(reinvite, sip.Body{Type: "text/plain", Content: []byte("connecting")})
 	b.final(reinvite, 200, b.answer(reinvite.Body, b.c.callerMedia.Port()))
@@ -343,4 +412,27 @@ func TestHoldTakesNoAnswerFromABodyThatIsNotSDP(t *testing.T) {
 		t.Errorf("after the hold the session is %+v, want held, with the answer of the 200", st)
 	}
 	b.hangUp(false)
+}
+
+// TestHoldWithPreconditionsFailedAfterAReliable183IsNotOfferedAnew: with
+// preconditions, the offer and answer of the 183 only made the new
+// parameters ready (RFC 6141 3.3), so the UE takes the 500 as saying
+// that the peer used none of them. It goes back to the session before
+// the hold and sends no new offer.
+func TestHoldWithPreconditionsFailedAfterAReliable183IsNotOfferedAnew(t *testing.T) {
+	b := newBareCall(t, true)
+	if st := b.s.Status(); st.Preconditions == nil {
+		t.Fatal("the call does not use preconditions")
+	}
+	held, reinvite := b.hold()
+	b.progress(reinvite, b.answer(reinvite.Body, b.c.callerMedia.Port()))
+	b.final(reinvite, 500, sip.Body{})
+	b.p.noneWithin(time.Second, "no new re-INVITE after the failed hold", func(m *sip.Message) bool { return m.Method == sip.INVITE })
+	if err := b.returned(held); err == nil {
+		t.Fatal("Hold succeeded, want the error of the 500")
+	}
+	if st := b.s.Status(); st.Held || st.Direction != "sendrecv" || st.PeerDirection != "sendrecv" {
+		t.Errorf("after the failed hold the session is %+v, want sendrecv on both sides as before it", st)
+	}
+	b.hangUp(true)
 }
