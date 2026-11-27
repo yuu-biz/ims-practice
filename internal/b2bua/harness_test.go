@@ -122,6 +122,20 @@ func (w *wire) bodies(method sip.Method) []string {
 	return out
 }
 
+// reasons are the Reason header field values of the requests of
+// method, in the order they came; a request without one shows as "".
+func (w *wire) reasons(method sip.Method) []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	var out []string
+	for _, m := range w.got {
+		if m.Method == method {
+			out = append(out, m.Get("Reason"))
+		}
+	}
+	return out
+}
+
 // has reports whether a request of method came.
 func (w *wire) has(method sip.Method) bool {
 	w.mu.Lock()
@@ -179,7 +193,10 @@ type hooks struct {
 	request  func(req *sip.Message, d b2bua.Direction) *b2bua.Refusal
 	response func(resp *sip.Message, d b2bua.Direction)
 	ack      func(ack *sip.Message, d b2bua.Direction)
-	decline  func(m *sip.Message, d b2bua.Direction) bool
+	// unanswered, when set, hears of each request that crossed and got
+	// no 2xx on the other leg (b2bua.Hooks.Unanswered).
+	unanswered func(req *sip.Message, d b2bua.Direction)
+	decline    func(m *sip.Message, d b2bua.Direction) bool
 	// answer, when set, runs as the Call prepares the 2xx for the caller.
 	answer func()
 	own    func(c *b2bua.Call)
@@ -232,7 +249,12 @@ func (h *hooks) Ack(ack *sip.Message, d b2bua.Direction) (sip.Body, bool) {
 	return sip.BodyOf(ack), true
 }
 
-func (h *hooks) Unanswered(*sip.Message, b2bua.Direction) bool { return true }
+func (h *hooks) Unanswered(req *sip.Message, d b2bua.Direction) bool {
+	if h.unanswered != nil {
+		h.unanswered(req, d)
+	}
+	return true
+}
 
 func (h *hooks) Refused(*sip.Message, b2bua.Direction, int) {}
 
