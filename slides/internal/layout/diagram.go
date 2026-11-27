@@ -288,22 +288,31 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 	// of each other. Each is placed at the first free place of a short
 	// list: a process below, above, right or left of its node; a label
 	// at the middle of its line, then further along it, then further out.
-	var taken []Box
-	for _, id := range s.Nodes {
-		taken = append(taken, boxes[id].grow(4, 4))
+	// A place taken by an event is in the way only of the events that
+	// some step draws with it; the nodes are in the way of all.
+	type claim struct {
+		box   Box
+		event string
 	}
-	free := func(b Box) bool {
+	var taken []claim
+	for _, id := range s.Nodes {
+		taken = append(taken, claim{boxes[id].grow(4, 4), ""})
+	}
+	inTheWay := func(c claim, id string) bool {
+		return c.event == "" || drawnTogether(s, c.event, id)
+	}
+	free := func(b Box, id string) bool {
 		for _, t := range taken {
-			if b.overlaps(t) {
+			if inTheWay(t, id) && b.overlaps(t.box) {
 				return false
 			}
 		}
 		return true
 	}
-	cover := func(b Box) float64 {
+	cover := func(b Box, id string) float64 {
 		area := 0.0
-		for _, t := range taken {
-			if b.overlaps(t) {
+		for _, c := range taken {
+			if t := c.box; inTheWay(c, id) && b.overlaps(t) {
 				area += (min(b.X+b.W, t.X+t.W) - max(b.X, t.X)) * (min(b.Y+b.H, t.Y+t.H) - max(b.Y, t.Y))
 			}
 		}
@@ -329,17 +338,19 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 		}
 		shape.Box = candidates[0]
 		for _, c := range candidates {
-			if free(c) {
+			if free(c, id) {
 				shape.Box = c
 				break
 			}
 		}
-		taken = append(taken, shape.Box.grow(3, 3))
+		taken = append(taken, claim{shape.Box.grow(3, 3), id})
 		shape.LabelX, shape.LabelY = shape.Box.Center()
 		shape.LabelW, shape.LabelH = w, processH
 		shapes[id] = shape
 	}
-	lanes := map[[2]string]int{}
+	// The events of one direction of a pair of nodes that some step
+	// draws together get lanes side by side; the others share a lane.
+	lanes := map[[2]string]map[string]int{}
 	for _, id := range s.Events() {
 		e, shape := eventShape(m, id, numbers)
 		if e.Kind == deck.EventProcess {
@@ -367,8 +378,19 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 		if !forward {
 			side = -1
 		}
-		k := lanes[key]
-		lanes[key]++
+		if lanes[key] == nil {
+			lanes[key] = map[string]int{}
+		}
+		k := 0
+		for lane := true; lane; {
+			lane = false
+			for other, l := range lanes[key] {
+				if l == k && drawnTogether(s, other, id) {
+					k, lane = k+1, true
+				}
+			}
+		}
+		lanes[key][id] = k
 		offset := side * (mapLane + float64(k)*mapLaneStep)
 		if shape.Undirected {
 			// A reference point is one line between the two nodes.
@@ -397,7 +419,7 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 			for _, extra := range []float64{0, 14, 28, 42, 56, 70} {
 				for _, t := range []float64{0.5, 0.42, 0.58, 0.35, 0.65, 0.28, 0.72, 0.22, 0.78} {
 					place(t, extra, toward)
-					if c := cover(shape.LabelBox()); c < bestCover {
+					if c := cover(shape.LabelBox(), id); c < bestCover {
 						best, bestCover = [3]float64{t, extra, toward}, c
 						if c == 0 {
 							break search
@@ -407,7 +429,7 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 			}
 		}
 		place(best[0], best[1], best[2])
-		taken = append(taken, shape.LabelBox().grow(2, 2))
+		taken = append(taken, claim{shape.LabelBox().grow(2, 2), id})
 		d.Events = append(d.Events, shape)
 		d.Bounds = d.Bounds.union(Box{min(x1, x2), min(y1, y2), math.Abs(x2 - x1), math.Abs(y2 - y1)})
 		d.Bounds = d.Bounds.union(shape.LabelBox())
