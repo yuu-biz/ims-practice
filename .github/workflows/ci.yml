@@ -11,24 +11,29 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # A change that touches only documents skips the jobs that build and
-  # test the code, and a skipped job counts as passed. Two kinds of test
-  # read Markdown all the same:
-  # - The tests of the slide generator read the decks, which are Markdown
-  #   files under slides/decks/, and the files that the decks link to:
-  #   the guides, the glossary and the READMEs. The slide-tests job runs
-  #   them on every change that the go job skips, so that this job need
-  #   not keep a list of the files that the decks link to.
+  # Each kind of change runs the jobs that it can break, and a skipped
+  # job counts as passed:
+  # - A change of code, which is any file outside the documents (.md,
+  #   docs/, the licence files) and outside slides/, runs every job.
+  # - The packages of the slide generator under slides/ import no other
+  #   package of the repository, and none imports them. A
+  #   change to it, or to any other document, runs the slide-tests job,
+  #   since the generator also reads the decks and the files that they
+  #   link to: the guides, the glossary and the READMEs.
   # - deploy/compose checks the tables of docs/guide/*/capture.md and
-  #   docs/guide/*/README.md against compose.yaml, and the end-to-end
-  #   script of a scenario runs the display filters of its guide against
-  #   its capture. Those it reads in English, and the docs job checks
-  #   that both languages show the same filters. A change to one of those
-  #   files runs every job.
+  #   docs/guide/*/README.md against compose.yaml. A change of one of
+  #   them runs that test in the compose-docs job.
+  # - The end-to-end script of a scenario runs the display filters of its
+  #   English guide against its capture; the docs job checks that both
+  #   languages show the same filters. A change of one of those guides
+  #   runs the end-to-end jobs whose script reads it, which find the name
+  #   of the guide, between spaces, in the guides output.
   changes:
     runs-on: ubuntu-latest
     outputs:
       code: ${{ steps.diff.outputs.code }}
+      compose_docs: ${{ steps.diff.outputs.compose_docs }}
+      guides: ${{ steps.diff.outputs.guides }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -42,14 +47,16 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          code=$(git diff --name-only "$BASE" HEAD |
-            grep -Ev '\.md$|^docs/|^LICENSE|^NOTICE$' | head -n 1 || true)
-          if [ -z "$code" ]; then
-            code=$(git diff --name-only "$BASE" HEAD |
-              grep -E '^docs/guide/(en|ja)/(capture|README)\.md$|^docs/guide/en/(interconnect|mmtel|mrf|oss|sms|volte)\.md$' | head -n 1 || true)
-          fi
-          echo "first file that is not a document: ${code:-none}"
+          files=$(git diff --name-only "$BASE" HEAD)
+          code=$(echo "$files" | grep -Ev '\.md$|^docs/|^LICENSE|^NOTICE$|^slides/' | head -n 1 || true)
+          echo "first file of code: ${code:-none}"
           echo "code=$([ -n "$code" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          compose=$(echo "$files" | grep -E '^docs/guide/(en|ja)/(capture|README)\.md$' | head -n 1 || true)
+          echo "compose_docs=$([ -n "$compose" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          guides=$(echo "$files" | grep -E '^docs/guide/en/(capture|interconnect|mmtel|mrf|oss|sms|volte)\.md$' |
+            sed 's|^docs/guide/en/||; s|\.md$||' | tr '\n' ' ' || true)
+          echo "guides whose filters a scenario runs: ${guides:-none}"
+          echo "guides= $guides" >> "$GITHUB_OUTPUT"
 
   docs:
     runs-on: ubuntu-latest
@@ -122,7 +129,7 @@ jobs:
       - run: go test -race ./...
 
   # The go job runs the tests of the slide generator with the others.
-  # This job runs only them, when the go job is skipped. Like the go job,
+  # This job runs only them, when no code changed. Like the go job,
   # it validates the pptx against the schemas of ECMA-376 with xmllint.
   slide-tests:
     runs-on: ubuntu-latest
@@ -137,7 +144,23 @@ jobs:
           go-version-file: go.mod
       - name: xmllint
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxml2-utils
+      - name: gofmt
+        run: test -z "$(gofmt -l slides)" || { gofmt -l slides; exit 1; }
+      - run: go vet ./slides/...
       - run: go test ./slides/...
+
+  # The go job runs this test with the others; this job runs it alone
+  # when a change of documents touches the guides that it reads.
+  compose-docs:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'false' && needs.changes.outputs.compose_docs == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - run: go test ./deploy/compose/...
 
   web-lab:
     runs-on: ubuntu-latest
@@ -225,7 +248,7 @@ jobs:
   e2e-fm:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || contains(needs.changes.outputs.guides, ' oss ')
     steps:
       - uses: actions/checkout@v7
       - run: scripts/e2e-fm.sh
@@ -305,7 +328,7 @@ jobs:
   e2e-sms:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || contains(needs.changes.outputs.guides, ' sms ') || contains(needs.changes.outputs.guides, ' capture ')
     steps:
       - uses: actions/checkout@v7
       - run: scripts/e2e-sms.sh
@@ -325,7 +348,7 @@ jobs:
   e2e-volte:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || contains(needs.changes.outputs.guides, ' volte ')
     steps:
       - uses: actions/checkout@v7
       - run: scripts/e2e-volte.sh
@@ -371,7 +394,7 @@ jobs:
   e2e-mmtel:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || contains(needs.changes.outputs.guides, ' mmtel ')
     steps:
       - uses: actions/checkout@v7
       - run: scripts/e2e-mmtel.sh
@@ -392,7 +415,7 @@ jobs:
   e2e-mrf:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || contains(needs.changes.outputs.guides, ' mrf ')
     steps:
       - uses: actions/checkout@v7
       - run: scripts/e2e-mrf.sh
@@ -415,7 +438,7 @@ jobs:
   e2e-interconnect:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || contains(needs.changes.outputs.guides, ' interconnect ')
     steps:
       - uses: actions/checkout@v7
       - run: scripts/e2e-interconnect.sh
@@ -586,7 +609,7 @@ jobs:
   e2e-redundancy:
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.code == 'true' || contains(needs.changes.outputs.guides, ' sms ') || contains(needs.changes.outputs.guides, ' mrf ') || contains(needs.changes.outputs.guides, ' capture ')
     env:
       COMPOSE_FILE: compose.yaml:deploy/redundancy/redundancy.yaml
       COMPOSE_PATH_SEPARATOR: ":"
@@ -760,7 +783,7 @@ jobs:
   # skips count as passed.
   all-passed:
     runs-on: ubuntu-latest
-    needs: [changes, docs, go, slide-tests, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-fm, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-maintenance-sip, e2e-maintenance-sms, e2e-maintenance-hss, e2e-redundancy, e2e-fault, cloud, kustomize]
+    needs: [changes, docs, go, slide-tests, compose-docs, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-fm, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-maintenance-sip, e2e-maintenance-sms, e2e-maintenance-hss, e2e-redundancy, e2e-fault, cloud, kustomize]
     if: always()
     steps:
       - name: no job failed or was cancelled

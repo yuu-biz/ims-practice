@@ -40,9 +40,10 @@ compares the filters of the English guides with those of the Japanese
 ones, which are the same filters in the same order with the same
 expectations. It also checks that an end-to-end script runs the table
 of each English guide that has one, and that the CI runs the end-to-end
-scripts when only that guide changes: the "changes" job of
-.github/workflows/ci.yml lets a change of documents alone skip them,
-except for the guides that its pattern names.
+jobs that run those scripts when only that guide changes: the "changes"
+job of .github/workflows/ci.yml names, in its guides output, each guide
+of its pattern that changed, and a job whose script reads a guide runs
+when it finds that name there.
 """
 
 import re
@@ -63,6 +64,8 @@ RUNS = re.compile(r"\bguide_filters\s+(docs/guide/en/[\w.-]+\.md)\b")
 # The pattern with which the CI tells a guide that a test reads from the
 # other documents: the one of a grep -E that names docs/guide.
 CI_PATTERN = re.compile(r"grep -E '([^']*docs/guide[^']*)'")
+# A job of the CI: its name, and the lines up to the next job.
+CI_JOB = re.compile(r"^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)", re.M | re.S)
 
 
 def cells(line):
@@ -131,12 +134,25 @@ def run_by_a_script():
 
 
 def read_by_the_ci():
-    """Whether a change of each guide alone still runs the tests, by the
-    patterns of the CI; None when the CI names no guide."""
+    """Whether a change of each guide alone is named in the guides output
+    of the CI, by its patterns; None when the CI names no guide."""
     patterns = [re.compile(p) for p in CI_PATTERN.findall(CI.read_text(encoding="utf-8"))] if CI.exists() else []
     if not patterns:
         return None
     return lambda guide: any(p.search(guide) for p in patterns)
+
+
+def jobs_left_out(guide):
+    """The jobs of the CI that run a script that reads the guide, but do
+    not run when only that guide changes."""
+    text = CI.read_text(encoding="utf-8") if CI.exists() else ""
+    stem = Path(guide).stem
+    scripts = [s.name for s in sorted(SCRIPTS.glob("e2e-*.sh")) if guide in RUNS.findall(s.read_text(encoding="utf-8"))]
+    left = []
+    for name, body in CI_JOB.findall(text):
+        if any(f"scripts/{s}" in body for s in scripts) and f"contains(needs.changes.outputs.guides, ' {stem} ')" not in body:
+            left.append(name)
+    return left
 
 
 def check_translations():
@@ -163,6 +179,9 @@ def check_translations():
             status = 1
         if mine and ci is not None and not ci(name):
             print(f"FAIL {english.name}: the CI skips the end-to-end scripts when only this guide changes ({CI})")
+            status = 1
+        for job in jobs_left_out(name) if mine else []:
+            print(f"FAIL {english.name}: the CI job {job} runs a script that reads this guide, but not when only the guide changes ({CI})")
             status = 1
         if mine == theirs:
             print(f"ok   {english.name}: {len(mine)} filters in both languages")
