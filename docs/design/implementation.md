@@ -8,7 +8,7 @@
 - メディア中継ノード（IMS-AGW の役割）も Go で書き、CSCF と同じ `ims` コマンドの役割の 1 つにします。
 - SIP のメッセージの解析と組み立て、トランザクション層、ダイアログ層は自作します。
 - SIP のスタックのループは、TCP の接続と書き込みを待ちません。転送層が相手ごとの待ち行列を持ち、別の goroutine で書き込みます。
-- SIP のスタックは re-INVITE を送る側でも、信頼できる暫定応答に PRACK を返します。
+- SIP のスタックは re-INVITE を送る側でも、信頼できる暫定応答に PRACK を返します。re-INVITE を受けた側も、暫定応答を信頼できる形で送り、その PRACK を受けます。
 - Diameter のメッセージと AVP の符号化、TCP の接続、辞書には go-diameter（BSD-3-Clause 相当）を使います。Cx の辞書は同梱されていないので、自分で XML を書きます。
 - Diameter の CER/CEA と DWR/DWA、接続の状態機械は自分で書きます。
 - 学習の対象でない部分（文字列処理、ネットワーク入出力、暗号処理など）や、自作すると工数に見合わない部分には、既存のライブラリを使います。フルスクラッチは必須ではありません。
@@ -77,9 +77,29 @@ SIP のスタックは re-INVITE でも、最初の INVITE と同じく RFC 3262
 - `OnProvisional` は、スタックが受け取った暫定応答を、届いた順に 1 つずつ受け取ります。再送と、順番の外れたものは渡しません。UE は保留の re-INVITE で、ここからアンサーを読みます。
 - `ManualPRACK` は、信頼できる暫定応答への PRACK を利用者に任せます。利用者は `CallDialog.PRACK` で、本文を付けて送ります。オファーのある暫定応答への PRACK は、`ManualPRACK` が無くても利用者が送ります。アンサーを持つのは利用者だけだからです。
 
-この 2 つは、B2BUA が re-INVITE の暫定応答を中継するときに使う口です。中継では、`OnProvisional` で受けた暫定応答をもう一方のレグに渡し、そのレグから届いた PRACK の本文で `CallDialog.PRACK` を呼びます。もう一方のレグに信頼できる暫定応答を送るには、re-INVITE を受けた側（UAS）が暫定応答を返す口も `InDialogRequest` に要りますが、その口はまだありません。今の B2BUA は暫定応答を中継しないので、`ManualPRACK` を使いません。`OnProvisional` は、信頼できる暫定応答が運んだアンサーを、re-INVITE を送ってきた側に返す 2xx に入れるためだけに使います。
+この 2 つは、B2BUA が re-INVITE の暫定応答を中継するときに使う口です。中継では、`OnProvisional` で受けた暫定応答を、もう一方のレグから受けた re-INVITE の `Progress`（次の節）で、そのレグに送ります。その re-INVITE に 100rel が無ければ、暫定応答は信頼できない形で届きます。`RelayPRACK` を呼んでおけば、そのレグから届いた PRACK を本文ごと受け取れるので、その本文で `CallDialog.PRACK` を呼びます。今の B2BUA は暫定応答を中継しないので、`ManualPRACK` を使いません。`OnProvisional` は、信頼できる暫定応答が運んだアンサーを、re-INVITE を送ってきた側に返す 2xx に入れるためだけに使います。
 
 オファーの無い re-INVITE を `ReInvite` で送り、相手が信頼できる暫定応答でオファーを返すと、その暫定応答に PRACK を返す者がいません。PRACK にはアンサーを入れますが、利用者は暫定応答を受け取らず、スタックはアンサーを作らないからです。このときスタックは PRACK を送らず、警告をログに書きます。UAS は暫定応答を 64*T1 のあいだ送り直したあと、re-INVITE を 5xx で断ります（RFC 3262 3）。スタックがアンサーを作らないのは、SDP を読まないスタックが作ったアンサーは、利用者の持つセッションと食い違うからです。今、オファーの無い re-INVITE を送るのは、受けた re-INVITE を中継するノード（B2BUA と、会議の参加者の re-INVITE を MRFC に渡す MMTel AS）だけです。MRFC は re-INVITE にすぐ 200 で答えるので、この形になるのは、B2BUA の先の相手が信頼できる暫定応答でオファーを返したときに限られます。オファーの無い re-INVITE を送る利用者は、`ReInviteWith` に `OnProvisional` を渡し、オファーのある暫定応答を受け取ったら、アンサーを付けて `CallDialog.PRACK` を呼びます。
+
+### re-INVITE を受けた側
+
+re-INVITE を受けた側（UAS）は次のように動きます。
+
+- 利用者は `InDialogRequest.Progress` で、re-INVITE に 101〜198 の暫定応答を返します。re-INVITE の Supported か Require に 100rel があれば信頼できる形で送り、無ければ信頼できない形で送ります（RFC 3262 3）。UA はいつも 100rel に対応するので、Require に 100rel のある re-INVITE にも 420 は返しません。
+- 信頼できる暫定応答には、`Require: 100rel` と `RSeq` と、通話の Contact を付けます（RFC 6141 4.5）。RSeq は re-INVITE ごとに乱数から始め、1 つずつ増やします。PRACK が来るまで、T1 から倍々に延ばす間隔で送り直します。64*T1 たっても来なければ re-INVITE に 500 を返し、通話はそのまま続けます（RFC 3262 3）。
+- PRACK に 200 を返すのは、RAck の RSeq と CSeq（番号とメソッド）が、PRACK を待っている暫定応答と合うときだけです。ほかの PRACK には 481 を返します（RFC 3262 3）。`CallDialog` は相手の最後の INVITE（最初の INVITE か re-INVITE）の状態を指しておき、PRACK をそれと照らし合わせます。発信した側（`OutgoingCall`）のダイアログも同じです。
+- `Accept` と `Reject` は、PRACK を待つ `Progress` が返るまで待ちます。SDP のある信頼できる暫定応答が PRACK で確かめられる前に 2xx を送らないためです（RFC 3262 3、5）。CANCEL を受けた re-INVITE への 487 は待たずに送り、そのあとに来た PRACK にも 200 を返します（RFC 3261 9.2、RFC 3262 3）。
+- SDP のある最初の信頼できる暫定応答が、re-INVITE のオファーへのアンサーです。オファーの無い re-INVITE では、最初の信頼できる暫定応答がオファーを運ばなければならず、アンサーは PRACK で届きます（RFC 3262 5）。どちらの場合も、2xx に SDP は要りません。信頼できない暫定応答の SDP は、オファーにもアンサーにも数えません。
+- 信頼できる暫定応答を送ったあとは、re-INVITE が失敗しても、re-INVITE の Contact で替えた相手の宛先を元に戻しません（RFC 6141 4.6）。
+- `InDialogRequest.RelayPRACK` を呼んだ re-INVITE では、PRACK を本文の有無にかかわらず利用者に渡します。最初の INVITE の `IncomingCall.RelayPRACK` と同じです。
+
+| 形 | 採らなかった理由、採った理由 |
+| --- | --- |
+| 最初の INVITE の UAS の状態を `IncomingCall` に置いたまま、re-INVITE の分を別に書く | RSeq の数え方、送り直し、PRACK の照らし合わせが 2 か所に分かれます。片方だけを直すことになるので採りません。 |
+| 1 つの INVITE の UAS の状態を型（`provisionals`）にまとめ、`IncomingCall` と `InDialogRequest` が持つ（採った形） | 2 つの INVITE が、同じ関数（`makeReliable`、`acceptPRACK`）と同じ送り直しの手順（`retransmit`）を使います。 |
+| SDP のある信頼できる暫定応答が PRACK で確かめられる前の `Accept` を、誤りとして返す | PRACK を待つ手順を、利用者がそれぞれ書くことになるので採りません。`Accept` は待ちます。最初の INVITE の `IncomingCall.Accept` と同じです。 |
+
+CANCEL された re-INVITE には、信頼できる暫定応答でアンサーを送ったあとでも 487 を返します。RFC 6141 3.8 は、変更が済んだ re-INVITE には 2xx を返すとしています。済んだかどうかはプリコンディションの有無で決まり、それは SDP に書いてあります。スタックは SDP を読まないので、この点はコードと手順書に `SIMPLIFIED:` として書きました。
 
 ## 呼処理のノードを Go にした理由
 
