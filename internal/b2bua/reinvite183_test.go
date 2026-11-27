@@ -260,7 +260,16 @@ func TestAReINVITEWithout100relKeepsTheAnswerForThe2xx(t *testing.T) {
 	rc := newRawCallee(t, timers)
 	b2b := newB2BUA(t, &hooks{}, rc.uri())
 	reinvites := make(chan *sip.InDialogRequest, 1)
-	_, d := answeredCall(t, rc, b2b, func(r *sip.InDialogRequest) { reinvites <- r })
+	callerWire := newWire()
+	caller := startUA(t, "caller", timers, callerWire, func(in *sip.IncomingCall) { in.Reject(480) })
+	out, err := caller.Invite(invitation(t, b2b, func(r *sip.InDialogRequest) { reinvites <- r }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, final := finalOf(t, out); final.StatusCode != 200 {
+		t.Fatalf("the call got %d", final.StatusCode)
+	}
+	d := within(t, "dialog at the callee", rc.dialog)
 
 	ct := rc.send(&d, sip.INVITE, reOffer, sip.HeaderField{Name: "Contact", Value: "<" + rc.uri() + ">"})
 	r := within(t, "the re-INVITE of the callee at the caller", reinvites)
@@ -283,6 +292,12 @@ func TestAReINVITEWithout100relKeepsTheAnswerForThe2xx(t *testing.T) {
 	if resp := finalTo(ct); resp == nil || resp.StatusCode != 200 || string(resp.Body) != string(reAnswer.Content) {
 		t.Errorf("the callee's re-INVITE got %v, want 200 with the answer of the 183", resp)
 	}
+	// The UA of the B2BUA acknowledges the caller's 183 by itself, since
+	// the side that sent the re-INVITE sends no PRACK; one PRACK, not a
+	// second one of the Call's (RFC 3262 4).
+	if got := len(callerWire.bodies(sip.PRACK)); got != 1 {
+		t.Errorf("the caller got %d PRACKs for its 183, want 1", got)
+	}
 }
 
 // TestTheCalleesReINVITEGetsAReliable183AndIsPRACKed: a re-INVITE of
@@ -294,7 +309,16 @@ func TestTheCalleesReINVITEGetsAReliable183AndIsPRACKed(t *testing.T) {
 	rc := newRawCallee(t, timers)
 	b2b := newB2BUA(t, &hooks{}, rc.uri())
 	reinvites := make(chan *sip.InDialogRequest, 1)
-	_, d := answeredCall(t, rc, b2b, func(r *sip.InDialogRequest) { reinvites <- r })
+	callerWire := newWire()
+	caller := startUA(t, "caller", timers, callerWire, func(in *sip.IncomingCall) { in.Reject(480) })
+	out, err := caller.Invite(invitation(t, b2b, func(r *sip.InDialogRequest) { reinvites <- r }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, final := finalOf(t, out); final.StatusCode != 200 {
+		t.Fatalf("the call got %d", final.StatusCode)
+	}
+	d := within(t, "dialog at the callee", rc.dialog)
 
 	ct := rc.send(&d, sip.INVITE, reOffer,
 		sip.HeaderField{Name: "Contact", Value: "<" + rc.uri() + ">"},
