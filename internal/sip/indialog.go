@@ -947,15 +947,17 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 	c.mu.Lock()
 	err := r.answerable()
 	if err == nil {
-		switch hasBody := len(body.Content) > 0; {
+		// Only a session description is an offer or an answer (RFC 3261
+		// 13.2.1).
+		switch sdp := HasSessionDescription(ok); {
 		case r.described:
 			// The session description went in a reliable provisional
 			// response, so the 2xx carries none that counts (RFC 3262 5).
-		case r.Offer && !hasBody:
+		case r.Offer && !sdp:
 			err = ErrNoAnswer
 		case r.Offer:
 			err = d.offerEvent(AnswerSent)
-		case !hasBody:
+		case !sdp:
 			err = errNoOfferFor2xx
 		default:
 			err = d.offerEvent(OfferSent)
@@ -1064,7 +1066,7 @@ func (r *InDialogRequest) Progress(code int, body Body, headers ...HeaderField) 
 	addHeaders(resp, headers)
 	body.addTo(resp)
 	if r.reliable {
-		offers, err := r.sessionSent(body)
+		offers, err := r.sessionSent(resp)
 		if err != nil {
 			c.mu.Unlock()
 			return err
@@ -1113,18 +1115,20 @@ func (r *InDialogRequest) RelayPRACK() {
 
 var errNoOfferInReliable = errors.New("sip: the first reliable provisional response to a re-INVITE without an offer needs the offer")
 
-// sessionSent is RFC 3262 5 for body in a reliable provisional
-// response to the re-INVITE: the first session description is the
-// answer to the offer of the re-INVITE, or, when it had none, the offer,
-// which the first reliable response MUST carry. A later one changes
-// nothing. It reports whether body is that offer. c.mu is held.
-func (r *InDialogRequest) sessionSent(body Body) (offers bool, err error) {
+// sessionSent is RFC 3262 5 for resp, a reliable provisional response
+// to the re-INVITE: the first session description is the answer to the
+// offer of the re-INVITE, or, when it had none, the offer, which the
+// first reliable response MUST carry. A later one changes nothing, and
+// a body of another type is no session description (RFC 3261 13.2.1).
+// It reports whether resp carries that offer. c.mu is held.
+func (r *InDialogRequest) sessionSent(resp *Message) (offers bool, err error) {
+	sdp := HasSessionDescription(resp)
 	switch {
 	case r.described:
 		return false, nil
-	case len(body.Content) == 0 && !r.Offer:
+	case !sdp && !r.Offer:
 		return false, errNoOfferInReliable
-	case len(body.Content) == 0:
+	case !sdp:
 		return false, nil
 	}
 	event := OfferSent
@@ -1135,6 +1139,6 @@ func (r *InDialogRequest) sessionSent(body Body) (offers bool, err error) {
 		return false, err
 	}
 	r.described = true
-	r.d.sent(body)
+	r.d.sent(BodyOf(resp))
 	return !r.Offer, nil
 }
