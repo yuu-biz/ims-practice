@@ -798,29 +798,57 @@ func (u *UE) receiveSubmitReport(st *sip.ServerTransaction, rp sms.RPMessage, lo
 	log.Info("submit report", attrs...)
 }
 
+// statusReportIsFor tells whether r reports on s: it repeats the TP-MR of
+// the SMS-SUBMIT (TS 23.040 9.2.3.6), the TP-RA that is its TP-DA
+// (9.2.3.14), and the TP-SCTS of its submit report (9.2.3.11), when that
+// has come: the status report can come first, and then the TP-SCTS is not
+// known yet.
+//
+// SIMPLIFIED: TS 23.040 9.2.3.14. Only a TP-RA in international format is
+// compared with the number the UE sent to. One in another format is taken
+// for another recipient, as the UE does not know the country code that
+// would turn it into an international number. The SC of this project
+// repeats the TP-DA as it got it.
+func statusReportIsFor(s SentSMS, r sms.StatusReport) bool {
+	if !s.StatusReportRequested || s.MessageReference != r.MessageReference {
+		return false
+	}
+	if r.RecipientAddress.TypeOfNumber != sms.TONInternational || r.RecipientAddress.String() != s.To {
+		return false
+	}
+	return s.ServiceCentreTimeStamp == nil || s.ServiceCentreTimeStamp.Equal(r.ServiceCentreTimeStamp)
+}
+
 // receiveStatusReport is TS 24.341 5.3.1.3: the status report of a short
 // message the UE sent, which it acknowledges with a delivery report as
 // for any RP-DATA (5.3.2.4).
 func (u *UE) receiveStatusReport(received *sip.Message, m sms.RPDataNetworkToMS, report sms.StatusReport, log *slog.Logger) {
 	u.mu.Lock()
-	// TP-MR names the SMS-SUBMIT (TS 23.040 9.2.3.6). It wraps after 255,
-	// so the latest short message with it is the one.
-	found := false
-	for i := len(u.sms.sent) - 1; i >= 0; i-- {
-		if s := &u.sms.sent[i]; s.StatusReportRequested && s.MessageReference == report.MessageReference {
-			s.StatusReport = &StatusReportInfo{Status: report.Status, DischargeTime: report.DischargeTime, Received: time.Now()}
-			log = log.With("sms_call_id", s.CallID)
-			found = true
-			break
+	// TP-MR names the SMS-SUBMIT (TS 23.040 9.2.3.6), but it is 8 bits and
+	// wraps, so a report that comes late can carry the TP-MR of a newer
+	// short message. The report is for the one short message of the
+	// history that it matches as well in TP-RA and TP-SCTS, and for none
+	// when no or several do.
+	var matches []int
+	for i, s := range u.sms.sent {
+		if statusReportIsFor(s, report) {
+			matches = append(matches, i)
 		}
 	}
-	u.changedLocked()
+	if len(matches) == 1 {
+		s := &u.sms.sent[matches[0]]
+		s.StatusReport = &StatusReportInfo{Status: report.Status, DischargeTime: report.DischargeTime, Received: time.Now()}
+		log = log.With("sms_call_id", s.CallID)
+		u.changedLocked()
+	}
 	u.mu.Unlock()
-	if found {
+	if len(matches) == 1 {
 		log.Info("status report", "tp_mr", int(report.MessageReference), "status", int(report.Status),
 			"discharge_time", report.DischargeTime.Format(time.RFC3339))
 	} else {
-		log.Warn("status report for no short message that asked for one", "tp_mr", int(report.MessageReference))
+		log.Warn("status report for no short message that asked for one", "tp_mr", int(report.MessageReference),
+			"tp_ra", report.RecipientAddress.String(), "tp_scts", report.ServiceCentreTimeStamp.Format(time.RFC3339),
+			"matching", len(matches))
 	}
 	ack, _ := sms.DeliverReport{}.Marshal()
 	u.sendDeliveryReport(received, sms.RPAck{Direction: sms.MSToNetwork, MessageReference: m.MessageReference, UserData: ack}, log)

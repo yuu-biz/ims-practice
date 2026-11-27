@@ -482,7 +482,7 @@ UE 1 は SMS-SUBMIT の TP-SRR で status report を頼んだので、delivery r
 ```
 
 13. 手順 12 の TFA が届くとすぐに、SC は `+12025550101` 宛の SMS-STATUS-REPORT をその番号の待ち行列に入れ、ふつうのショートメッセージと同じように配達します。送信者についての SRR を出し、その利用者を担当する IP-SM-GW へ TFR を送ります。キャプチャでは、この SRR が手順 12 の 202 より先に来ることがあります。
-14. IP-SM-GW は status report をショートメッセージと同じように送ります（TS 24.341 5.3.3.4.4）。宛先は UE 1 の tel URI で、Accept-Contact と `Request-Disposition: no-fork` を付け、中に SMS-STATUS-REPORT の入った RP-DATA を入れます。SMS-SUBMIT の TP-MR を繰り返すので、UE 1 はどのメッセージの報告かが分かります。TP-ST の 0x00 は、受信者がメッセージを受け取ったことを示します（TS 23.040 9.2.3.15）。
+14. IP-SM-GW は status report をショートメッセージと同じように送ります（TS 24.341 5.3.3.4.4）。宛先は UE 1 の tel URI で、Accept-Contact と `Request-Disposition: no-fork` を付け、中に SMS-STATUS-REPORT の入った RP-DATA を入れます。SMS-SUBMIT の TP-MR に加えて、受信者を TP-RA に、SC がメッセージを受け取った時刻を TP-SCTS に入れて繰り返します。TP-MR は 8 ビットで一周するので、UE 1 は 3 つが一致したメッセージにだけ報告を記録します。遅れて届いた古い報告が、同じ TP-MR の新しいメッセージの結果として表示されないようにするためです。TP-ST の 0x00 は、受信者がメッセージを受け取ったことを示します（TS 23.040 9.2.3.15）。
 15. UE 1 は 200 を返し、手順 11 の UE 2 と同じように、delivery report で status report を受け取ったことを伝えます（TS 24.341 5.3.1.3）。
 
 ## UE が受け取れないとき（預かる、知らせる、送り直す）
@@ -969,6 +969,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | UE、RFC 3428 7 | ショートメッセージだけを受け、text/plain を含むほかのボディの MESSAGE には 415（Unsupported Media Type）を返す。 | シミュレータは SMS over IP の UE で、インスタントメッセージのクライアントではない。 |
 | UE、TS 23.040 9.2.3.12 と 9.2.3.24 | SMS-SUBMIT は有効期間を求めず、User-Data-Header の無い 1 通のショートメッセージだけを持つ。 | サービスセンタは既定の有効期間である 72 時間だけ預かる。 |
 | UE、TS 24.011 9.3.2 | RP-MR が RP-DATA と違う報告は捨てる。端末なら送る cause 81 の RP-ERROR は送らない。 | IP では、それを送る接続が無い。 |
+| UE、TS 23.040 9.2.3.14 | status report の TP-RA が国際形式のときだけ、送ったショートメッセージと照らし合わせる。ほかの形式の TP-RA は、別の受信者のものとして扱う。 | 端末は、国際番号に直すための国番号を知らない。この網の SC は TP-DA を受け取ったとおりに繰り返す。 |
 | Sh、TS 29.328 6.1.3 と 6.1.4 | 通知の購読（SNR/SNA、PNR/PNA、コマンド 308 と 309）は無い。 | IP-SM-GW は自分を登録し、利用者を調べるだけである。MMTel AS は初期の要求ごとに Repository Data を読み、写しを持たない。TS 29.364 8.1 はそのような AS に購読を勧めている。 |
 | Sh、TS 29.328 7.1.3 | External-Identifier は無い。 | マシン型の通信のためのもので、このプロジェクトでは扱わない。 |
 | Sh、TS 29.328 Annex D | Sh-Data には PublicIdentifiers（IMSPublicIdentity、MSISDN）と RepositoryData、Sh-IMS-Data の SCSCFName と SMSRegistrationInfo だけがある。 | 残りは、使う役割ができたときに加える。 |

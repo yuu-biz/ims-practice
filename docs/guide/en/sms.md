@@ -475,7 +475,7 @@ UE 1 asked for one (TP-SRR in the SMS-SUBMIT), so once the delivery report is in
 ```
 
 13. As soon as the TFA of step 12 is in, the SC puts an SMS-STATUS-REPORT for `+12025550101` in the queue of that number and delivers it like any short message: an SRR for the sender, and a TFR to the IP-SM-GW that serves them. The capture may show the SRR before the 202 of step 12.
-14. The IP-SM-GW sends the status report like a short message (TS 24.341 5.3.3.4.4): to UE 1's tel URI, with Accept-Contact and `Request-Disposition: no-fork`, and an RP-DATA with an SMS-STATUS-REPORT inside. It repeats the TP-MR of the SMS-SUBMIT, so that UE 1 knows which message it reports on, and TP-ST 0x00 says that the recipient received it (TS 23.040 9.2.3.15).
+14. The IP-SM-GW sends the status report like a short message (TS 24.341 5.3.3.4.4): to UE 1's tel URI, with Accept-Contact and `Request-Disposition: no-fork`, and an RP-DATA with an SMS-STATUS-REPORT inside. It repeats the TP-MR of the SMS-SUBMIT, the recipient as TP-RA, and the time the SC took the message as TP-SCTS. TP-MR is only 8 bits and wraps, so UE 1 records the report on a message only when all three match: a late report for an old message must not show its result on a newer one with the same TP-MR. TP-ST 0x00 says that the recipient received it (TS 23.040 9.2.3.15).
 15. UE 1 answers 200 and acknowledges the status report with a delivery report, as UE 2 did in step 11 (TS 24.341 5.3.1.3).
 
 ## When the UE cannot take it: hold, alert and resend
@@ -962,6 +962,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | UE, RFC 3428 7 | Only short messages are taken; a MESSAGE with any other body, text/plain included, gets 415 (Unsupported Media Type). | The simulator is an SMS over IP UE, not an instant messaging client. |
 | UE, TS 23.040 9.2.3.12 and 9.2.3.24 | The SMS-SUBMIT asks for no validity period and holds one short message, without a User-Data-Header. | The Service Centre then keeps it for its default validity period of 72 hours. |
 | UE, TS 24.011 9.3.2 | A report whose RP-MR is not that of the RP-DATA is discarded, without the RP-ERROR with cause 81 that a phone would send. | Over IP there is no connection to send it on. |
+| UE, TS 23.040 9.2.3.14 | A status report is matched to the short message only when its TP-RA is in international format. One in another format is taken for another recipient. | The UE does not know the country code that would turn it into an international number. The SC of this project repeats the TP-DA as it got it. |
 | Sh, TS 29.328 6.1.3 and 6.1.4 | No subscriptions to notifications (SNR/SNA, PNR/PNA, commands 308 and 309). | The IP-SM-GW only registers itself and looks users up, and the MMTel AS reads its repository data for each initial request and keeps no copy. TS 29.364 8.1 recommends that such an AS subscribes. |
 | Sh, TS 29.328 7.1.3 | No External-Identifier. | It is for machine-type communication, which this project does not serve. |
 | Sh, TS 29.328 Annex D | Sh-Data has only PublicIdentifiers (IMSPublicIdentity, MSISDN), RepositoryData, and SCSCFName and SMSRegistrationInfo of Sh-IMS-Data. | The rest waits until a role needs it. |

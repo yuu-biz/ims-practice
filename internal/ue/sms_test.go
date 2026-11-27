@@ -497,6 +497,59 @@ func TestStatusReportBeforeSubmitReport(t *testing.T) {
 	}
 }
 
+// TP-MR is 8 bits and wraps, so an old status report that arrives late can
+// carry the TP-MR of a newer short message. TP-RA (the TP-DA of the
+// SMS-SUBMIT) and TP-SCTS (the one in its submit report) tell them apart
+// (TS 23.040 9.2.2.3): a report for another recipient or another time of
+// arrival at the SC is not recorded on the message, but is still
+// acknowledged.
+func TestStatusReportForAnotherShortMessageIsNotRecorded(t *testing.T) {
+	n := newFakeNetwork(t)
+	u, ua := smsUE(t, n)
+	const to = "+12025550102"
+	sent, err := u.SendSMS(context.Background(), ue.OutgoingSMS{To: to, Text: "new", StatusReport: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := submitted(t, n.next())
+	scts := time.Date(2026, 11, 20, 10, 0, 5, 0, time.UTC)
+	submitReport, err := sms.SubmitReport{ServiceCentreTimeStamp: scts}.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ack := sms.RPAck{Direction: sms.NetworkToMS, MessageReference: data.MessageReference, UserData: submitReport}
+	if _, code := n.mtMessage(ua, ue.SMSContentType, marshal(t, ack), sip.HeaderField{Name: "In-Reply-To", Value: sent.CallID}); code != 200 {
+		t.Fatalf("submit report got %d, want 200", code)
+	}
+	waitSent(t, u, sent.CallID, func(s ue.SentSMS) bool { return s.State == ue.SubmitAccepted })
+
+	report := func(recipient string, at time.Time) {
+		t.Helper()
+		b, err := sms.StatusReport{MessageReference: sent.MessageReference, RecipientAddress: sms.InternationalNumber(recipient),
+			ServiceCentreTimeStamp: at, DischargeTime: at.Add(time.Second), Status: sms.StatusReceivedBySME}.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		delivered, code := n.mtMessage(ua, ue.SMSContentType, rpDataWith(t, 77, b))
+		if code != 200 {
+			t.Fatalf("status report got %d, want 200", code)
+		}
+		if _, ok := checkDeliveryReport(t, n.next(), delivered).(sms.RPAck); !ok {
+			t.Error("the status report was not acknowledged with an RP-ACK")
+		}
+	}
+	report("+12025550103", scts)
+	report(to, scts.Add(-time.Hour))
+	if got := waitSent(t, u, sent.CallID, func(ue.SentSMS) bool { return true }); got.StatusReport != nil {
+		t.Fatalf("recorded a status report for another short message: %+v", got.StatusReport)
+	}
+
+	report(to, scts)
+	if got := waitSent(t, u, sent.CallID, func(s ue.SentSMS) bool { return s.StatusReport != nil }); got.StatusReport.Status != sms.StatusReceivedBySME {
+		t.Errorf("status report %+v", got.StatusReport)
+	}
+}
+
 // TS 24.341 5.3.1.2: an RP-ERROR in the submit report says that the SC
 // refused the message, with RP-Cause and TP-FCS.
 func TestTheSCRefusesAShortMessage(t *testing.T) {
