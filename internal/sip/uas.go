@@ -127,15 +127,16 @@ func (c *IncomingCall) Handle(f func(*InDialogRequest)) {
 	c.onRequest = f
 }
 
-// RelayPRACK has the UA hand every PRACK of the caller to the handler
-// of the call (Handle), with or without a body, where it otherwise
-// answers a PRACK without a body with 200 itself. The handler answers it
-// with Accept. A B2BUA that relays each reliable provisional response
-// of its other leg, and the PRACK for it back (RFC 3262 4), needs the
-// PRACK among the requests it relays in the order they came (Arrival):
-// the caller may send an UPDATE right after the PRACK, and the far end
-// has to get the two in that order. The user calls it before the first
-// response, as Handle.
+// RelayPRACK has the UA hand every PRACK of the caller for the reliable
+// provisional responses to the INVITE to the handler of the call
+// (Handle), with or without a body, where it otherwise answers a PRACK
+// without a body with 200 itself. The handler answers it with Accept. A
+// B2BUA that relays each reliable provisional response of its other
+// leg, and the PRACK for it back (RFC 3262 4), needs the PRACK among
+// the requests it relays in the order they came (Arrival): the caller
+// may send an UPDATE right after the PRACK, and the far end has to get
+// the two in that order. The user calls it before the first response,
+// as Handle. InDialogRequest.RelayPRACK does the same for a re-INVITE.
 func (c *IncomingCall) RelayPRACK() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
