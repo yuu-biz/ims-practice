@@ -109,9 +109,7 @@ async function steps(browser, file, viewport) {
     if (state !== forward[i]) problems.push('stepping back to ' + forward[i].split('|')[0] + ' shows another state');
     await page.keyboard.press('ArrowLeft');
   }
-  // Every seventh state from the end, round the deck: an order that is
-  // neither forward nor back.
-  const order = forward.map((_, i) => (i * 7) % forward.length).filter((v, i, a) => a.indexOf(v) === i);
+  const order = visitingOrder(forward.length);
   for (const i of order) {
     await page.goto('file://' + file + forward[i].split('|')[0]);
     // Only the address changed, so the page has not loaded again: a link
@@ -122,10 +120,27 @@ async function steps(browser, file, viewport) {
   await page.goto('file://' + file + '#no-such-scene/no-step');
   if (!(await page.evaluate(stateOf)).startsWith(forward[0].split('|')[0])) problems.push('an unknown address does not open the first slide');
   await context.close();
-  return { states: forward.length, problems };
+  return { states: forward.length, opened: order.length, problems };
+}
+
+function gcd(a, b) {
+  return b === 0 ? a : gcd(b, a % b);
+}
+
+// visitingOrder is every index below length once, in an order that is
+// neither forward nor back: a stride round the deck that shares no
+// factor with its length, so that it comes back to the start only after
+// it has met every state.
+function visitingOrder(length) {
+  let stride = 7;
+  while (length > 1 && gcd(stride, length) !== 1) stride++;
+  const order = Array.from({ length }, (_, i) => (i * stride) % length);
+  if (new Set(order).size !== length) throw new Error(`the order of ${length} states misses some: ${order}`);
+  return order;
 }
 
 async function main() {
+  for (const length of [1, 2, 7, 14, 49, 105, 11]) visitingOrder(length);
   const dist = path.resolve(process.argv[2] || 'dist');
   const decks = fs.readdirSync(dist)
     .flatMap((lang) => fs.readdirSync(path.join(dist, lang)).filter((f) => f.endsWith('.html')).map((f) => path.join(dist, lang, f)))
@@ -168,7 +183,7 @@ async function main() {
       for (const [label, viewport] of [['wide', { width: 1280, height: 720 }], ['narrow', { width: 390, height: 844 }]]) {
         const walk = await steps(browser, file, viewport);
         if (walk.states > 0) {
-          console.log(`  ${walk.states} states on a ${label} window, the same forward, back and by address`.replace('the same', walk.problems.length ? 'not all the same' : 'the same'));
+          console.log(`  ${walk.states} states on a ${label} window, ${walk.opened} of them opened by address, the same forward, back and by address`.replace('the same', walk.problems.length ? 'not all the same' : 'the same'));
         }
         for (const p of walk.problems) {
           console.log(`  (${label}) ${p}`);
