@@ -363,6 +363,37 @@ func TestServeStaysDeregisteredWhenRejected(t *testing.T) {
 	}
 }
 
+// TestServeReleasesItsCallWhenRejected is TS 24.229 5.1.1.7: after the
+// HSS removes the subscriber, the S-CSCF ends the registration with the
+// event rejected, and the UE hangs up its call and does not register
+// again.
+func TestServeReleasesItsCallWhenRejected(t *testing.T) {
+	n := networkWith(t, time.Second, time.Hour)
+	caller := newPhone(t, n.pcscf, impi, impu, password, autoAnswer)
+	callee := newPhone(t, n.pcscf, impi2, impu2, password2, autoAnswer)
+	waitForUESubscription(t, caller)
+	caller.must(http.MethodPost, "/call", `{"target": "`+impu2+`"}`)
+	caller.waitCall("outgoing active")
+	callee.waitCall("incoming active")
+
+	w := httptest.NewRecorder()
+	n.provisioning.ServeHTTP(w, httptest.NewRequest(http.MethodDelete, "/subscriptions/"+impi, nil))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE: %d %s", w.Code, w.Body)
+	}
+
+	caller.waitFor("not registered and no call", func(s statusJSON) bool { return !s.Registered && s.Call == nil })
+	if !came(5*time.Second, func() bool { return caller.wire.has("> BYE") }) {
+		t.Error("the UE released its call without a BYE")
+	}
+	if !callee.within(5*time.Second, func(s statusJSON) bool { return s.callState() == "none" }) {
+		t.Error("the other side of the call did not get the BYE")
+	}
+	if caller.within(watch, func(s statusJSON) bool { return s.Registered }) {
+		t.Error("registered again after the network rejected the registration")
+	}
+}
+
 // TestServeCallsAnotherServe: one "ue serve" calls another, which
 // answers by itself; the second call gets 409; the caller hangs up.
 func TestServeCallsAnotherServe(t *testing.T) {

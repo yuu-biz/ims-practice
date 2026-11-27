@@ -432,7 +432,7 @@ HSS には HTTP で加入を登録、削除する API（プロビジョニング
 2. S-CSCF は登録を消し、それぞれの購読へ最後の NOTIFY を送ります（TS 24.229 5.4.1.5）。registration と contact は `terminated` で、contact は `event="rejected"` です。PERMANENT_TERMINATION はほかの S-CSCF も割り当てられないという意味で、登録し直しても無駄なので rejected にします。P-CSCF は登録の期限が切れたときと同じように IP の対応付けを終わらせます。
 3. S-CSCF は DIAMETER_SUCCESS（2001）の **Registration-Termination-Answer**（RTA）で答えます。HSS がすでに登録を解除しているので、SAR は送りません（TS 29.228 A.4.4.2）。S-CSCF が知らない利用者の RTR には、DIAMETER_ERROR_USER_UNKNOWN（5001）で答えます（TS 29.229 6.2.2.1）。
 
-UE は `event="rejected"` を受けると、登録し直しません（TS 24.229 5.1.1.7）。`ue register` はエラーとして終了します。もう一度 `ue register` を実行すると、**403 Forbidden** が返ります。HSS は UAR に DIAMETER_ERROR_USER_UNKNOWN で答え（TS 29.228 6.1.1.1）、I-CSCF は失敗の UAA を 403 にして返すからです（TS 24.229 5.3.1.3）。
+UE は `event="rejected"` を受けると、登録し直さず、ダイアログを解放します（TS 24.229 5.1.1.7）。`ue serve` は、成立している通話には BYE を、自分がかけて呼び出し中の通話には CANCEL を、自分が受けて呼び出し中の通話には 603（Decline）を送り、通話を終えます。`ue register` はエラーとして終了します。もう一度 `ue register` を実行すると、**403 Forbidden** が返ります。HSS は UAR に DIAMETER_ERROR_USER_UNKNOWN で答え（TS 29.228 6.1.1.1）、I-CSCF は失敗の UAA を 403 にして返すからです（TS 24.229 5.3.1.3）。
 
 ## 登録中の利用者のサービスプロファイルを変える
 
@@ -1040,7 +1040,7 @@ rm ue.exe
 | IP-SM-GW。RFC 6665 4.1.2.4 | Timer N を使わない。NOTIFY が来なかった SUBSCRIBE は、次の第三者 REGISTER のときに新しい購読に置き換える。 | S-CSCF は受け付けた SUBSCRIBE のすべてにすぐ NOTIFY を送るため。 |
 | IP-SM-GW。TS 24.341 5.3.3.2 | service-info に MSISDN が無いとき、PUR では利用者を公開の識別子で示す。UE の REGISTER の IMSI は使わない。 | IMSI は message/sip の本文に入った UE の REGISTER から取るが、S-CSCF はその本文を送らないため。Sh は公開の識別子も受け付ける（TS 29.328 Table 7.6.1）。 |
 | UE。TS 24.229 5.1.1.3 | UE の購読の更新に 481 が返ると、UE は次の初回登録の後まで購読し直さない。 | 更新は、購読の期限よりずっと前に行うため。 |
-| UE。TS 24.229 5.1.1.7 | `event="rejected"` を受けても、`ue call`、`ue answer`、`ue serve` は通話を解放しない。 | 登録が拒否されるのは HSS から加入を削除したときだけのため。`ue call` と `ue answer` の通話は音声を送り終えると自分で終わり、`ue serve` の通話は操作する側が切ると終わる。 |
+| UE。TS 24.229 5.1.1.7 | `event="rejected"` を受けても、`ue call` と `ue answer` は通話を解放しない。 | 登録が拒否されるのは HSS から加入を削除したときだけで、`ue call` と `ue answer` の通話は音声を送り終えると自分で終わるため。 |
 | S-CSCF。TS 24.229 5.4.2.1.2 | reg イベントの NOTIFY への応答にある term-ioi を保存しない。 | この IOI は S-CSCF の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らないため。 |
 | S-CSCF。TS 24.229 5.4.2.1.2 と TS 29.228 6.1.2 | 登録の期限が切れると、S-CSCF はまず Store から登録を消し、そのあとで NOTIFY と TIMEOUT_DEREGISTRATION の SAR を送る。そのあいだに台が止まるとどちらも送られず、期限切れを引き継いだ台は登録を見つけない。そのため、購読者には期限切れの NOTIFY が届かず、HSS は次の SAR まで利用者を登録済みとして扱う。 | 逆の順にすると、消すのに失敗するたびと、消す前に台が止まるたびに、期限切れをもう一度処理するので、NOTIFY と SAR をもう一度送るため。 |
 | P-CSCF。TS 24.229 5.2.3 | P-CSCF の購読の更新に 481 が返ると、P-CSCF はすぐには購読し直さない。利用者の次の REGISTER で新しい購読を始める。 | 更新は、購読の期限よりずっと前に行うため。 |
