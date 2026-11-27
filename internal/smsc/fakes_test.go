@@ -250,9 +250,13 @@ func newNetwork(t *testing.T) *network {
 	return n
 }
 
+// answerTimer is the Answer timer of the MME, for which a copy of its
+// OFR waits for the answer to the first copy.
+const answerTimer = time.Second
+
 // newSC is one more SC instance on the same store, HSS and nodes.
 func (n *network) newSC() *SMSC {
-	return New(Config{Address: scAddress, HSSRealm: epcRealm}, n.store, n.nodes, n.hss, n.clock, quietLog)
+	return New(Config{Address: scAddress, HSSRealm: epcRealm, AnswerTimer: answerTimer}, n.store, n.nodes, n.hss, n.clock, quietLog)
 }
 
 var quietLog = slog.New(slog.NewTextHandler(io.Discard, nil))

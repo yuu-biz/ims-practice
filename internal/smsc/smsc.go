@@ -113,6 +113,12 @@ type Config struct {
 	// the Store, for another instance, or for this one once a delivery
 	// has ended. Zero means 100.
 	Deliveries int
+	// AnswerTimer is how long a serving node waits for the answer to one
+	// OFR, all of its attempts together: the Answer timer of RFC 6733
+	// 5.6.2, which every Diameter node of this project has alike. A copy
+	// of an OFR waits no longer than this for the answer to the first
+	// copy (answerToCopy). Zero has a copy refused at once.
+	AnswerTimer time.Duration
 }
 
 // DefaultRetrySchedule is the RetrySchedule when Config has none. TS

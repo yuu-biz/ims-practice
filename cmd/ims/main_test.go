@@ -2014,7 +2014,7 @@ func TestTheServiceCentreEndsWhenTheNodeTellsIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, stop := startSC(context.Background(), config.SC{Address: "12025550100"}, domain, smsc.NewMemoryStore(),
+	_, stop := startSC(context.Background(), config.SC{Address: "12025550100"}, domain, time.Second, smsc.NewMemoryStore(),
 		node, server, hssGroup, quiet())
 	done := make(chan struct{})
 	go func() {

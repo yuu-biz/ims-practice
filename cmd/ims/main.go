@@ -457,7 +457,7 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 		if err != nil {
 			return err
 		}
-		centre, stop := startSC(ctx, *c, cfg.HomeDomain, smscStore(stores, roleLog), node, server, hss, roleLog)
+		centre, stop := startSC(ctx, *c, cfg.HomeDomain, cfg.Diameter.Timers.Answer, smscStore(stores, roleLog), node, server, hss, roleLog)
 		// The deliveries of this instance end with the work of the node,
 		// before its Diameter connections, which the attempts send on.
 		work = append(work, stop)

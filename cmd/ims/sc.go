@@ -40,7 +40,9 @@ const scAnswerTimeout = ipsmgw.DefaultOutcomeWait + 24*time.Second
 // deliveries that are due. realm is the realm of the HSS, which the SC
 // names in its S6c requests without a Destination-Host, as TS 29.338
 // 5.3.1.1.3 allows a sender that knows only the realm: every instance of
-// the HSS of this project holds every subscriber.
+// the HSS of this project holds every subscriber. answerTimer is the
+// Answer timer of the Diameter node, which the serving nodes that send
+// the OFRs have as well.
 //
 // The function it returns stops the SC: it cuts the attempts under way
 // short, which leaves their recipients due at once for another
@@ -53,12 +55,13 @@ const scAnswerTimeout = ipsmgw.DefaultOutcomeWait + 24*time.Second
 // node does not wait for an SC that was never told to stop. An OFR or
 // an ALR that arrives after the stop is answered as ever, and leaves its
 // delivery to an instance in service.
-func startSC(ctx context.Context, c config.SC, realm string, store smsc.Store,
+func startSC(ctx context.Context, c config.SC, realm string, answerTimer time.Duration, store smsc.Store,
 	node *diameter.Node, server *diameter.Server, hss *diameter.PeerGroup, log *slog.Logger) (*smsc.SMSC, func()) {
 	centre := smsc.New(smsc.Config{
 		Address:       c.Address,
 		HSSRealm:      realm,
 		RetrySchedule: c.RetryDelays,
+		AnswerTimer:   answerTimer,
 	}, store, sgd.NewSGdClient(node, server, scAnswerTimeout), sgd.NewS6cClient(node, hss), smsc.SystemClock, log)
 	runCtx, end := context.WithCancel(context.WithoutCancel(ctx))
 	stopped := make(chan struct{})
