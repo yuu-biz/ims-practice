@@ -533,6 +533,35 @@ Wireshark はキャプチャの中のフレームを見せます。RTP を再生
 
 re-INVITE は MMTel AS をそのまま通り（TS 24.610 4.5.2.1）、新しい answer のたびに両方の Rx のセッションが更新されます。
 
+### 保留の answer が信頼性のある 183 で届くとき
+
+re-INVITE は、ダイアログの中のほかの要求と同じく Supported に `100rel` を挙げるので、相手は保留への answer を 200 ではなく信頼性のある暫定応答で返すことがあります（RFC 3262 5）。UE は 183 に本文の無い PRACK を返し、183 が届くとすぐにその answer を受け取ります。re-INVITE を終える 200 には SDP が無く、あっても数えません（RFC 3261 13.2.1）。
+
+```text
+UE -> peer  re-INVITE      a=sendonly: on hold
+peer -> UE  183            Require: 100rel, RSeq: 1; the answer, a=recvonly
+UE -> peer  PRACK          RAck: the RSeq of the 183 and the CSeq of the re-INVITE; no body
+peer -> UE  200 (PRACK)
+peer -> UE  200 (INVITE)   no SDP: the 183 had the answer
+UE -> peer  ACK
+```
+
+このような 183 のあとでも、re-INVITE が失敗することがあります。プリコンディションを使わないときは、183 の offer と answer で相手のセッションはもう変わっているので（RFC 6141 3.3）、両側でセッションの見方が食い違います。UE は相手のメディアとその向きも含めて保留の前のセッションに戻り、そのセッションを新しい re-INVITE で offer して、両側の見方をそろえます（RFC 6141 3.4）。
+
+```text
+UE -> peer  re-INVITE      a=sendonly: on hold
+peer -> UE  183            Require: 100rel, RSeq: 1; the answer, a=recvonly
+UE -> peer  PRACK
+peer -> UE  200 (PRACK)
+peer -> UE  500 (INVITE)
+UE -> peer  ACK
+UE -> peer  re-INVITE      a=sendrecv: the session before the hold
+peer -> UE  200 (INVITE)   the answer, a=sendrecv
+UE -> peer  ACK
+```
+
+プリコンディションを使うときは、183 の offer と answer で新しいパラメータの準備が整うだけで、相手がそのパラメータでメディアを送ったときに使い始めたことになります（RFC 6141 3.3）。UE は re-INVITE の失敗を、相手が新しいパラメータを使わなかったものとみなします。メディアを見て確かめることはしません（[このプロジェクトで簡略化していること](call.md#このプロジェクトで簡略化していること)）。UE は保留の前のセッションに戻り、新しい re-INVITE は送りません。この網には信頼性のある 183 で re-INVITE に答えるノードが無いので、`scripts/e2e-volte.sh` のキャプチャにこのやり取りはありません。`internal/ue/holdprack_test.go` の試験では、試験のコードが相手の役をします。
+
 ## 動かしてみる
 
 `scripts/e2e-volte.sh` は、この手順書のことをすべて行い、キャプチャで各メッセージを順に確かめます。キャプチャは `captures/` に、登録、通話、Rx、EPC スタブの API のフレームは `e2e-out/volte-ladder.txt` に、AMR-WB の録音は `captures/volte-*.amr` に、UE のログと、手元の機械の UE が聞いたものは `e2e-out/` に残ります。かかる時間は 2 分ほどです。
