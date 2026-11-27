@@ -76,8 +76,10 @@ var (
 	literalName = regexp.MustCompile(`^[A-Za-z0-9]+(-[A-Za-z0-9]+)+$|^[A-Z][A-Za-z0-9]*[A-Z][A-Za-z0-9]*$`)
 	// literalValue are the parts of a value that no translation changes:
 	// a name of a code such as DIAMETER_FIRST_REGISTRATION and a number
-	// in parentheses such as (2001).
-	literalValue = regexp.MustCompile(`[A-Z][A-Z0-9]*(_[A-Z0-9]+)+|\(\d+\)`)
+	// in parentheses such as (2001). Japanese writes the parentheses
+	// full width, （2001）; fieldsOf compares them as the same.
+	literalValue = regexp.MustCompile(`[A-Z][A-Z0-9]*(_[A-Z0-9]+)+|[(（]\d+[)）]`)
+	halfWidth    = strings.NewReplacer("（", "(", "）", ")")
 )
 
 // fieldsOf lists what the languages share of the fields of an event:
@@ -95,7 +97,9 @@ func fieldsOf(e deck.Event) string {
 			if span.Code {
 				literal = append(literal, "`"+span.Text+"`")
 			} else {
-				literal = append(literal, literalValue.FindAllString(span.Text, -1)...)
+				for _, s := range literalValue.FindAllString(span.Text, -1) {
+					literal = append(literal, halfWidth.Replace(s))
+				}
 			}
 		}
 		// A translation may put the parts of a value in another order.

@@ -48,6 +48,9 @@ func TestStructureComparesLiteralFields(t *testing.T) {
 	if p := compareStructure(field("Experimental-Result", "DIAMETER_FIRST_REGISTRATION (2001)"), field("Experimental-Result", "初回の DIAMETER_FIRST_REGISTRATION (2001)")); len(p) != 0 {
 		t.Errorf("translated words differ: %v", p)
 	}
+	if p := compareStructure(field("the way", "access (1), core (2)"), field("経路", "アクセス（1）、コア（2）")); len(p) != 0 {
+		t.Errorf("full-width parentheses differ: %v", p)
+	}
 	if p := compareStructure(field("what it stores", "this S-CSCF"), field("記録すること", "この S-CSCF")); len(p) != 0 {
 		t.Errorf("translated names differ: %v", p)
 	}
