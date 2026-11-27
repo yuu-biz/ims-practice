@@ -110,3 +110,66 @@ func TestRejectedOfferEndsTheCallWhenTheRelayDoesNotGoBack(t *testing.T) {
 		}
 	}
 }
+
+// TestRejectedOfferAfterAPreviewPutsBothSidesBack: the far end shows its
+// answer to a re-INVITE of the UE in a 183 that is not reliable, and then
+// turns the offer down with 488. Only an answer in a 2xx or a reliable
+// provisional response is the answer (RFC 3261 13.2.1), so the session
+// is as it was before the re-INVITE (14.1). The relay sent to each party
+// where the offer and the 183 said, and both terminations send where the
+// INVITE and its answer said again.
+func TestRejectedOfferAfterAPreviewPutsBothSidesBack(t *testing.T) {
+	c := newRawINVITE(t)
+	ok := c.response(200)
+	c.st.Respond(ok)
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the caller got %d, want the 200", r.StatusCode)
+	}
+	access, core := c.relay.remote("1", agw.Access), c.relay.remote("1", agw.Core)
+
+	reinvite := &sip.Message{Method: sip.INVITE, RequestURI: c.farContact}
+	reinvite.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	reinvite.Add("Max-Forwards", "70")
+	reinvite.Add("From", c.st.Request.Get("From"))
+	reinvite.Add("To", ok.Get("To"))
+	reinvite.Add("Call-ID", c.st.Request.Get("Call-ID"))
+	reinvite.Add("CSeq", "2 INVITE")
+	reinvite.Add("Contact", c.st.Request.Get("Contact"))
+	reinvite.Add("Content-Type", "application/sdp")
+	reinvite.Body = sdp.Offer("2", moved).Bytes()
+	ct, err := c.ue.SendRequest(reinvite, sip.Destination{Transport: sip.UDP, Addr: c.pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var st *sip.ServerTransaction
+	select {
+	case st = <-c.invites:
+	case <-time.After(3 * time.Second):
+		t.Fatal("the far end got no re-INVITE")
+	}
+	preview := netip.MustParseAddrPort("192.0.2.99:6008")
+	progress := sip.NewResponse(st.Request, 183, "")
+	progress.Add("Contact", "<"+c.farContact+">")
+	progress.Add("Content-Type", "application/sdp")
+	progress.Body = sdp.Offer("3", preview).Bytes()
+	st.Respond(progress)
+	if r := <-ct.Responses(); r.StatusCode != 183 {
+		t.Fatalf("the UE got %d, want the 183", r.StatusCode)
+	}
+	if got := c.relay.remote("1", agw.Core); got != preview {
+		t.Fatalf("the core termination sends to %v for the 183, want %v", got, preview)
+	}
+	st.Respond(sip.NewResponse(st.Request, 488, ""))
+	if r := final(t, ct.Responses(), 3*time.Second); r.StatusCode != 488 {
+		t.Fatalf("the re-INVITE got %d, want the 488 of the far end", r.StatusCode)
+	}
+	if got := c.relay.remote("1", agw.Access); got != access {
+		t.Errorf("the access termination sends to %v after the 488, want %v of the INVITE again", got, access)
+	}
+	if got := c.relay.remote("1", agw.Core); got != core {
+		t.Errorf("the core termination sends to %v after the 488, want %v of its answer again", got, core)
+	}
+	if n := c.relay.held(); n != 1 {
+		t.Errorf("the relay holds %d contexts after the 488, want the one of the call", n)
+	}
+}

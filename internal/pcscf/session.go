@@ -399,10 +399,13 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // offered takes its media where the last offer and answer said, though
 // the P-CSCF told the relay where the offer says when it passed the offer
 // on. So the second function has the termination that faces that party
-// send there again (goBack). It does so before the response goes on, so that the party
-// finds the relay as it was when it sends its next offer, which may
-// follow the response at once. When the relay does not take the change
-// back, the termination keeps sending where the party no longer takes
+// send there again (goBack). It does so before the response goes on, so
+// that the party finds the relay as it was when it sends its next offer,
+// which may follow the response at once. An answer that showed in a
+// provisional response that is not reliable is no answer (RFC 3261
+// 13.2.1), and the termination that faces the other party goes back
+// too. When the relay does not take the change back, the termination
+// keeps sending where the party no longer takes
 // the media, and the P-CSCF releases the dialog once the response has
 // gone, as for an answer that the relay did not take. An answer that the
 // relay took in a reliable provisional response counts though the
@@ -451,17 +454,26 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 	offer := ueSide(received, out.Body, toUE)
 	// taken is true once the relay has taken an answer to the offer, and
 	// refused once the P-CSCF has set out to release the dialog for one
-	// that it did not take. stuck is true once the relay has not gone back
-	// after a response other than 2xx.
-	authorized, taken, refused, stuck := false, false, false, false
+	// that it did not take. settled is true once the answer that the relay
+	// took came in a 2xx or a reliable provisional response: only there is
+	// it the answer (RFC 3261 13.2.1). The SDP of a provisional response
+	// that is not reliable may show that answer before it comes, and
+	// previewed is where the relay then sends to the party that answers.
+	// stuck is true once the relay has not gone back after a response
+	// other than 2xx.
+	authorized, taken, refused, settled, stuck := false, false, false, false, false
+	var previewed netip.AddrPort
 	unanswered = func(final *sip.Message, err error) {
-		// The 2xx of a re-INVITE goes through Proxy, which then returns
-		// neither a final response nor an error.
+		// A 2xx comes as final, or, for a re-INVITE, goes through Proxy,
+		// which then returns neither a final response nor an error.
 		answeredWith2xx := err == nil && (final == nil || final.StatusCode < 300)
-		if taken || refused || answeredWith2xx {
+		if settled || refused || answeredWith2xx {
 			return
 		}
-		stuck = !p.goBack(d.Relay, facingSender(toUE), offered, log)
+		// The session is as it was before the request (RFC 3261 14.1), on
+		// both sides when an answer showed in a provisional response only.
+		stuck = !p.goBack(d.Relay, facingSender(toUE), offered, log) ||
+			!p.goBack(d.Relay, facingSender(!toUE), previewed, log)
 	}
 	answered = func(final *sip.Message, err error) {
 		switch {
@@ -494,7 +506,11 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 			}
 			return
 		}
-		if !taken && d.Relay != nil {
+		taken = true
+		if resp.StatusCode < 200 && !resp.Requires(sip.Option100rel) {
+			previewed = sent
+		} else if !settled && d.Relay != nil {
+			settled = true
 			_, _, err := p.store.UpdateDialog(context.Background(), d.Key, func(d *Dialog) {
 				if d.Relay != nil {
 					d.Relay = d.Relay.agreeing(facingSender(toUE), offered).agreeing(facingSender(!toUE), sent)
@@ -507,7 +523,6 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 				log.Warn("the dialog keeps the offer and answer before this one: the store failed", "error", err.Error())
 			}
 		}
-		taken = true
 		// A 2xx to a re-INVITE comes again until its ACK arrives.
 		if authorized || d.PolicySession == "" || p.policy == nil {
 			return
