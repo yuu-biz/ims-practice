@@ -74,6 +74,17 @@ const (
 // (answerToCopy). Every OFR is checked, whether it has the T flag or
 // not, since the first copy may arrive after the second (RFC 6733
 // Appendix C).
+//
+// SIMPLIFIED: RFC 6733 3. A copy of an OFR whose first instance left no
+// answer, because it stopped or the Store would not take the answer, is
+// refused with SC congestion, although the SC may hold the short message
+// already; a UE that sends it again then has it delivered twice. For the
+// copy to take the short message over safely, the record of the OFR and
+// the queue of the recipient would have to change in one step: the
+// Store changes one item at a time, and a queue forgets a short message
+// once it is delivered, so the copy could not tell one that was
+// delivered from one that was never queued. The answer is written again
+// a few times (putOFARounds) to keep that case rare.
 func (c *SMSC) MOForwardShortMessage(ctx context.Context, req sgd.MOForwardShortMessageRequest) sgd.MOForwardShortMessageAnswer {
 	now := c.clock.Now()
 	log := c.log.With("session_id", req.SessionID, "sc_address", req.SCAddress,
@@ -90,10 +101,35 @@ func (c *SMSC) MOForwardShortMessage(ctx context.Context, req sgd.MOForwardShort
 		return c.answerToCopy(ctx, request, log)
 	}
 	a := c.takeShortMessage(ctx, req, now, log)
-	if err := c.store.PutOFA(ctx, request, a, expires); err != nil {
-		log.Warn("the answer is not kept for a copy of the OFR: the store failed", "error", err.Error())
-	}
+	c.keepOFA(ctx, request, a, expires, log)
 	return a
+}
+
+// putOFARounds bounds the writes of the answer to an OFR. Each is bounded
+// by the timeout of the store, and the answer waits for them, so a few
+// are enough to ride out a store that is briefly out of reach.
+const putOFARounds = 3
+
+// keepOFA puts the answer to an OFR in its record, for a copy of the OFR
+// to find (answerToCopy). A copy that finds none is refused, so a write
+// that fails is tried again, copyPoll apart.
+func (c *SMSC) keepOFA(ctx context.Context, request string, a sgd.MOForwardShortMessageAnswer, expires time.Time, log *slog.Logger) {
+	for round := 1; ; round++ {
+		err := c.store.PutOFA(ctx, request, a, expires)
+		if err == nil {
+			return
+		}
+		if round == putOFARounds {
+			log.Warn("the answer is not kept for a copy of the OFR: the store failed", "error", err.Error())
+			return
+		}
+		log.Warn("the answer is not kept for a copy of the OFR yet: the store failed", "error", err.Error(), "round", round)
+		select {
+		case <-time.After(copyPoll):
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // copyPoll is how often a copy of an OFR looks for the answer of the

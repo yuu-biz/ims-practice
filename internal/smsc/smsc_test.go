@@ -151,6 +151,44 @@ func TestOFRSentAgainWhileTheFirstHasNoAnswer(t *testing.T) {
 	waitDeliveries(t, n.sc)
 }
 
+// TestOFAKeptAfterAStoreThatFailedOnce: the instance that took an OFR
+// writes its answer again when the store fails to take it, so that a
+// copy of the OFR still gets that answer rather than a refusal for a
+// short message the SC holds.
+func TestOFAKeptAfterAStoreThatFailedOnce(t *testing.T) {
+	n := newNetwork(t)
+	flaky := &ofaFails{MemoryStore: n.store}
+	flaky.fails.Store(1)
+	first := New(Config{Address: scAddress, HSSRealm: epcRealm, AnswerTimer: answerTimer}, flaky, n.nodes, n.hss, n.clock, quietLog)
+	ofr := n.ofr(hello(t, bob, 7))
+
+	want := first.MOForwardShortMessage(context.Background(), ofr)
+	if want.Result != diameter.Base(diameter.DiameterSuccess) {
+		t.Fatalf("OFA = %+v, want success", want)
+	}
+	if got := n.sc.MOForwardShortMessage(context.Background(), ofr); !reflect.DeepEqual(got, want) {
+		t.Errorf("OFA to the copy = %+v, want %+v, the answer to the first", got, want)
+	}
+	waitDeliveries(t, first)
+	if sent := n.nodes.sent(); len(sent) != 1 {
+		t.Errorf("%d TFRs, want 1", len(sent))
+	}
+}
+
+// ofaFails is a Store whose PutOFA fails a number of times before it
+// succeeds, as a store that is briefly out of reach.
+type ofaFails struct {
+	*MemoryStore
+	fails atomic.Int32
+}
+
+func (s *ofaFails) PutOFA(ctx context.Context, request string, a sgd.MOForwardShortMessageAnswer, expires time.Time) error {
+	if s.fails.Add(-1) >= 0 {
+		return errors.New("the store is out of reach")
+	}
+	return s.MemoryStore.PutOFA(ctx, request, a, expires)
+}
+
 func TestStatusReport(t *testing.T) {
 	n := newNetwork(t)
 	submit := hello(t, bob, 42)
