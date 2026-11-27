@@ -2,6 +2,1330 @@
 title: A short message through the IMS
 footer: ims-practice study session 6. SMS
 lang: en
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: ue1, label: UE 1, role: the sender, at: [0, 0]}
+  - {id: ue2, label: UE 2, role: the recipient, at: [0, 1]}
+  - {id: pcscf, label: P-CSCF, role: the first hop, at: [1, 1]}
+  - {id: icscf, label: I-CSCF, role: entry of the home network, at: [2, 0]}
+  - {id: scscf, label: S-CSCF, role: evaluates the iFCs, at: [2, 1]}
+  - {id: hss, label: HSS, role: subscriber data, at: [3, 0]}
+  - {id: ipsmgw, label: IP-SM-GW, role: the AS for SMS, at: [3, 1]}
+  - {id: sc, label: SC, role: holds and delivers, at: [4, 1]}
+events:
+  - id: r1-ue2-p
+    msg: REGISTER
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (2nd)
+    fields:
+      - Contact: "The feature tag `+g.3gpp.smsip`: this contact takes SMS over IP"
+  - id: r1-p-i
+    msg: REGISTER
+    from: pcscf
+    to: icscf
+    proto: SIP
+    note: (2nd)
+  - id: r1-i-s
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (2nd)
+  - id: r1ok-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+  - id: r1ok-i-p
+    msg: 200 OK
+    from: icscf
+    to: pcscf
+    proto: SIP
+  - id: r1ok-p-ue2
+    msg: 200 OK
+    from: pcscf
+    to: ue2
+    proto: SIP
+  - id: scscf-ifc0
+    do: matches the iFC of priority 0
+    at: scscf
+    fields:
+      - Condition: Every REGISTER
+      - Goes to: The IP-SM-GW, with the MSISDN as ServiceInfo
+      - DefaultHandling: "SESSION_CONTINUED: the registration stays if the IP-SM-GW does not answer"
+  - id: tp-register
+    msg: REGISTER
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+    note: (third-party)
+    fields:
+      - Request-URI: "`sip:ipsmgw...:5060`, the ServerName of the iFC"
+      - From, Contact: The S-CSCF
+      - To: UE 2's public identity
+      - Body: "`<service-info>` holds the MSISDN `12025550102`"
+  - id: tp-ok
+    msg: 200 OK
+    from: ipsmgw
+    to: scscf
+    proto: SIP
+    note: (third-party)
+    fields:
+      - Contact: Lists the binding, `expires=3600`
+  - id: isub-ip-i
+    msg: SUBSCRIBE
+    from: ipsmgw
+    to: icscf
+    proto: SIP
+    fields:
+      - Event: "`reg`"
+      - Expires: "3761: the 3600 s of the registration plus 161 s"
+      - P-Asserted-Identity: The URI of the IP-SM-GW
+  - id: isub-i-s
+    msg: SUBSCRIBE
+    from: icscf
+    to: scscf
+    proto: SIP
+  - id: lir-r
+    msg: LIR
+    from: icscf
+    to: hss
+    proto: Cx
+    note: (UE 2)
+  - id: lia-r
+    msg: LIA
+    from: hss
+    to: icscf
+    proto: Cx
+    note: (UE 2)
+    fields:
+      - Server-Name: UE 2's S-CSCF
+  - id: isubok-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+  - id: isubok-i-ip
+    msg: 200 OK
+    from: icscf
+    to: ipsmgw
+    proto: SIP
+  - id: inotify
+    msg: NOTIFY
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+    fields:
+      - Subscription-State: "`active`"
+      - Body: reginfo, with `<unknown-param name="+g.3gpp.smsip">` in the contact
+  - id: inotify-ok
+    msg: 200 OK
+    from: ipsmgw
+    to: scscf
+    proto: SIP
+    note: (NOTIFY)
+  - id: ipsmgw-check
+    do: looks for a contact that takes SMS
+    at: ipsmgw
+    fields:
+      - Looks for: An active contact with `+g.3gpp.smsip`
+      - If there is one: Registers itself in the HSS
+      - If there is none: Sends no PUR
+  - id: udr
+    msg: UDR
+    from: ipsmgw
+    to: hss
+    proto: Sh
+    fields:
+      - Data-Reference: IMSI (32)
+  - id: uda
+    msg: UDA
+    from: hss
+    to: ipsmgw
+    proto: Sh
+    fields:
+      - User-Data: "UE 2's IMSI: SGd names a recipient by IMSI"
+  - id: pur
+    msg: PUR
+    from: ipsmgw
+    to: hss
+    proto: Sh
+    fields:
+      - User-Identity: MSISDN `12025550102`
+      - Data-Reference: SMSRegistrationInfo (24)
+      - Sh-User-Data: "`12025550199` in `<IP-SM-GW-Number>`"
+  - id: pua
+    msg: PUA
+    from: hss
+    to: ipsmgw
+    proto: Sh
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  - id: m1-ue1-p
+    msg: MESSAGE
+    from: ue1
+    to: pcscf
+    proto: SIP
+    note: (1st)
+    fields:
+      - Request-URI, To: "`tel:+12025550100`: the SC, not the recipient"
+      - Content-Type: "`application/vnd.3gpp.sms`, a body of 47 octets"
+      - Route: The P-CSCF and UE 1's Service-Route
+  - id: m1-p-s
+    msg: MESSAGE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (1st)
+    fields:
+      - P-Asserted-Identity: Put in by the P-CSCF
+      - Record-Route: "None: no dialog follows"
+  - id: m1-s-ip
+    msg: MESSAGE
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+    note: (1st)
+    fields:
+      - Route: The IP-SM-GW on top, then the S-CSCF with `odi`
+      - P-Asserted-Identity: UE 1's SIP URI and tel URI
+  - id: scscf-ifc1
+    do: matches the iFC of priority 1
+    at: scscf
+    fields:
+      - Condition: A MESSAGE with an SMS body from a registered user
+      - P-Asserted-Identity: "Adds UE 1's tel URI: the IP-SM-GW gives the SC a number"
+      - P-Served-User: "`sescase=orig;regstate=reg`"
+  - id: m1a-ip-s
+    msg: "202"
+    from: ipsmgw
+    to: scscf
+    proto: SIP
+    note: (1st)
+    fields:
+      - Meaning: The MESSAGE arrived. Nothing is delivered yet
+  - id: m1a-s-p
+    msg: "202"
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (1st)
+  - id: m1a-p-ue1
+    msg: "202"
+    from: pcscf
+    to: ue1
+    proto: SIP
+    note: (1st)
+  - id: ipsmgw-rp
+    do: checks the RP-DATA
+    at: ipsmgw
+    fields:
+      - Decoding: Does it decode?
+      - RP-DA: Is it the SC's number, `12025550100`?
+      - P-Asserted-Identity: Is there a tel URI?
+      - If not: The submit report is an RP-ERROR
+  - id: ofr
+    msg: OFR
+    from: ipsmgw
+    to: sc
+    proto: SGd
+    fields:
+      - SC-Address: "`12025550100`, the number the UE wrote in RP-DA"
+      - User-Identifier: The sender's MSISDN, `12025550101`
+      - SM-RP-UI: UE 1's SMS-SUBMIT as it is
+      - Destination-Realm: "`ims.mnc001.mcc001.3gppnetwork.org`, with no Destination-Host"
+  - id: srr1
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (on submit)
+    fields:
+      - MSISDN: The recipient's, `12025550102`
+      - Asks: Is there a user with this number?
+  - id: sra1
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (on submit)
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+      - IP-SM-GW-Name: The IP-SM-GW of UE 2, from the registration of R5
+      - User-Name: UE 2's IMSI
+  - id: ofa
+    msg: OFA
+    from: sc
+    to: ipsmgw
+    proto: SGd
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+      - SM-RP-UI: SMS-SUBMIT-REPORT, with the SC's time stamp TP-SCTS
+  - id: m2-ip-i
+    msg: MESSAGE
+    from: ipsmgw
+    to: icscf
+    proto: SIP
+    note: (2nd)
+    fields:
+      - Request-URI: UE 1's SIP URI, from P-Asserted-Identity of step 1
+      - Accept-Contact: "`*;+g.3gpp.smsip;require;explicit`"
+      - Request-Disposition: "`fork`"
+      - In-Reply-To: The Call-ID of the MESSAGE of step 1
+      - Body: RP-ACK with an SMS-SUBMIT-REPORT
+  - id: m2-i-s
+    msg: MESSAGE
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (2nd)
+  - id: m2-s-p
+    msg: MESSAGE
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (2nd)
+  - id: m2-p-ue1
+    msg: MESSAGE
+    from: pcscf
+    to: ue1
+    proto: SIP
+    note: (2nd)
+  - id: lir-m2
+    msg: LIR
+    from: icscf
+    to: hss
+    proto: Cx
+    note: (UE 1)
+  - id: lia-m2
+    msg: LIA
+    from: hss
+    to: icscf
+    proto: Cx
+    note: (UE 1)
+    fields:
+      - Server-Name: UE 1's S-CSCF
+  - id: ue1-report
+    do: matches the submit report
+    at: ue1
+    fields:
+      - In-Reply-To: The Call-ID of its own short message
+      - Records: "The SC accepted it: `\"msg\":\"submit report\"` in the log"
+  - id: m2a-ue1-p
+    msg: 200 OK
+    from: ue1
+    to: pcscf
+    proto: SIP
+    note: (2nd)
+  - id: m2a-p-s
+    msg: 200 OK
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (2nd)
+  - id: m2a-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+    note: (2nd)
+  - id: m2a-i-ip
+    msg: 200 OK
+    from: icscf
+    to: ipsmgw
+    proto: SIP
+    note: (2nd)
+  - id: sc-make
+    do: makes the SMS-DELIVER
+    at: sc
+    fields:
+      - TP-OA: The sender's number, `12025550101`
+      - TP-SCTS: When the SC took the message
+      - TP-SRI: "Set: UE 1 asked for a status report"
+      - Text: Unchanged
+  - id: srr2
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (to deliver)
+    fields:
+      - MSISDN: The recipient's, `12025550102`
+      - Asked by: The SMS-GMSC that delivers. The first came from the SMS-IWMSC that took it
+  - id: sra2
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (to deliver)
+    fields:
+      - IP-SM-GW-Name: UE 2's IP-SM-GW again
+      - User-Name: UE 2's IMSI
+  - id: tfr
+    msg: TFR
+    from: sc
+    to: ipsmgw
+    proto: SGd
+    fields:
+      - Destination-Host: The IP-SM-GW of the SRA. A TFR always names its node
+      - User-Name: UE 2's IMSI, `001010000000002`
+      - SC-Address: "`12025550100`, which becomes the RP-OA"
+      - SM-RP-UI: SMS-DELIVER
+  - id: ipsmgw-find
+    do: finds the user by IMSI
+    at: ipsmgw
+    fields:
+      - User-Name: Matched against the IMSI read in the UDA of R5
+      - Recipient: "`tel:+12025550102`, the tel URI of the IMSI"
+      - The delivery: Put in the shared `Store` before the MESSAGE goes
+  - id: m3-ip-i
+    msg: MESSAGE
+    from: ipsmgw
+    to: icscf
+    proto: SIP
+    note: (3rd)
+    fields:
+      - Request-URI: "`tel:+12025550102`"
+      - Request-Disposition: "`no-fork`"
+      - P-Asserted-Identity: The IP-SM-GW, where the delivery report goes
+      - Body: RP-DATA from the network with an SMS-DELIVER
+  - id: m3-i-s
+    msg: MESSAGE
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (3rd)
+  - id: m3-s-p
+    msg: MESSAGE
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (3rd)
+  - id: m3-p-ue2
+    msg: MESSAGE
+    from: pcscf
+    to: ue2
+    proto: SIP
+    note: (3rd)
+  - id: lir-m3
+    msg: LIR
+    from: icscf
+    to: hss
+    proto: Cx
+    note: (UE 2)
+  - id: lia-m3
+    msg: LIA
+    from: hss
+    to: icscf
+    proto: Cx
+    note: (UE 2)
+    fields:
+      - Server-Name: UE 2's S-CSCF
+  - id: scscf-mt
+    do: checks the terminating iFC and the contacts
+    at: scscf
+    fields:
+      - Priority 2: "No match: P-Asserted-Identity is the IP-SM-GW"
+      - Accept-Contact: UE 2's contact has `+g.3gpp.smsip` and stays
+      - Request-Disposition: "`no-fork`: one contact only"
+  - id: m3a-ue2-p
+    msg: 200 OK
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (3rd)
+    fields:
+      - Meaning: Only that the MESSAGE arrived
+  - id: m3a-p-s
+    msg: 200 OK
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (3rd)
+  - id: m3a-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+    note: (3rd)
+  - id: m3a-i-ip
+    msg: 200 OK
+    from: icscf
+    to: ipsmgw
+    proto: SIP
+    note: (3rd)
+  - id: m4-ue2-p
+    msg: MESSAGE
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (4th)
+    fields:
+      - Request-URI: The IP-SM-GW, from P-Asserted-Identity of step 8
+      - In-Reply-To: The Call-ID of the MESSAGE of step 8
+      - Body: RP-ACK from the UE with an SMS-DELIVER-REPORT
+  - id: m4-p-s
+    msg: MESSAGE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (4th)
+  - id: m4-s-ip
+    msg: MESSAGE
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+    note: (4th)
+  - id: scscf-dr
+    do: matches UE 2's iFC of priority 1
+    at: scscf
+    fields:
+      - Condition: A MESSAGE with an SMS body that UE 2 sends
+      - Route: "As in step 3: the IP-SM-GW and `odi`"
+  - id: m4a-ip-s
+    msg: "202"
+    from: ipsmgw
+    to: scscf
+    proto: SIP
+    note: (4th)
+  - id: m4a-s-p
+    msg: "202"
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (4th)
+  - id: m4a-p-ue2
+    msg: "202"
+    from: pcscf
+    to: ue2
+    proto: SIP
+    note: (4th)
+  - id: ipsmgw-dr
+    do: finds the delivery and ends it
+    at: ipsmgw
+    fields:
+      - In-Reply-To: Finds the delivery in the `Store` by the Call-ID of step 8
+      - Which node: "Any IP-SM-GW: the state of the delivery is in the shared `Store`"
+  - id: tfa
+    msg: TFA
+    from: ipsmgw
+    to: sc
+    proto: SGd
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+      - Meaning: The short message arrived
+  - id: sc-sr
+    do: makes the status report
+    at: sc
+    fields:
+      - To: The sender's number, `+12025550101`
+      - TP-MR: The value of the SMS-SUBMIT
+      - TP-ST: "0x00: the recipient received the message"
+  - id: srr3
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (status report)
+    fields:
+      - MSISDN: The sender's, `12025550101`
+  - id: sra3
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (status report)
+    fields:
+      - IP-SM-GW-Name: The IP-SM-GW of UE 1
+      - User-Name: UE 1's IMSI
+  - id: tfr3
+    msg: TFR
+    from: sc
+    to: ipsmgw
+    proto: SGd
+    note: (status report)
+    fields:
+      - User-Name: UE 1's IMSI, `001010000000001`
+      - SM-RP-UI: SMS-STATUS-REPORT
+  - id: m5-ip-i
+    msg: MESSAGE
+    from: ipsmgw
+    to: icscf
+    proto: SIP
+    note: (5th)
+    fields:
+      - Request-URI: "`tel:+12025550101`"
+      - Request-Disposition: "`no-fork`"
+      - Body: RP-DATA with an SMS-STATUS-REPORT
+      - TP-ST: 0x00
+  - id: m5-i-s
+    msg: MESSAGE
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (5th)
+  - id: m5-s-p
+    msg: MESSAGE
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (5th)
+  - id: m5-p-ue1
+    msg: MESSAGE
+    from: pcscf
+    to: ue1
+    proto: SIP
+    note: (5th)
+  - id: lir-m5
+    msg: LIR
+    from: icscf
+    to: hss
+    proto: Cx
+    note: (UE 1)
+  - id: lia-m5
+    msg: LIA
+    from: hss
+    to: icscf
+    proto: Cx
+    note: (UE 1)
+  - id: m5a-ue1-p
+    msg: 200 OK
+    from: ue1
+    to: pcscf
+    proto: SIP
+    note: (5th)
+  - id: m5a-p-s
+    msg: 200 OK
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (5th)
+  - id: m5a-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+    note: (5th)
+  - id: m5a-i-ip
+    msg: 200 OK
+    from: icscf
+    to: ipsmgw
+    proto: SIP
+    note: (5th)
+  - id: m6-ue1-p
+    msg: MESSAGE
+    from: ue1
+    to: pcscf
+    proto: SIP
+    note: (6th)
+    fields:
+      - In-Reply-To: The Call-ID of the 5th MESSAGE
+      - Body: RP-ACK from the UE
+  - id: m6-p-s
+    msg: MESSAGE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (6th)
+  - id: m6-s-ip
+    msg: MESSAGE
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+    note: (6th)
+  - id: m6a-ip-s
+    msg: "202"
+    from: ipsmgw
+    to: scscf
+    proto: SIP
+    note: (6th)
+  - id: m6a-s-p
+    msg: "202"
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (6th)
+  - id: m6a-p-ue1
+    msg: "202"
+    from: pcscf
+    to: ue1
+    proto: SIP
+    note: (6th)
+  - id: tfa3
+    msg: TFA
+    from: ipsmgw
+    to: sc
+    proto: SGd
+    note: (status report)
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  - id: a1-tfr
+    msg: TFR
+    from: sc
+    to: ipsmgw
+    proto: SGd
+    note: (A1)
+    fields:
+      - User-Name: UE 2's IMSI
+  - id: a1-ip-i
+    msg: MESSAGE
+    from: ipsmgw
+    to: icscf
+    proto: SIP
+    note: (A1)
+  - id: a1-i-s
+    msg: MESSAGE
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (A1)
+  - id: a1-s-p
+    msg: MESSAGE
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (A1)
+  - id: a1-p-ue2
+    msg: MESSAGE
+    from: pcscf
+    to: ue2
+    proto: SIP
+    note: (A1)
+  - id: a2-ue2-p
+    msg: "480"
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (A2)
+    fields:
+      - Meaning: "Temporarily Unavailable: reached, but cannot take it now"
+      - delivery report: None
+  - id: a2-p-s
+    msg: "480"
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (A2)
+  - id: a2-s-i
+    msg: "480"
+    from: scscf
+    to: icscf
+    proto: SIP
+    note: (A2)
+  - id: a2-i-ip
+    msg: "480"
+    from: icscf
+    to: ipsmgw
+    proto: SIP
+    note: (A2)
+  - id: a3-tfa
+    msg: TFA
+    from: ipsmgw
+    to: sc
+    proto: SGd
+    note: (A3)
+    fields:
+      - Experimental-Result: DIAMETER_ERROR_ABSENT_USER (5550)
+  - id: ipsmgw-unri
+    do: sets UNRI
+    at: ipsmgw
+    fields:
+      - Input: UE 2's 480
+      - UNRI: "Set for UE 2: only this node knows that the IMS failed"
+  - id: a4-rdr
+    msg: RDR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (A4)
+    fields:
+      - SM-Delivery-Cause: ABSENT_USER
+  - id: hss-absent
+    do: puts the SC in the MWD
+    at: hss
+    fields:
+      - MWD: The SC's address goes in
+      - UNRI: "Set: no serving node in an SRA while it is"
+  - id: a4-rda
+    msg: RDA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (A4)
+  - id: a5-ue2-p
+    msg: MESSAGE
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (A5)
+    fields:
+      - Content: Anything. Here, a short message of UE 2's own
+  - id: a5-p-s
+    msg: MESSAGE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (A5)
+  - id: a5-s-ip
+    msg: MESSAGE
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+    note: (A5)
+  - id: a5a-ip-s
+    msg: "202"
+    from: ipsmgw
+    to: scscf
+    proto: SIP
+    note: (A5)
+  - id: a5a-s-p
+    msg: "202"
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (A5)
+  - id: a5a-p-ue2
+    msg: "202"
+    from: pcscf
+    to: ue2
+    proto: SIP
+    note: (A5)
+  - id: ipsmgw-present
+    do: learns that UE 2 is back
+    at: ipsmgw
+    fields:
+      - Input: A request of UE 2 arrived
+      - UNRI: Clears it and tells the HSS
+  - id: a6-rfsm
+    msg: Ready-For-SM
+    from: ipsmgw
+    to: hss
+    proto: S6c
+    note: (A6)
+    fields:
+      - Command code: 16777214, this project's own
+      - Alert-Reason: UE_PRESENT
+      - User-Identifier: UE 2's MSISDN
+      - IP-SM-GW-Number: The IP-SM-GW that tells
+  - id: hss-present
+    do: clears UNRI
+    at: hss
+    fields:
+      - Checks: Is it the number of UE 2's IP-SM-GW?
+      - UNRI: Cleared
+      - Alerts: Every SC in the MWD
+  - id: a6-ans
+    msg: Ready-For-SM
+    from: hss
+    to: ipsmgw
+    proto: S6c
+    note: (answer)
+  - id: a7-alr
+    msg: ALR
+    from: hss
+    to: sc
+    proto: S6c
+    note: (A7)
+    fields:
+      - Destination-Host: The SC's name, found in `service_centres`
+  - id: a7-ala
+    msg: ALA
+    from: sc
+    to: hss
+    proto: S6c
+    note: (A7)
+    fields:
+      - Result: The address of the SC that answered leaves the MWD
+  - id: sc-due
+    do: delivers what it holds at once
+    at: sc
+    fields:
+      - Trigger: The ALR
+      - Retry: Does not wait for the `retry_delays` of an hour
+  - id: a8-srr
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (A8)
+  - id: a8-sra
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (A8)
+    fields:
+      - IP-SM-GW-Name: "There again: UNRI is clear"
+      - MWD-Status: "Mostly 0: the SC is in the MWD, and no flag is set"
+  - id: a8-tfr
+    msg: TFR
+    from: sc
+    to: ipsmgw
+    proto: SGd
+    note: (A8)
+    fields:
+      - SM-RP-UI: The SMS-DELIVER that the SC held
+  - id: a8-ip-i
+    msg: MESSAGE
+    from: ipsmgw
+    to: icscf
+    proto: SIP
+    note: (A8)
+  - id: a8-i-s
+    msg: MESSAGE
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (A8)
+  - id: a8-s-p
+    msg: MESSAGE
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (A8)
+  - id: a8-p-ue2
+    msg: MESSAGE
+    from: pcscf
+    to: ue2
+    proto: SIP
+    note: (A8)
+  - id: a8a-ue2-p
+    msg: 200 OK
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (A8)
+  - id: a8a-p-s
+    msg: 200 OK
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (A8)
+  - id: a8a-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+    note: (A8)
+  - id: a8a-i-ip
+    msg: 200 OK
+    from: icscf
+    to: ipsmgw
+    proto: SIP
+    note: (A8)
+  - id: a9-ue2-p
+    msg: MESSAGE
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (A9)
+    fields:
+      - Body: "RP-ACK: the delivery report"
+  - id: a9-p-s
+    msg: MESSAGE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (A9)
+  - id: a9-s-ip
+    msg: MESSAGE
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+    note: (A9)
+  - id: a9a-ip-s
+    msg: "202"
+    from: ipsmgw
+    to: scscf
+    proto: SIP
+    note: (A9)
+  - id: a9a-s-p
+    msg: "202"
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (A9)
+  - id: a9a-p-ue2
+    msg: "202"
+    from: pcscf
+    to: ue2
+    proto: SIP
+    note: (A9)
+  - id: a9-tfa
+    msg: TFA
+    from: ipsmgw
+    to: sc
+    proto: SGd
+    note: (A9)
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  - id: b1-tfr
+    msg: TFR
+    from: sc
+    to: ipsmgw
+    proto: SGd
+    note: (B1)
+  - id: b1-ip-i
+    msg: MESSAGE
+    from: ipsmgw
+    to: icscf
+    proto: SIP
+    note: (B1)
+  - id: b1-i-s
+    msg: MESSAGE
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (B1)
+  - id: b1-s-p
+    msg: MESSAGE
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (B1)
+  - id: b1-p-ue2
+    msg: MESSAGE
+    from: pcscf
+    to: ue2
+    proto: SIP
+    note: (B1)
+  - id: b1a-ue2-p
+    msg: 200 OK
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (B1)
+    fields:
+      - Meaning: The short message got this far
+  - id: b1a-p-s
+    msg: 200 OK
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (B1)
+  - id: b1a-s-i
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+    note: (B1)
+  - id: b1a-i-ip
+    msg: 200 OK
+    from: icscf
+    to: ipsmgw
+    proto: SIP
+    note: (B1)
+  - id: b2-ue2-p
+    msg: MESSAGE
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (B2)
+    fields:
+      - Body: RP-ERROR, RP-Cause 22 (memory capacity exceeded)
+      - TP-FCS: "`0xD3`"
+      - UE 2 now: Keeps nothing, and owes the network a notification
+  - id: b2-p-s
+    msg: MESSAGE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (B2)
+  - id: b2-s-ip
+    msg: MESSAGE
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+    note: (B2)
+  - id: b2a-ip-s
+    msg: "202"
+    from: ipsmgw
+    to: scscf
+    proto: SIP
+    note: (B2)
+  - id: b2a-s-p
+    msg: "202"
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (B2)
+  - id: b2a-p-ue2
+    msg: "202"
+    from: pcscf
+    to: ue2
+    proto: SIP
+    note: (B2)
+  - id: b3-tfa
+    msg: TFA
+    from: ipsmgw
+    to: sc
+    proto: SGd
+    note: (B3)
+    fields:
+      - Experimental-Result: DIAMETER_ERROR_SM_DELIVERY_FAILURE (5555)
+      - SM-Enumerated-Delivery-Failure-Cause: MEMORY_CAPACITY_EXCEEDED
+  - id: b4-rdr
+    msg: RDR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (B4)
+    fields:
+      - SM-Delivery-Cause: UE_MEMORY_CAPACITY_EXCEEDED
+  - id: hss-mcef
+    do: sets MCEF
+    at: hss
+    fields:
+      - MWD: The SC's address goes in
+      - MCEF: Set
+      - UNRI: "Not set: the UE is reachable and has no room"
+  - id: b4-rda
+    msg: RDA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (B4)
+  - id: b5-ue2-p
+    msg: MESSAGE
+    from: ue2
+    to: pcscf
+    proto: SIP
+    note: (B5)
+    fields:
+      - Body: "RP-SMMA: the notification of free memory"
+      - Request-URI: The IP-SM-GW that brought the short message it could not keep
+  - id: b5-p-s
+    msg: MESSAGE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (B5)
+  - id: b5-s-ip
+    msg: MESSAGE
+    from: scscf
+    to: ipsmgw
+    proto: SIP
+    note: (B5)
+  - id: b5a-ip-s
+    msg: "202"
+    from: ipsmgw
+    to: scscf
+    proto: SIP
+    note: (B5)
+    fields:
+      - When: At once, before the HSS is told
+  - id: b5a-s-p
+    msg: "202"
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (B5)
+  - id: b5a-p-ue2
+    msg: "202"
+    from: pcscf
+    to: ue2
+    proto: SIP
+    note: (B5)
+  - id: b6-rfsm
+    msg: Ready-For-SM
+    from: ipsmgw
+    to: hss
+    proto: S6c
+    note: (B6)
+    fields:
+      - Alert-Reason: UE_MEMORY_AVAILABLE
+      - In MAP: READY_FOR_SM with the alert reason memoryAvailable
+  - id: hss-mem
+    do: clears MCEF and UNRI
+    at: hss
+    fields:
+      - MCEF, UNRI: Cleared
+      - Alerts: The SCs in the MWD
+  - id: b6-ans
+    msg: Ready-For-SM
+    from: hss
+    to: ipsmgw
+    proto: S6c
+    note: (answer)
+  - id: b7-alr
+    msg: ALR
+    from: hss
+    to: sc
+    proto: S6c
+    note: (B7)
+  - id: b7-ala
+    msg: ALA
+    from: sc
+    to: hss
+    proto: S6c
+    note: (B7)
+  - id: b8-ip-i
+    msg: MESSAGE
+    from: ipsmgw
+    to: icscf
+    proto: SIP
+    note: (B8)
+    fields:
+      - Body: "RP-ACK: the answer to the notification of B5"
+      - When: After the HSS has taken the notification
+      - If the HSS cannot take it: RP-ERROR instead of RP-ACK
+  - id: b8-i-s
+    msg: MESSAGE
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (B8)
+  - id: b8-s-p
+    msg: MESSAGE
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (B8)
+  - id: b8-p-ue2
+    msg: MESSAGE
+    from: pcscf
+    to: ue2
+    proto: SIP
+    note: (B8)
+  - id: d1-srr
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (retry)
+  - id: d1-sra
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (retry)
+    fields:
+      - IP-SM-GW-Name: "There: a full memory sets no UNRI"
+      - MWD-Status: Bit 2, MCEF-Set, is set. Bit 0 is clear
+  - id: d2-tfr
+    msg: TFR
+    from: sc
+    to: ipsmgw
+    proto: SGd
+    note: (D2)
+  - id: d2-tfa
+    msg: TFA
+    from: ipsmgw
+    to: sc
+    proto: SGd
+    note: (D2)
+    fields:
+      - Result-Code: DIAMETER_SUCCESS (2001)
+  - id: sc-report
+    do: reports the delivery to the HSS
+    at: sc
+    fields:
+      - Input: MCEF-Set in the MWD-Status of the SRA
+      - Decision: Reports the delivery once
+  - id: d3-rdr
+    msg: RDR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (D3)
+    fields:
+      - SM-Delivery-Cause: SUCCESSFUL_TRANSFER
+  - id: hss-success
+    do: clears MCEF
+    at: hss
+    fields:
+      - MCEF: Cleared
+      - MWD: The SC's address goes; the other SCs left are alerted
+  - id: d3-rda
+    msg: RDA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (D3)
+  - id: f-ofr
+    msg: OFR
+    from: ipsmgw
+    to: sc
+    proto: SGd
+  - id: f-srr
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    fields:
+      - MSISDN: "`12025550198`: no subscriber has it"
+  - id: f-sra
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    fields:
+      - Experimental-Result: DIAMETER_ERROR_USER_UNKNOWN (5001)
+  - id: f-ofa
+    msg: OFA
+    from: sc
+    to: ipsmgw
+    proto: SGd
+    fields:
+      - Experimental-Result: DIAMETER_ERROR_SM_DELIVERY_FAILURE (5555)
+      - SM-Enumerated-Delivery-Failure-Cause: INVALID_SME-ADDRESS
+  - id: frep-ip-i
+    msg: MESSAGE
+    from: ipsmgw
+    to: icscf
+    proto: SIP
+    note: (submit report)
+    fields:
+      - Body: RP-ERROR, RP-Cause 1 (unassigned number)
+      - TP-FCS: 0xC3 (invalid SME address)
+  - id: frep-i-s
+    msg: MESSAGE
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (submit report)
+  - id: frep-s-p
+    msg: MESSAGE
+    from: scscf
+    to: pcscf
+    proto: SIP
+    note: (submit report)
+  - id: frep-p-ue1
+    msg: MESSAGE
+    from: pcscf
+    to: ue1
+    proto: SIP
+    note: (submit report)
+  - id: g-srr
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (subscriber 3)
+    fields:
+      - MSISDN: "`12025550103`: subscriber 3 exists but is not registered"
+  - id: g-sra
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (subscriber 3)
+    fields:
+      - Experimental-Result: DIAMETER_ERROR_ABSENT_USER (5550)
+      - Why: No IP-SM-GW has registered for subscriber 3
+  - id: hss-keep
+    do: keeps the SC in the MWD
+    at: hss
+    fields:
+      - MWD: The SC's address stays
+      - Delivery: On the alert when subscriber 3 registers
+```
+
 ---
 
 # A short message through the IMS
@@ -49,6 +1373,41 @@ However it travels, a short message is made of the same two layers.
 
 ## The nodes
 
+```ims-scene
+id: nodes
+lead: "Besides the CSCFs, which route SIP, two nodes speak to the SMS network: the IP-SM-GW and the SC."
+steps:
+  - id: ues
+    title: UE 1 and UE 2 (172.28.0.100, 101)
+    focus: [ue1, ue2]
+    text: |
+      UE 1 is the sender, `+1-202-555-0101`.
+      UE 2 is the recipient, `+1-202-555-0102`.
+  - id: cscfs
+    title: The P-CSCF, the S-CSCF and the I-CSCF (40, 30, 20)
+    focus: [pcscf, scscf, icscf]
+    checkpoint: true
+    text: |
+      They relay the MESSAGEs. The S-CSCF evaluates the iFCs.
+      The CSCFs only route SIP and know nothing of SMS.
+  - id: ipsmgw
+    title: The IP-SM-GW (172.28.0.70)
+    focus: [ipsmgw]
+    text: |
+      The application server (AS) of SMS over IP. It speaks both SIP and the language of the SMS network.
+      Its number is `+12025550199`.
+  - id: sc
+    title: The SC (172.28.0.71)
+    focus: [sc]
+    text: |
+      The Service Centre. It holds each short message until it is delivered or its validity period ends.
+      Its address is `+12025550100`. It speaks SGd with the IP-SM-GW.
+  - id: hss
+    title: The HSS (172.28.0.10)
+    focus: [hss]
+    text: It gives the iFCs over Cx, and answers the IP-SM-GW over Sh and the SC over S6c.
+```
+
 | Node | Address | What it does for SMS |
 | --- | --- | --- |
 | UE 1 | 172.28.0.100 | The sender, `+1-202-555-0101`. |
@@ -67,6 +1426,41 @@ However it travels, a short message is made of the same two layers.
 ---
 
 ## How the S-CSCF picks the IP-SM-GW
+
+```ims-scene
+id: ifc
+lead: The S-CSCF knows nothing of SMS. It sends to the IP-SM-GW the requests that match the iFCs from the HSS.
+steps:
+  - id: register
+    title: A REGISTER matches priority 0
+    only: [r1-i-s, scscf-ifc0]
+    focus: [scscf]
+    text: Once a registration succeeds, the S-CSCF looks for the criteria that a REGISTER matches. Priority 0 matches every REGISTER.
+  - id: third-party
+    title: A third-party REGISTER goes to the IP-SM-GW
+    show: [tp-register]
+    checkpoint: true
+    text: The body holds the MSISDN of the user, the ServiceInfo of the iFC.
+  - id: submit
+    title: The UE's MESSAGE matches priority 1
+    only: [m1-p-s, scscf-ifc1]
+    focus: [scscf]
+    text: A MESSAGE from a registered user whose Content-Type is `application/vnd.3gpp.sms`.
+  - id: submit-on
+    title: The MESSAGE goes to the IP-SM-GW
+    show: [m1-s-ip]
+    checkpoint: true
+    text: "It does not go to the SC of the Request-URI: the IP-SM-GW is put on top of Route."
+  - id: deliver
+    title: The IP-SM-GW's MESSAGE does not match priority 2
+    only: [m3-i-s, scscf-mt]
+    focus: [scscf]
+    text: Priority 2 is for a MESSAGE to the user, unless P-Asserted-Identity is the IP-SM-GW.
+  - id: deliver-on
+    title: The MESSAGE goes on to UE 2
+    show: [m3-s-p]
+    text: The negated condition keeps the IP-SM-GW's own MESSAGE from coming back to it.
+```
 
 The S-CSCF knows nothing of SMS. The iFCs from the HSS say which request goes to which AS.
 
@@ -160,6 +1554,69 @@ sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70)
 
 ## R1 to R5. The IP-SM-GW learns about the user
 
+```ims-scene
+id: register
+lead: A third-party REGISTER does not say whether the UE takes SMS. The IP-SM-GW checks the reg event first, then writes itself into the HSS.
+steps:
+  - id: register
+    title: UE 2 registers with the feature tag (R1)
+    only: [r1-ue2-p, r1-p-i, r1-i-s]
+    active: r1-ue2-p
+    checkpoint: true
+    text: |
+      The registration is the one of the registration session. The first REGISTER and the 401 are left out.
+      The one difference is `+g.3gpp.smsip` in Contact.
+  - id: ok
+    title: The 200 OK ends the registration
+    show: [r1ok-s-i, r1ok-i-p, r1ok-p-ue2]
+    detail: []
+    checkpoint: true
+    text: UE 2 is registered. What follows goes on without UE 2 waiting for it.
+  - id: third-party
+    title: The S-CSCF sends a third-party REGISTER (R2)
+    only: [tp-register]
+    checkpoint: true
+    text: From and Contact are the S-CSCF, To is the user. `<service-info>` in the body holds the MSISDN.
+  - id: third-party-ok
+    title: The IP-SM-GW answers 200 OK
+    show: [tp-ok]
+    checkpoint: true
+    text: The IP-SM-GW keeps the MSISDN, which names the user in R5.
+  - id: subscribe
+    title: The IP-SM-GW subscribes to the reg event (R3)
+    only: [isub-ip-i, lir-r, lia-r, isub-i-s]
+    active: isub-ip-i
+    checkpoint: true
+    text: The SUBSCRIBE goes to the entry of the home network, and the I-CSCF finds the S-CSCF with an LIR.
+  - id: notify
+    title: The S-CSCF reports the state in a NOTIFY (R4)
+    hide: [lir-r, lia-r]
+    show: [isubok-s-i, isubok-i-ip, inotify]
+    active: inotify
+    checkpoint: true
+    text: The NOTIFY goes straight to the IP-SM-GW. The 200 OK to the SUBSCRIBE goes through the I-CSCF, so either may come first.
+  - id: check
+    title: It looks for a contact that takes SMS
+    show: [inotify-ok, ipsmgw-check]
+    active: ipsmgw-check
+    focus: [ipsmgw]
+    checkpoint: true
+    text: The IP-SM-GW answers 200 OK and looks for an active contact with `+g.3gpp.smsip`.
+  - id: udr
+    title: "It reads the user's IMSI (R5: UDR and UDA)"
+    only: [udr, uda]
+    active: uda
+    detail: [udr, uda]
+    checkpoint: true
+    text: A short message over SGd names its recipient by IMSI. The IMSI finds the user then.
+  - id: pur
+    title: "It registers itself in the HSS (R5: PUR and PUA)"
+    only: [pur, pua]
+    active: pur
+    detail: [pur]
+    text: Sh command 307. The HSS answers 2001 in the PUA and now knows which IP-SM-GW carries UE 2's short messages.
+```
+
 | Look at | What to see |
 | --- | --- |
 | Contact of the UE's REGISTER | The feature tag `+g.3gpp.smsip`. |
@@ -178,6 +1635,42 @@ The filter is `diameter.cmd.code == 307`.
 
 ## 1 to 4. UE 1 submits the short message
 
+```ims-scene
+id: submit
+lead: UE 1 addresses the short message to the SC, not to the recipient. The iFC of the S-CSCF takes it to the IP-SM-GW.
+steps:
+  - id: send
+    title: UE 1 sends the MESSAGE (1)
+    only: [m1-ue1-p]
+    checkpoint: true
+    text: The Request-URI is the SC's number. The body is RP-DATA, and the SMS-SUBMIT inside has the recipient's number and the text.
+  - id: pcscf
+    title: The P-CSCF passes it on (2)
+    show: [m1-p-s]
+    text: |
+      As for an INVITE, it puts in P-Asserted-Identity and follows the Service-Route.
+      It adds no Record-Route, and no media relay is involved.
+  - id: scscf
+    title: The MESSAGE matches the iFC of priority 1 (3)
+    show: [scscf-ifc1]
+    focus: [scscf]
+    zoom: [pcscf, scscf, ipsmgw]
+    checkpoint: true
+    text: The S-CSCF serves the sender. It adds UE 1's tel URI as a second P-Asserted-Identity.
+  - id: ipsmgw
+    title: The MESSAGE reaches the IP-SM-GW (3)
+    show: [m1-s-ip]
+    checkpoint: true
+    text: The second Route is the S-CSCF itself with `odi`. An AS that sent the request back would let the S-CSCF go on with the next iFC. The IP-SM-GW does not.
+  - id: accepted
+    title: The IP-SM-GW accepts with 202 (4)
+    show: [m1a-ip-s, m1a-s-p, m1a-p-ue1]
+    active: m1a-ip-s
+    text: |
+      202, not 200: nothing has been delivered yet.
+      What becomes of the short message is told by the submit report, not by the 202.
+```
+
 | Look at | What to see |
 | --- | --- |
 | Request-URI and To | `tel:+12025550100`: the SC, not the recipient. |
@@ -194,29 +1687,193 @@ The filter is `diameter.cmd.code == 307`.
 
 ---
 
-## 5 to 7. The SC accepts, and the submit report goes back
+## 5. The SC accepts: OFR, SRR and OFA
+
+```ims-scene
+id: sc-accept
+lead: The IP-SM-GW hands the short message to the SC over SGd. The SC checks the recipient's number with the HSS before it takes it.
+steps:
+  - id: check
+    title: The IP-SM-GW checks the RP-DATA
+    only: [m1-s-ip, ipsmgw-rp]
+    focus: [ipsmgw]
+    checkpoint: true
+    text: It checks after the 202. If any check fails, the submit report is an RP-ERROR.
+  - id: ofr
+    title: It hands it to the SC (OFR)
+    only: [ofr]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: SGd command 8388645. SM-RP-UI holds UE 1's SMS-SUBMIT as it is.
+  - id: srr
+    title: The SC asks the HSS about the recipient's number (SRR)
+    show: [srr1]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: S6c command 8388647. It checks that a user has the number.
+  - id: sra
+    title: The HSS names UE 2's IP-SM-GW (SRA)
+    show: [sra1]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: The IP-SM-GW registered by the PUR of R5. A number that no subscriber has gets DIAMETER_ERROR_USER_UNKNOWN here.
+  - id: ofa
+    title: The SC takes it (OFA)
+    show: [ofa]
+    zoom: [ipsmgw, sc, hss]
+    text: The SC stamps it with TP-SCTS and holds it. From here on, the short message belongs to the SC.
+```
 
 | Look at | What to see |
 | --- | --- |
 | OFR and OFA | The IP-SM-GW hands the SMS-SUBMIT to the Service Centre over SGd, and the answer carries the submit report. |
 | SRR and SRA | The Service Centre asks the HSS over S6c whether anyone has the recipient's number. |
+
+The filter is `diameter.cmd.code in {8388645, 8388647} || sip.In-Reply-To`. It keeps the submit report of the next slide too.
+
+- The IP-SM-GW hands the message to the SC as soon as it has sent the 202, so the OFR may come before the 202 in the capture.
+- A number that no subscriber has gets DIAMETER_ERROR_USER_UNKNOWN in the SRA. The sender learns of it at once, without waiting for a status report ("When it fails").
+
+> Guide: [4](../../../docs/guide/en/sms.md#4-the-ip-sm-gw-accepts-202) and [5](../../../docs/guide/en/sms.md#5-the-ip-sm-gw-hands-the-short-message-to-the-sc-ofr-srr-and-ofa). TS 23.204 6.3. TS 29.338 6.2.1. TS 23.040 8.2.2, 6.1.
+
+---
+
+## 6 and 7. The submit report goes back to UE 1
+
+```ims-scene
+id: submit-report
+lead: The submit report is a new MESSAGE from the IP-SM-GW to UE 1. As a request from an AS to a user, it enters through the I-CSCF, the entry of the home network.
+steps:
+  - id: send
+    title: The IP-SM-GW sends the submit report (6)
+    only: [ofa, m2-ip-i]
+    active: m2-ip-i
+    text: The SMS-SUBMIT-REPORT of the OFA goes in an RP-ACK. In-Reply-To says which short message it answers.
+  - id: lir
+    title: The I-CSCF finds UE 1's S-CSCF (LIR and LIA)
+    show: [lir-m2, lia-m2]
+    active: lia-m2
+    text: As for an incoming call. The I-CSCF adds no Record-Route.
+  - id: deliver
+    title: The submit report reaches UE 1
+    hide: [ofa, lir-m2, lia-m2]
+    show: [m2-i-s, m2-s-p, m2-p-ue1]
+    active: m2-p-ue1
+    detail: []
+    checkpoint: true
+    text: The S-CSCF treats it as a terminating request and follows UE 1's Path.
+  - id: match
+    title: UE 1 matches it
+    show: [ue1-report]
+    focus: [ue1]
+    text: UE 1 kept the Call-ID of step 1. It compares In-Reply-To with it and records the message as accepted.
+  - id: ok
+    title: UE 1 answers 200 (7)
+    show: [m2a-ue1-p, m2a-p-s, m2a-s-i, m2a-i-ip]
+    active: m2a-ue1-p
+    detail: []
+    text: "The 200 goes back to the IP-SM-GW through the I-CSCF: a response follows the Via."
+```
+
+| Look at | What to see |
+| --- | --- |
 | Request-URI of the IP-SM-GW's MESSAGE | UE 1's SIP URI. |
 | Accept-Contact | `*;+g.3gpp.smsip;require;explicit`. |
 | In-Reply-To | The Call-ID of the MESSAGE of step 1. |
 | Body | RP-ACK with an SMS-SUBMIT-REPORT inside. |
 | The way | In through the I-CSCF, which finds UE 1's S-CSCF with an LIR. |
 
-The filter is `diameter.cmd.code in {8388645, 8388647} || sip.In-Reply-To`.
+- The IP-SM-GW does not use the Route of the S-CSCF. It puts `Route: <sip:ims.mnc001.mcc001.3gppnetwork.org;lr>` on its own request and sends it to the entry of the home network.
+- The submit report and the delivery of step 8 go out together, so their LIRs and answers mix in the capture.
 
-> Guide: [5](../../../docs/guide/en/sms.md#5-the-ip-sm-gw-hands-the-short-message-to-the-sc-ofr-srr-and-ofa) to [7](../../../docs/guide/en/sms.md#7-ue-1-answers-200). TS 24.341 5.3.3.4.3, 5.3.1.2. TS 29.328 7.6.2. TS 24.229 5.7.3.
+> Guide: [6](../../../docs/guide/en/sms.md#6-the-submit-report-goes-back-to-ue-1) and [7](../../../docs/guide/en/sms.md#7-ue-1-answers-200). TS 24.341 5.3.3.4.3, 5.3.1.2. TS 24.229 5.7.3.
 
 ---
 
-## 8 to 10. The SC delivers
+## 8. The SC starts the delivery: SRR and TFR
+
+```ims-scene
+id: sc-deliver
+lead: Before it delivers, the SC asks the HSS again. The TFR names the recipient by IMSI.
+steps:
+  - id: make
+    title: The SC makes the SMS-DELIVER
+    only: [sc-make]
+    focus: [sc]
+    text: The sender's number goes in TP-OA, where the SMS-SUBMIT had TP-DA. TP-SCTS is new.
+  - id: srr
+    title: It asks as the SMS-GMSC that delivers (SRR)
+    show: [srr2]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: The first query was the SMS-IWMSC's. The user may have moved or gone away since.
+  - id: sra
+    title: The IP-SM-GW again (SRA)
+    show: [sra2]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: The SRA names UE 2's IP-SM-GW and gives UE 2's IMSI.
+  - id: tfr
+    title: The SC hands it to the IP-SM-GW in a TFR (8)
+    show: [tfr]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: SGd command 8388646. This TFR gets no answer until the delivery is over.
+  - id: find
+    title: The IP-SM-GW finds UE 2 by IMSI
+    show: [ipsmgw-find]
+    focus: [ipsmgw]
+    text: It uses the IMSI read in the UDA of R5. It puts the delivery in the shared `Store` before the MESSAGE goes.
+```
 
 | Look at | What to see |
 | --- | --- |
 | TFR | The Service Centre forwards the SMS-DELIVER to the IP-SM-GW over SGd, naming the recipient by IMSI. |
+
+- Compare the SMS-SUBMIT with the SMS-DELIVER: TP-DA became TP-OA, and TP-SCTS is new.
+- A TFR always names its node in Destination-Host: the IP-SM-GW of the SRA.
+
+> Guide: [8](../../../docs/guide/en/sms.md#8-the-sc-forwards-the-message-and-the-ip-sm-gw-delivers-it-tfr-and-sms-deliver). TS 23.040 8.1.1. TS 29.338 6.2.2, 6.3.1.2.
+
+---
+
+## 8 to 10. The MESSAGE reaches UE 2
+
+```ims-scene
+id: mt
+lead: The MESSAGE to UE 2 also comes in through the I-CSCF. The S-CSCF picks the contact by the feature tag of the registration.
+steps:
+  - id: send
+    title: The IP-SM-GW sends the MESSAGE (8)
+    only: [m3-ip-i, lir-m3, lia-m3]
+    active: m3-ip-i
+    checkpoint: true
+    text: It goes to UE 2's tel URI. The I-CSCF finds UE 2's S-CSCF with an LIR.
+  - id: scscf
+    title: The S-CSCF checks the criteria and the contacts (9)
+    hide: [lir-m3, lia-m3]
+    show: [m3-i-s, scscf-mt]
+    active: scscf-mt
+    focus: [scscf]
+    text: |
+      It matches Accept-Contact against the parameters of the contacts UE 2 registered.
+      A UE that did not register `+g.3gpp.smsip` would not match, and the S-CSCF would answer 480.
+  - id: ue2
+    title: The MESSAGE reaches UE 2
+    show: [m3-s-p, m3-p-ue2]
+    active: m3-p-ue2
+    detail: []
+    text: The S-CSCF adds P-Called-Party-ID and follows UE 2's Path.
+  - id: ok
+    title: UE 2 answers 200 (10)
+    show: [m3a-ue2-p, m3a-p-s, m3a-s-i, m3a-i-ip]
+    active: m3a-ue2-p
+    checkpoint: true
+    text: The 200 only says that the MESSAGE arrived. Whether UE 2 took the short message, the delivery report says.
+```
+
+| Look at | What to see |
+| --- | --- |
 | Request-URI | `tel:+12025550102`, the tel URI of that IMSI. |
 | Request-Disposition | `no-fork`. |
 | Body | RP-DATA from the network, with an SMS-DELIVER. TP-OA is the sender. |
@@ -225,13 +1882,51 @@ The filter is `diameter.cmd.code in {8388645, 8388647} || sip.In-Reply-To`.
 | Answer of UE 2 | 200. It only says that the MESSAGE arrived. |
 
 - A UE that did not register `+g.3gpp.smsip` does not get the MESSAGE: the S-CSCF answers 480. The feature tag of the registration is used here.
-- Compare the SMS-SUBMIT with the SMS-DELIVER: TP-DA became TP-OA, and TP-SCTS is new.
 
-> Guide: [8](../../../docs/guide/en/sms.md#8-the-sc-forwards-the-message-and-the-ip-sm-gw-delivers-it-tfr-and-sms-deliver) to [10](../../../docs/guide/en/sms.md#10-ue-2-answers-200). TS 24.341 5.3.3.4.2, 5.3.2.3. TS 24.229 5.4.3.3. RFC 3841 7.2.4, 9.1.
+> Guide: [8](../../../docs/guide/en/sms.md#8-the-sc-forwards-the-message-and-the-ip-sm-gw-delivers-it-tfr-and-sms-deliver) to [10](../../../docs/guide/en/sms.md#10-ue-2-answers-200), with the matching of the S-CSCF in [9](../../../docs/guide/en/sms.md#9-the-s-cscf-picks-the-contact-by-caller-preferences). TS 24.341 5.3.3.4.2, 5.3.2.3. TS 24.229 5.4.3.3. RFC 3841 7.2.4, 9.1.
 
 ---
 
 ## 11 and 12. The delivery report
+
+```ims-scene
+id: delivery-report
+lead: The delivery report is a MESSAGE that UE 2 originates. UE 2's own iFC takes it to the IP-SM-GW, which then answers the TFR.
+steps:
+  - id: send
+    title: UE 2 sends the delivery report (11)
+    only: [m4-ue2-p]
+    text: It goes to the IP-SM-GW that was in P-Asserted-Identity of step 8.
+  - id: scscf
+    title: It matches UE 2's iFC (12)
+    show: [m4-p-s, scscf-dr]
+    active: scscf-dr
+    focus: [scscf]
+    text: "A MESSAGE with an SMS body that UE 2 sends: it matches the same criterion as in step 3."
+  - id: ipsmgw
+    title: The delivery report reaches the IP-SM-GW
+    show: [m4-s-ip]
+    detail: []
+    checkpoint: true
+    text: Route is the IP-SM-GW, then the S-CSCF with `odi`.
+  - id: accepted
+    title: The IP-SM-GW answers 202
+    show: [m4a-ip-s, m4a-s-p, m4a-p-ue2]
+    active: m4a-ip-s
+    detail: []
+    text: 202 Accepted, as in step 4.
+  - id: find
+    title: It finds the delivery and ends it
+    show: [ipsmgw-dr]
+    focus: [ipsmgw]
+    text: It finds the delivery in the shared `Store` by the Call-ID of In-Reply-To. Whichever IP-SM-GW node gets the report can end the delivery.
+  - id: tfa
+    title: The TFR gets its answer (TFA)
+    only: [tfr, ipsmgw-dr, tfa]
+    active: tfa
+    zoom: [ipsmgw, sc, hss]
+    text: The answer to the TFR of step 8 comes only now. The TFR waits as long as the delivery takes, up to 66 seconds here.
+```
 
 | Look at | What to see |
 | --- | --- |
@@ -249,6 +1944,58 @@ The filter is `diameter.cmd.code in {8388645, 8388647} || sip.In-Reply-To`.
 ---
 
 ## 13 to 15. The status report
+
+```ims-scene
+id: status-report
+lead: The SC delivers the status report like any short message, to the sender, UE 1.
+steps:
+  - id: make
+    title: The SC makes the status report (13)
+    only: [tfa, sc-sr]
+    active: sc-sr
+    focus: [sc]
+    checkpoint: true
+    text: UE 1 asked for it with TP-SRR in the SMS-SUBMIT. The SC makes it as soon as the TFA of step 12 is in.
+  - id: srr
+    title: It asks the HSS about the sender (SRR and SRA)
+    only: [srr3, sra3]
+    active: sra3
+    zoom: [ipsmgw, sc, hss]
+    detail: [srr3, sra3]
+    checkpoint: true
+    text: This time the recipient is UE 1. The HSS names UE 1's IP-SM-GW.
+  - id: tfr
+    title: It goes to the IP-SM-GW in a TFR (13)
+    show: [tfr3]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: SM-RP-UI is the SMS-STATUS-REPORT. The recipient is UE 1's IMSI.
+  - id: send
+    title: The status report reaches UE 1 (14)
+    only: [m5-ip-i, lir-m5, lia-m5, m5-i-s, m5-s-p, m5-p-ue1]
+    active: m5-ip-i
+    checkpoint: true
+    text: |
+      It goes to UE 1's tel URI, by the way of steps 8 to 10: the I-CSCF finds the S-CSCF with an LIR.
+      TP-MR is the one of the SMS-SUBMIT, so UE 1 knows which message the report is about.
+  - id: ok
+    title: UE 1 answers 200
+    hide: [lir-m5, lia-m5]
+    show: [m5a-ue1-p, m5a-p-s, m5a-s-i, m5a-i-ip]
+    active: m5a-ue1-p
+    detail: []
+    text: Here too, the 200 only says that the MESSAGE arrived.
+  - id: report
+    title: UE 1 sends a delivery report (15)
+    only: [m6-ue1-p, m6-p-s, m6-s-ip]
+    active: m6-ue1-p
+    text: Like UE 2 in step 11, it says that the status report arrived. UE 1's own iFC takes it to the IP-SM-GW.
+  - id: end
+    title: The 202 and the TFA end the delivery
+    show: [m6a-ip-s, m6a-s-p, m6a-p-ue1, tfa3]
+    active: tfa3
+    text: The IP-SM-GW answers 202, and tells the SC in a TFA that the status report was delivered.
+```
 
 - UE 1 asked for a status report with TP-SRR in the SMS-SUBMIT.
 
@@ -269,6 +2016,53 @@ The filter is `gsm_sms.tp-mti == 2`.
 ---
 
 ## A1 to A4. UE 2 takes no short message, and the SC holds it
+
+```ims-scene
+id: absent
+lead: When UE 2 refuses with 480, the SC keeps the short message. The HSS writes the SC's address into the MWD.
+steps:
+  - id: tfr
+    title: The delivery starts as in step 8 (A1)
+    only: [a1-tfr]
+    zoom: [ipsmgw, sc, hss]
+    text: "UE 2 is set to `{\"available\": false}` on its control API, and UE 1 sends a short message."
+  - id: message
+    title: The MESSAGE reaches UE 2
+    show: [a1-ip-i, a1-i-s, a1-s-p, a1-p-ue2]
+    active: a1-p-ue2
+    detail: []
+    text: By the way of step 8. The LIR of the I-CSCF is left out.
+  - id: "480"
+    title: UE 2 answers 480 (A2)
+    show: [a2-ue2-p, a2-p-s, a2-s-i, a2-i-ip]
+    active: a2-ue2-p
+    checkpoint: true
+    text: UE 2 was reached, but its state does not allow the request. No delivery report follows.
+  - id: tfa
+    title: The IP-SM-GW answers absent user (A3)
+    only: [a1-tfr, a3-tfa]
+    active: a3-tfa
+    zoom: [ipsmgw, sc, hss]
+    text: The 480 is mapped to the error of an absent subscriber, which the TFA carries as DIAMETER_ERROR_ABSENT_USER.
+  - id: unri
+    title: The IP-SM-GW sets UNRI
+    show: [ipsmgw-unri]
+    focus: [ipsmgw]
+    zoom: [ipsmgw, sc, hss]
+    text: "UE-Not-Reachable-for-IP: the flag that has it tell the HSS when UE 2 is back."
+  - id: rdr
+    title: "The SC reports to the HSS (A4: RDR)"
+    show: [a4-rdr]
+    zoom: [ipsmgw, sc, hss]
+    text: S6c command 8388649, Report-SM-Delivery-Status.
+  - id: hold
+    title: The HSS puts the SC in the MWD
+    show: [hss-absent, a4-rda]
+    active: hss-absent
+    focus: [hss]
+    zoom: [ipsmgw, sc, hss]
+    text: The HSS sets its UNRI too, and names no serving node in an SRA while it is set, so as not to send the SC to an IP-SM-GW that fails again.
+```
 
 `PUT /sms-availability` with `{"available": false}` on UE 2's control API, then a short message from UE 1.
 
@@ -291,7 +2085,48 @@ SC <-> HSS: RDR, RDA // A4
 
 ---
 
-## A5 to A9. UE 2 is back: Ready-For-SM, the alert and the resend
+## A5 to A7. UE 2 is back: Ready-For-SM and the alert
+
+```ims-scene
+id: alert
+lead: A request of UE 2 that reaches the IP-SM-GW says that UE 2 is back. The news reaches the SC through the HSS.
+steps:
+  - id: message
+    title: UE 2 sends a request (A5)
+    only: [a5-ue2-p, a5-p-s, a5-s-ip]
+    active: a5-ue2-p
+    text: "After `{\"available\": true}`. Any request does; here it is a short message of UE 2's own. Its OFR is left out."
+  - id: accepted
+    title: The IP-SM-GW answers 202
+    show: [a5a-ip-s, a5a-s-p, a5a-p-ue2]
+    active: a5a-ip-s
+    detail: []
+    text: It answers 202, as to every MESSAGE.
+  - id: present
+    title: It learns that UE 2 is back
+    show: [ipsmgw-present]
+    focus: [ipsmgw]
+    checkpoint: true
+    text: The IP-SM-GW still has the UNRI of A3. It clears it and tells the HSS.
+  - id: ready
+    title: "The IP-SM-GW tells the HSS (A6: Ready-For-SM)"
+    only: [a6-rfsm]
+    zoom: [ipsmgw, sc, hss]
+    text: This project's own command. A network sends this news in READY_FOR_SM of MAP, which this project does not speak.
+  - id: hss
+    title: The HSS clears UNRI
+    show: [hss-present]
+    focus: [hss]
+    zoom: [ipsmgw, sc, hss]
+    text: It acts only if the number is that of the IP-SM-GW UE 2 registered at.
+  - id: alert
+    title: "The HSS answers and alerts the SC (A7: ALR)"
+    hide: [hss-present]
+    show: [a6-ans, a7-alr]
+    active: a7-alr
+    zoom: [ipsmgw, sc, hss]
+    text: The HSS answers without waiting for the ALR to finish, so the answer and the ALR come in either order.
+```
 
 ```ladder
 UE 2, IP-SM-GW, SC, HSS
@@ -312,7 +2147,104 @@ IP-SM-GW --> SC: TFA 2001 // A9
 
 ---
 
-## B1 to B8. UE 2 has no memory left
+## A8 and A9. The SC sends it again
+
+```ims-scene
+id: resend
+lead: Alerted, the SC delivers at once, without waiting for the retry an hour later. This time UE 2 takes it.
+steps:
+  - id: due
+    title: The SC makes what it holds due (A8)
+    only: [a7-alr, sc-due]
+    active: sc-due
+    focus: [sc]
+    zoom: [ipsmgw, sc, hss]
+    text: It makes the queue of that number due at once, ahead of the retry interval.
+  - id: srr
+    title: The SC asks the HSS (SRR)
+    hide: [a7-alr]
+    show: [a8-srr]
+    zoom: [ipsmgw, sc, hss]
+    text: Unlike after A4, UNRI is now clear.
+  - id: sra
+    title: The IP-SM-GW is named again (SRA and ALA)
+    show: [a8-sra, a7-ala]
+    active: a8-sra
+    zoom: [ipsmgw, sc, hss]
+    text: The SC starts the delivery before it answers the ALR, and the HSS takes the SC out of the MWD only after the ALA, so MWD-Status in the SRA is mostly 0.
+  - id: tfr
+    title: It sends what it held in a TFR
+    show: [a8-tfr]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: From here on, as in steps 8 to 12.
+  - id: deliver
+    title: UE 2 takes it and answers 200
+    only: [a8-tfr, a8-ip-i, a8-i-s, a8-s-p, a8-p-ue2, a8a-ue2-p, a8a-p-s, a8a-s-i, a8a-i-ip]
+    active: a8a-ue2-p
+    detail: []
+    text: The MESSAGE comes in through the I-CSCF and reaches UE 2. The LIR is left out.
+  - id: report
+    title: The delivery report ends the delivery (A9)
+    only: [a8-tfr, a9-ue2-p, a9-p-s, a9-s-ip, a9a-ip-s, a9a-s-p, a9a-p-ue2, a9-tfa]
+    active: a9-tfa
+    text: UE 2's delivery report reaches the IP-SM-GW, and the TFA says 2001.
+```
+
+| Look at | What to see |
+| --- | --- |
+| MWD-Status of the SRA | Mostly 0: the SC's address is in the MWD, and no flag is set. |
+| TFA | 2001. As in step 12, it follows the delivery report. |
+
+- No flag is set, so the SC does not report this delivery to the HSS. It reports one when a flag stays set (D1 to D3).
+- If UE 2 sends nothing and only registers again, the IP-SM-GW sends the HSS the same news (C1 to C4 of the guide). The resend is the one of this slide.
+
+> Guide: ["UE 2 takes no short message"](../../../docs/guide/en/sms.md#ue-2-takes-no-short-message) and ["UE 2 only registers again"](../../../docs/guide/en/sms.md#ue-2-only-registers-again). TS 29.338 5.3.3.8. TS 23.040 3.2.6.
+
+---
+
+## B1 to B4. UE 2 has no memory left
+
+```ims-scene
+id: memory
+lead: UE 2 with a full memory takes the MESSAGE, then refuses with an RP-ERROR. The HSS sets MCEF, not UNRI.
+steps:
+  - id: tfr
+    title: The delivery starts (B1)
+    only: [b1-tfr]
+    zoom: [ipsmgw, sc, hss]
+    text: "UE 2 is set to `{\"full\": true}` with `PUT /sms-memory`, and UE 1 sends a short message."
+  - id: message
+    title: UE 2 answers the MESSAGE with 200
+    show: [b1-ip-i, b1-i-s, b1-s-p, b1-p-ue2, b1a-ue2-p, b1a-p-s, b1a-s-i, b1a-i-ip]
+    active: b1a-ue2-p
+    text: The short message gets as far as UE 2. The LIR is left out.
+  - id: error
+    title: The delivery report is an RP-ERROR (B2)
+    only: [b1-tfr, b2-ue2-p, b2-p-s, b2-s-ip, b2a-ip-s, b2a-s-p, b2a-p-ue2]
+    active: b2-ue2-p
+    checkpoint: true
+    text: UE 2 keeps nothing, and now owes the network a notification. The IP-SM-GW answers 202.
+  - id: tfa
+    title: The IP-SM-GW reports the failure (B3)
+    only: [b1-tfr, b3-tfa]
+    active: b3-tfa
+    zoom: [ipsmgw, sc, hss]
+    text: The TFA carries DIAMETER_ERROR_SM_DELIVERY_FAILURE with the cause MEMORY_CAPACITY_EXCEEDED.
+  - id: rdr
+    title: "The SC reports to the HSS (B4: RDR)"
+    show: [b4-rdr]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: The cause is UE_MEMORY_CAPACITY_EXCEEDED.
+  - id: hold
+    title: The HSS sets MCEF
+    show: [hss-mcef, b4-rda]
+    active: hss-mcef
+    focus: [hss]
+    zoom: [ipsmgw, sc, hss]
+    text: The UE is reachable and only has no room, so UNRI is not set.
+```
 
 `PUT /sms-memory` with `{"full": true}`, then a short message from UE 1.
 
@@ -321,17 +2253,117 @@ IP-SM-GW --> SC: TFA 2001 // A9
 | B2 | 200, then a delivery report: an RP-ERROR with RP-Cause 22 (memory capacity exceeded), TP-FCS `0xD3`. |
 | B3 | DIAMETER_ERROR_SM_DELIVERY_FAILURE (5555) in the TFA, with MEMORY_CAPACITY_EXCEEDED. |
 | B4 | An RDR with UE_MEMORY_CAPACITY_EXCEEDED. The HSS sets MCEF. UNRI stays clear: the UE is reachable and has no room. |
+
+> Guide: ["UE 2 has no memory left"](../../../docs/guide/en/sms.md#ue-2-has-no-memory-left). TS 24.011 table 8.4 part 2. TS 23.040 9.2.3.22, 3.2.6. TS 29.338 7.3.8.
+
+---
+
+## B5 to B8. The notification of free memory
+
+```ims-scene
+id: memory-back
+lead: When UE 2 has room again, it says so itself. The RP-ACK comes back to UE 2 only after the HSS has taken the news.
+steps:
+  - id: smma
+    title: UE 2 sends an RP-SMMA (B5)
+    only: [b5-ue2-p, b5-p-s, b5-s-ip]
+    active: b5-ue2-p
+    text: "With `{\"full\": false}`, UE 2 sends the notification it owes, in a MESSAGE."
+  - id: accepted
+    title: The IP-SM-GW answers 202 at once
+    show: [b5a-ip-s, b5a-s-p, b5a-p-ue2]
+    active: b5a-ip-s
+    checkpoint: true
+    text: Before the news goes to the HSS. The RP-ACK goes in a MESSAGE of its own.
+  - id: ready
+    title: "The IP-SM-GW passes it to the HSS (B6: Ready-For-SM)"
+    only: [b6-rfsm]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: The same command of this project's own as in A6, with Alert-Reason UE_MEMORY_AVAILABLE.
+  - id: hss
+    title: The HSS clears MCEF and UNRI
+    show: [hss-mem]
+    focus: [hss]
+    zoom: [ipsmgw, sc, hss]
+    text: It then alerts the SCs in the MWD.
+  - id: alert
+    title: The HSS answers and alerts the SC (B7)
+    hide: [hss-mem]
+    show: [b6-ans, b7-alr, b7-ala]
+    active: b7-alr
+    zoom: [ipsmgw, sc, hss]
+    text: As in A7, the answer and the ALR come in either order.
+  - id: ack
+    title: The RP-ACK reaches UE 2 (B8)
+    only: [b6-ans, b8-ip-i, b8-i-s, b8-s-p, b8-p-ue2]
+    active: b8-ip-i
+    text: |
+      The HSS has taken it, so the IP-SM-GW sends the RP-ACK. The UE is never told that news arrived which did not.
+      The resend is the one of A8 and A9.
+```
+
+| Step | What to see |
+| --- | --- |
 | B5 | `{"full": false}`: UE 2 sends the notification it owes, an RP-SMMA in a MESSAGE. |
 | B6, B7 | A Ready-For-SM with UE_MEMORY_AVAILABLE. The HSS clears MCEF and UNRI, and alerts the SCs of the MWD. |
 | B8 | The RP-ACK for the notification goes to UE 2 only after the HSS has taken it. |
 
 The filter is `diameter.Alert-Reason == 1`. The resend is the one of A8 and A9.
 
-> Guide: ["UE 2 has no memory left"](../../../docs/guide/en/sms.md#ue-2-has-no-memory-left). TS 24.011 table 8.4 part 2, 7.3.2. TS 23.040 9.2.3.22, 3.2.6. TS 29.338 7.3.8. TS 23.204 6.6.
+- A notification that did not reach the HSS gets an RP-ERROR instead of the RP-ACK, with the cause set for each error of the HSS. The UE keeps the notification as one it still owes.
+
+> Guide: ["UE 2 has no memory left"](../../../docs/guide/en/sms.md#ue-2-has-no-memory-left). TS 24.011 7.3.2. TS 23.204 6.6. TS 23.040 3.2.6, 11.2.
 
 ---
 
 ## D1 to D3. The retry, and the report of a delivery
+
+```ims-scene
+id: retry
+lead: When the RP-SMMA is lost, MCEF stays set. The retry of the SC sends the short message again, and the SC then reports the delivery to the HSS.
+steps:
+  - id: srr
+    title: The SRR at the retry (D1)
+    only: [d1-srr]
+    zoom: [ipsmgw, sc, hss]
+    text: After B1 to B4, UE 2 has room again, but its RP-SMMA was lost. The retry comes after the interval of `retry_delays`.
+  - id: sra
+    title: The SRA has MCEF-Set
+    show: [d1-sra]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: It says that the HSS has MCEF set for the user.
+  - id: tfr
+    title: The SC sends a TFR (D2)
+    show: [d2-tfr]
+    zoom: [ipsmgw, sc, hss]
+    text: The SIP beyond the IP-SM-GW is the one of A8 and A9, and is left out here.
+  - id: tfa
+    title: This time UE 2 takes it
+    show: [d2-tfa]
+    zoom: [ipsmgw, sc, hss]
+    text: After the delivery report, the TFA says 2001.
+  - id: decide
+    title: The SC decides to report the delivery
+    show: [sc-report]
+    focus: [sc]
+    zoom: [ipsmgw, sc, hss]
+    text: The delivery succeeded while the HSS had a flag set, so the SC reports it.
+  - id: rdr
+    title: An RDR with SUCCESSFUL_TRANSFER (D3)
+    show: [d3-rdr]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: The SC sends this report once.
+  - id: clear
+    title: The HSS clears MCEF
+    show: [hss-success, d3-rda]
+    active: hss-success
+    focus: [hss]
+    zoom: [ipsmgw, sc, hss]
+    text: It takes the SC's address out of the MWD. Without D3, MCEF would stay set.
+```
 
 An RP-SMMA can be lost. MCEF then stays set, no registration of UE 2 alerts the SC, and only the retry of the SC sends the short message again.
 
@@ -349,6 +2381,52 @@ An RP-SMMA can be lost. MCEF then stays set, no registration of UE 2 alerts the 
 ---
 
 ## When it fails
+
+```ims-scene
+id: failures
+lead: In both cases the SIP response is 202. The failure travels in the RP and TP layers, and the SC and the HSS decide it.
+steps:
+  - id: ofr
+    title: The number has no subscriber
+    only: [f-ofr]
+    zoom: [ipsmgw, sc, hss]
+    text: UE 1 sends to `+12025550198`. As in step 5, the IP-SM-GW hands it to the SC in an OFR.
+  - id: srr
+    title: The SC asks the HSS about the number
+    show: [f-srr]
+    zoom: [ipsmgw, sc, hss]
+    text: The SRR of step 5.
+  - id: sra
+    title: The HSS answers USER_UNKNOWN
+    show: [f-sra]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: No subscriber has the number.
+  - id: ofa
+    title: The SC refuses
+    show: [f-ofa]
+    zoom: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: The OFA refuses the short message. No delivery is tried.
+  - id: report
+    title: The submit report is an RP-ERROR
+    only: [f-ofa, frep-ip-i, frep-i-s, frep-s-p, frep-p-ue1]
+    active: frep-ip-i
+    checkpoint: true
+    text: By the way of step 6. The sender learns of the failure at once, without waiting for a status report. The LIR is left out.
+  - id: absent
+    title: The recipient is not registered
+    only: [g-srr, g-sra]
+    active: g-sra
+    zoom: [ipsmgw, sc, hss]
+    text: Subscriber 3, `+12025550103`, exists, so the SC takes the message and the submit report is an RP-ACK. The SRR of the delivery gets 5550.
+  - id: hold
+    title: The HSS keeps the SC in the MWD
+    show: [hss-keep]
+    focus: [hss]
+    zoom: [ipsmgw, sc, hss]
+    text: The SC holds it. The alert of the HSS delivers it when subscriber 3 registers.
+```
 
 | Case | How to try it | What UE 1 gets |
 | --- | --- | --- |
