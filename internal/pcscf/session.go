@@ -425,7 +425,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // initial INVITE (5.2.7.2).
 func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) (answer func(*sip.Message), answered func(final *sip.Message, err error), err error) {
 	received := out.Body
-	if err := p.relaySDP(out, d.Relay, toUE); err != nil {
+	if _, err := p.relaySDP(out, d.Relay, toUE); err != nil {
 		return nil, nil, err
 	}
 	offer := ueSide(received, out.Body, toUE)
@@ -449,7 +449,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 			return
 		}
 		received := resp.Body
-		if err := p.relaySDP(resp, d.Relay, !toUE); err != nil {
+		if _, err := p.relaySDP(resp, d.Relay, !toUE); err != nil {
 			log.Warn("media relay refused the answer", "error", err.Error())
 			if !taken {
 				refused = true
@@ -655,42 +655,44 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 // the SDP goes on with the address of the termination that faces where
 // m goes. The same holds for an offer and for an answer. Without a
 // context, a body, or an audio stream with a port, m is left as it is.
-func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) error {
+// sender is where the termination was told to send, and is not valid
+// when m is left as it is.
+func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) (sender netip.AddrPort, err error) {
 	if rc == nil || len(m.Body) == 0 {
-		return nil
+		return netip.AddrPort{}, nil
 	}
 	if err := sdpBodyError(m); err != nil {
-		return err
+		return netip.AddrPort{}, err
 	}
 	if !sip.HasSessionDescription(m) {
-		return nil
+		return netip.AddrPort{}, nil
 	}
 	description, err := sdp.Parse(m.Body)
 	if err != nil {
-		return fmt.Errorf("%w: %w", errMalformedSDP, err)
+		return netip.AddrPort{}, fmt.Errorf("%w: %w", errMalformedSDP, err)
 	}
-	sender, _, err := description.Audio()
+	sender, _, err = description.Audio()
 	if err != nil {
-		return nil
+		return netip.AddrPort{}, nil
 	}
-	cameFrom, shown := agw.Access, rc.Core
+	shown := rc.Core
 	if toUE {
-		cameFrom, shown = agw.Core, rc.Access
+		shown = rc.Access
 	}
 	relay, err := p.relayOf(*rc)
 	if err != nil {
-		return err
+		return netip.AddrPort{}, err
 	}
 	ctx, cancel := relayContext()
 	defer cancel()
-	if err := relay.Modify(ctx, rc.ID, cameFrom, agw.TerminationRequest{Remote: sender}); err != nil {
-		return err
+	if err := relay.Modify(ctx, rc.ID, facingSender(toUE), agw.TerminationRequest{Remote: sender}); err != nil {
+		return netip.AddrPort{}, err
 	}
 	if err := description.SetAudio(shown); err != nil {
-		return err
+		return netip.AddrPort{}, err
 	}
 	m.Body = description.Bytes()
-	return nil
+	return sender, nil
 }
 
 // advertise is the address of a termination as the SDP shows it. A UE

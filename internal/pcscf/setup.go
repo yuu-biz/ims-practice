@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"log/slog"
+	"net/netip"
 	"sync"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
@@ -134,9 +135,13 @@ func (s *setup) throughRelay(out *sip.Message) error {
 		return err
 	}
 	s.relay = &RelayContext{Relay: relay.Name, ID: c.ID, Access: s.p.advertise(c, agw.Access, s.ue), Core: c.Terminations[agw.Core].Local}
-	if err := s.p.relaySDP(out, s.relay, s.toUE()); err != nil {
+	sender, err := s.p.relaySDP(out, s.relay, s.toUE())
+	if err != nil {
 		return err
 	}
+	// The offer counts at once: the caller makes no other offer before it
+	// has the answer (RFC 3261 13.2.1).
+	s.relay = s.relay.agreeing(facingSender(s.toUE()), sender)
 	s.log.Info("media through the relay", "relay", relay.Name, "context", c.ID, "leg", string(s.leg),
 		"offer_from", offerAddr.String(), "access", s.relay.Access.String(), "core", s.relay.Core.String())
 	return nil
@@ -275,9 +280,11 @@ func (s *setup) response(resp *sip.Message) error {
 		return err
 	}
 	var refused error
+	var sent netip.AddrPort
 	if carriesSDP(resp, s.relay) {
 		received := resp.Body
-		if err := s.p.relaySDP(resp, s.relay, !s.toUE()); err != nil {
+		var err error
+		if sent, err = s.p.relaySDP(resp, s.relay, !s.toUE()); err != nil {
 			s.log.Warn("media relay refused the answer", "error", err.Error())
 			return fmt.Errorf("%w: %w", errRelay, err)
 		}
@@ -285,7 +292,7 @@ func (s *setup) response(resp *sip.Message) error {
 			refused = s.authorize(ueSide(received, resp.Body, !s.toUE()))
 		}
 	}
-	switch err := s.remember(resp); {
+	switch err := s.remember(resp, sent); {
 	case errors.Is(err, errReleased):
 		return err
 	case err != nil:
@@ -414,8 +421,10 @@ func (s *setup) unavailable() *sip.Message {
 // and brings it up to date with each later one (TS 24.229 5.2.6.3.4,
 // 5.2.6.4.4). It returns errReleased for a dialog that has been released
 // or is gone, which it leaves as it is, and otherwise the failure of the
-// Store.
-func (s *setup) remember(resp *sip.Message) error {
+// Store. sent is where the relay now sends to the callee for the SDP
+// answer of resp, and is not valid for a response whose SDP the relay
+// did not take, or that has none.
+func (s *setup) remember(resp *sip.Message, sent netip.AddrPort) error {
 	calleeTag := tagOf(resp.Get("To"))
 	if calleeTag == "" {
 		// RFC 3261 12.1: a response without a To tag creates no dialog.
@@ -446,6 +455,9 @@ func (s *setup) remember(resp *sip.Message) error {
 		d.Callee.Route = toCallee
 		if contact := contactOf(resp); contact != "" {
 			d.Callee.Target = contact
+		}
+		if d.Relay != nil {
+			d.Relay = d.Relay.agreeing(facingSender(!s.toUE()), sent)
 		}
 	}
 	ctx := context.Background()

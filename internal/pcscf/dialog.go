@@ -4,6 +4,7 @@ import (
 	"net/netip"
 	"time"
 
+	"github.com/yuu-biz/ims-practice/internal/agw"
 	"github.com/yuu-biz/ims-practice/internal/policy"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
@@ -154,6 +155,46 @@ type RelayContext struct {
 	// does.
 	Access netip.AddrPort
 	Core   netip.AddrPort
+	// AccessRemote and CoreRemote are where the access and the core
+	// termination send for the last offer and answer that are done: where
+	// the UE, and the party on the network side, take their media. Not
+	// valid in a Dialog of a P-CSCF that kept neither.
+	AccessRemote netip.AddrPort
+	CoreRemote   netip.AddrPort
+}
+
+// agreed is where the termination side sends for the last offer and
+// answer that are done.
+func (rc RelayContext) agreed(side agw.TerminationID) netip.AddrPort {
+	if side == agw.Core {
+		return rc.CoreRemote
+	}
+	return rc.AccessRemote
+}
+
+// agreeing is rc with remote as where the termination side sends for the
+// last offer and answer. It is a copy, since the Dialogs that the Store
+// gives out may share one RelayContext. An address that is not valid, of
+// an SDP whose audio the relay was not told of, leaves side as it was.
+func (rc RelayContext) agreeing(side agw.TerminationID, remote netip.AddrPort) *RelayContext {
+	switch {
+	case !remote.IsValid():
+	case side == agw.Core:
+		rc.CoreRemote = remote
+	default:
+		rc.AccessRemote = remote
+	}
+	return &rc
+}
+
+// facingSender is the termination of a relay context that faces where a
+// message comes from: the core termination for a message towards the
+// UE, and the access termination for one away from it.
+func facingSender(toUE bool) agw.TerminationID {
+	if toUE {
+		return agw.Core
+	}
+	return agw.Access
 }
 
 // ue and remote are the party the P-CSCF serves and the other one.
