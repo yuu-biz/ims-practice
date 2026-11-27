@@ -761,8 +761,8 @@ func (d *CallDialog) reInviteProvisional(resp *Message, r *reInviteSent) bool {
 			r.offerRSeq = rseq
 		}
 	}
-	// A response with an offer waits for the user's answer.
-	if !r.manualPRACK && d.offer != OfferRemote {
+	// The response with the offer waits for the user's answer.
+	if !r.manualPRACK && rseq != r.offerRSeq {
 		d.autoPRACK(resp)
 	}
 	return true
