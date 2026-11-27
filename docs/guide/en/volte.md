@@ -725,7 +725,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | SDP, RFC 8866 5.7 | IPv4 unicast addresses only in c=. | Every node here uses IPv4. |
 | SDP, TS 26.114 5.2.1.1 | No EVS, and so no super-wideband speech, in the offer for NR access (`sdp.VoNRCodecs`): it is the offer for LTE. | The UE has no EVS codec. An EVS payload type would offer bit rates of EVS Primary that the UE cannot send. |
 | UA, RFC 3261 12.2.1.2 | A lost early dialog, such as one whose PRACK failed, is only logged. | The final response to the INVITE ends the call anyway. |
-| UA, RFC 3261 13.2.2.4 | A BYE that ends a dialog whose 2xx had an offer sends the ACK without an answer first. | The UA has no SDP of its own then. |
+| UA, RFC 3261 13.2.2.4 | A BYE that ends a dialog whose 2xx had an offer sends the ACK first, with an answer that rejects every stream. When the offer is not an SDP that the UA reads, the ACK has no body. | The UA has no session of its own then, and cannot say which streams of an unreadable offer to reject. |
 | UA, RFC 4028 7.1, 10 | timer is in the Supported of the INVITE and its dialog only; after a refresh fails, the UA only logs and the expiry ends the session. | The session timer concerns the call's dialog; no node challenges a request within a dialog. |
 
 ## Clean up

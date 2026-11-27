@@ -3,9 +3,14 @@ package sip
 import (
 	"errors"
 	"fmt"
+	"math/rand/v2"
+	"net/netip"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
+
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 )
 
 // ErrCallEnded is what a method of a call returns when the call has
@@ -202,6 +207,9 @@ type CallDialog struct {
 	// pendingACK is an ACK that waits for the user of the call: the 2xx
 	// carried the offer, so the ACK has to carry the answer.
 	pendingACK *Message
+	// pendingOffer is the session description of that 2xx, which a BYE
+	// before the answer rejects (rejectOffer).
+	pendingOffer []byte
 	// reliable is RFC 3262 4 for each INVITE of this UA in the dialog
 	// whose reliable provisional responses the UA takes, by the CSeq
 	// number of the INVITE. The RSeq numbers count within one INVITE
@@ -388,11 +396,12 @@ func (d *CallDialog) offerEvent(e OfferEvent) error {
 // acknowledge is RFC 3261 13.2.2.4 for a 2xx to an INVITE of this UA
 // with the CSeq number seq. The ACK goes out at once, unless the 2xx
 // carried the offer (offered): then it waits for the answer of the
-// user (Ack). c.mu is held.
-func (d *CallDialog) acknowledge(seq uint32, offered bool) {
+// user (Ack). offer is the session description of the 2xx. c.mu is
+// held.
+func (d *CallDialog) acknowledge(seq uint32, offered bool, offer []byte) {
 	ack := d.dialog.newACK(seq)
 	if offered {
-		d.pendingACK = ack
+		d.pendingACK, d.pendingOffer = ack, offer
 		return
 	}
 	addHeaders(ack, d.c.ua.own(ACK, false, nil))
@@ -430,12 +439,36 @@ func (d *CallDialog) Ack(body Body, headers ...HeaderField) error {
 	}
 	d.sent(body)
 	ack := d.pendingACK
-	d.pendingACK = nil
+	d.pendingACK, d.pendingOffer = nil, nil
 	addHeaders(ack, headers)
 	body.addTo(ack)
 	cseq, _ := ParseCSeq(ack.Get("CSeq"))
 	d.sendACK(cseq.Number, ack)
 	return nil
+}
+
+// rejectOffer puts in ack the answer that declines offer, the session
+// description of a 2xx (RFC 3261 13.2.2.4, RFC 3264 6). The UA has no
+// session of its own to answer with, so every stream is rejected with
+// port 0 (sdp.Reject). The o= and c= lines carry the host of contact,
+// the UA's own address, when that is an IP address.
+//
+// SIMPLIFIED: RFC 3261 13.2.2.4. An offer that sdp.Parse does not read
+// gets no answer: its ACK goes without a body, as the UA cannot say
+// which streams it declines, and the BYE follows at once.
+func rejectOffer(ack *Message, offer []byte, contact string) {
+	parsed, err := sdp.Parse(offer)
+	if err != nil {
+		return
+	}
+	addr := netip.IPv4Unspecified()
+	if uri, err := ParseURI(contact); err == nil {
+		if a, err := netip.ParseAddr(uri.Host); err == nil {
+			addr = a
+		}
+	}
+	answer := sdp.Reject(parsed, strconv.FormatUint(rand.Uint64N(1<<62), 10), addr)
+	Body{Type: "application/sdp", Content: answer.Bytes()}.addTo(ack)
 }
 
 // byeOwn is bye for a BYE that the UA sends on its own, for reason.
@@ -467,15 +500,14 @@ func (d *CallDialog) bye(reason error, headers []HeaderField) error {
 		return ErrCallEnded
 	}
 	if d.pendingACK != nil {
-		// SIMPLIFIED: RFC 3261 13.2.2.4. A UAC that ends a dialog whose
-		// 2xx carried an offer MUST put a valid answer in the ACK and
-		// then send the BYE. The UA has no session description of its
-		// own to answer with, so the ACK goes without a body; the BYE
-		// follows at once, and no media flows in between.
+		// RFC 3261 13.2.2.4: a UAC that ends a dialog whose 2xx carried
+		// an offer puts a valid answer in the ACK, and then sends the
+		// BYE.
+		rejectOffer(d.pendingACK, d.pendingOffer, c.ua.cfg.Contact)
 		cseq, _ := ParseCSeq(d.pendingACK.Get("CSeq"))
 		addHeaders(d.pendingACK, c.ua.own(ACK, false, nil))
 		d.sendACK(cseq.Number, d.pendingACK)
-		d.pendingACK = nil
+		d.pendingACK, d.pendingOffer = nil, nil
 	}
 	req := d.newRequest(BYE, Body{}, headers)
 	d.endSession("BYE sent")

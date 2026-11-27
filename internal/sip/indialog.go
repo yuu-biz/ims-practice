@@ -708,7 +708,7 @@ func (d *CallDialog) ReInviteWith(re ReInvitation) (*Message, error) {
 	}
 	d.answered(final, offers && !reinvite.described)
 	if accepted && d.dialog.State == DialogConfirmed {
-		d.acknowledge(cseq.Number, offerIn2xx)
+		d.acknowledge(cseq.Number, offerIn2xx, final.Body)
 	}
 	c.mu.Unlock()
 

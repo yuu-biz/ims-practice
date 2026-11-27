@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/b2bua"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -219,14 +220,23 @@ func TestDeclinedAckReleasesTheCall(t *testing.T) {
 	endedByBYE(t, "the caller's call", out.Done(), out.EndedBy)
 	endedByBYE(t, "the callee's call", in.Done(), in.EndedBy)
 	// A retransmission of the 200 that crosses the ACK gets an ACK again
-	// (RFC 3261 13.2.2.4), and none of them has the declined answer.
+	// (RFC 3261 13.2.2.4), and none of them has the declined answer: the
+	// UA that ends the call answers the offer of the 200 by rejecting
+	// every stream (RFC 3264 6).
 	bodies := w.bodies(sip.ACK)
 	if len(bodies) == 0 {
 		t.Error("the callee got no ACK")
 	}
 	for _, b := range bodies {
-		if b != "" {
-			t.Errorf("the callee got an ACK with %q, want none with the declined answer", b)
+		answer, err := sdp.Parse([]byte(b))
+		if err != nil {
+			t.Errorf("the callee got an ACK with %q, want an answer that rejects the offer: %v", b, err)
+			continue
+		}
+		for _, m := range answer.Media {
+			if m.Port != 0 {
+				t.Errorf("the callee got an ACK with %q, want no stream accepted", b)
+			}
 		}
 	}
 }
