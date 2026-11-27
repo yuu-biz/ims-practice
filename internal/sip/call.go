@@ -202,11 +202,11 @@ type CallDialog struct {
 	// pendingACK is an ACK that waits for the user of the call: the 2xx
 	// carried the offer, so the ACK has to carry the answer.
 	pendingACK *Message
-	// At the UAC: lastRSeq is the RSeq of the last reliable provisional
-	// response taken in order, 0 before the first (RFC 3262 4), and
-	// prackedRSeq that of the last one that got its PRACK.
-	lastRSeq    uint32
-	prackedRSeq uint32
+	// reliable is RFC 3262 4 for each INVITE of this UA in the dialog
+	// whose reliable provisional responses the UA takes, by the CSeq
+	// number of the INVITE. The RSeq numbers count within one INVITE
+	// transaction (RFC 3262 3), so each INVITE has its own.
+	reliable map[uint32]*reliableSeq
 	// offer is where the offer/answer exchange of the dialog stands.
 	offer OfferState
 	// updatePending tells that an UPDATE of the peer waits for its
