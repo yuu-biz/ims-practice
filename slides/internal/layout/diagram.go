@@ -97,6 +97,9 @@ type EventShape struct {
 	LabelW float64
 	LabelH float64
 	Number int
+	// Undirected is a reference point: a relation with a protocol, the
+	// interface between two nodes, which has no arrowhead.
+	Undirected bool
 }
 
 // Sizes of the diagrams, in diagram units. A map node is a box on a
@@ -135,10 +138,10 @@ const (
 // share a colour and a dash, and the label names the protocol, so that
 // neither the colour nor the dash alone tells them apart.
 func Family(e deck.Event) string {
-	switch e.Kind {
-	case deck.EventProcess:
+	switch {
+	case e.Kind == deck.EventProcess:
 		return "process"
-	case deck.EventRelation:
+	case e.Kind == deck.EventRelation && e.Protocol == "":
 		return "relation"
 	}
 	p := strings.ToUpper(strings.Fields(e.Protocol + " x")[0])
@@ -172,9 +175,10 @@ func eventShape(m *deck.Model, id string, numbers map[string]int) (deck.Event, E
 	e, _ := m.Event(id)
 	shape := EventShape{ID: id, Nodes: e.Nodes(), Kind: e.Kind, Family: Family(e), Label: deck.PlainText(e.Label),
 		Note: deck.PlainText(e.Note), Number: numbers[id]}
-	if e.Kind == deck.EventMessage {
+	if e.Kind != deck.EventProcess {
 		shape.Proto = e.Protocol
 	}
+	shape.Undirected = e.Kind == deck.EventRelation && e.Protocol != ""
 	return e, shape
 }
 
@@ -203,7 +207,7 @@ func numberMark(n int) string {
 
 // LabelLines reports whether the label of an event has a second line.
 func (e EventShape) LabelLines() int {
-	if e.Kind == deck.EventMessage && e.SubText() != "" || e.Kind == deck.EventRelation && e.Note != "" {
+	if e.Kind != deck.EventProcess && e.SubText() != "" {
 		return 2
 	}
 	return 1
@@ -357,6 +361,10 @@ func drawMap(m *deck.Model, s *deck.Scene) *Diagram {
 		k := lanes[key]
 		lanes[key]++
 		offset := side * (mapLane + float64(k)*mapLaneStep)
+		if shape.Undirected {
+			// A reference point is one line between the two nodes.
+			offset = side * float64(k) * mapLaneStep
+		}
 		ox, oy := nx*offset, ny*offset
 		x1, y1 := clipToBox(ax+ox, ay+oy, bx+ox, by+oy, a.grow(3, 3))
 		x2, y2 := clipToBox(bx+ox, by+oy, ax+ox, ay+oy, b.grow(5, 5))
