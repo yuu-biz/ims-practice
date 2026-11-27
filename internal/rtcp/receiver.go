@@ -2,11 +2,12 @@ package rtcp
 
 import "time"
 
-// The limits of RFC 3550 A.1 for telling a jump in sequence numbers
+// The constants of RFC 3550 A.1 for telling a jump in sequence numbers
 // from packets that arrive late.
 const (
-	maxDropout  = 3000
-	maxMisorder = 100
+	rtpSeqMod   = 1 << 16 // RTP_SEQ_MOD: sequence numbers are 16 bits
+	maxDropout  = 3000    // MAX_DROPOUT
+	maxMisorder = 100     // MAX_MISORDER
 )
 
 // Receiver keeps what this side has received from one source, to write
@@ -15,11 +16,9 @@ const (
 // one goroutine reads the socket.
 //
 // SIMPLIFIED: RFC 3550 A.1. A new source is accepted from its first
-// packet, without the probation of MIN_SEQUENTIAL packets in order, and
-// a large jump in sequence numbers is taken as packets lost rather than
-// waiting for a second packet to confirm that the source restarted. The relay and the
-// UE simulator are the only sources in a call, so there is no stray
-// traffic to filter.
+// packet, without the probation of MIN_SEQUENTIAL packets in order. The
+// relay and the UE simulator are the only sources in a call, so there is
+// no stray traffic to filter.
 type Receiver struct {
 	SSRC      uint32
 	ClockRate int // of the RTP timestamp, to measure jitter
@@ -27,6 +26,7 @@ type Receiver struct {
 	started  bool
 	baseSeq  uint16
 	maxSeq   uint16
+	badSeq   uint32 // RFC 3550 A.1 bad_seq; above 16 bits when no jump is waiting
 	cycles   uint32
 	received uint32
 
@@ -42,21 +42,8 @@ type Receiver struct {
 
 // Packet records an RTP packet that arrived at arrival.
 func (r *Receiver) Packet(seq uint16, timestamp uint32, arrival time.Time) {
-	if !r.started {
-		r.started, r.baseSeq, r.maxSeq = true, seq, seq
-	} else {
-		delta := seq - r.maxSeq
-		switch {
-		case delta < maxDropout:
-			if seq < r.maxSeq {
-				r.cycles += 1 << 16 // the 16-bit number wrapped
-			}
-			r.maxSeq = seq
-		case delta <= 1<<16-maxMisorder:
-			r.maxSeq = seq // a jump: start counting from here
-		}
-		// Otherwise the packet is late or a duplicate: it still counts
-		// as received, which is why the loss can go negative.
+	if !r.updateSeq(seq) {
+		return
 	}
 	r.received++
 
@@ -74,6 +61,45 @@ func (r *Receiver) Packet(seq uint16, timestamp uint32, arrival time.Time) {
 		r.jitter += d - (r.jitter+8)>>4
 	}
 	r.lastArrival, r.lastTimestamp = arrival, timestamp
+}
+
+// updateSeq is update_seq of RFC 3550 A.1 without the probation. It is
+// false for a packet that is not counted: the first packet of a jump of
+// more than MAX_DROPOUT, which may be a stray packet. A jump is taken as
+// a restart of the source only when the next packet follows it in
+// sequence.
+func (r *Receiver) updateSeq(seq uint16) bool {
+	if !r.started {
+		r.started = true
+		r.initSeq(seq)
+		return true
+	}
+	delta := seq - r.maxSeq
+	switch {
+	case delta < maxDropout:
+		if seq < r.maxSeq {
+			r.cycles += rtpSeqMod // the 16-bit number wrapped
+		}
+		r.maxSeq = seq
+	case delta <= rtpSeqMod-maxMisorder:
+		if uint32(seq) != r.badSeq {
+			r.badSeq = uint32(seq + 1) // the number that would confirm the jump
+			return false
+		}
+		r.initSeq(seq)
+	}
+	// Otherwise the packet is late or a duplicate: it still counts as
+	// received, which is why the loss can go negative.
+	return true
+}
+
+// initSeq is init_seq of RFC 3550 A.1: the statistics start again from
+// seq.
+func (r *Receiver) initSeq(seq uint16) {
+	r.baseSeq, r.maxSeq = seq, seq
+	r.badSeq = rtpSeqMod + 1
+	r.cycles, r.received = 0, 0
+	r.expectedPrior, r.receivedPrior = 0, 0
 }
 
 // SenderReport records an SR from the source, for LSR and DLSR.
