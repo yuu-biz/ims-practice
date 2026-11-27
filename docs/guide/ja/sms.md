@@ -943,6 +943,7 @@ octet 2: lowest 2 bits of 'l' (00), then rest of 'e' (110010) = 0011 0010 = 32
 | 場所 | 省いたこと | 理由 |
 | --- | --- | --- |
 | IP-SM-GW、TS 24.229 5.7.1.1 と 5.7.3 | 第三者 REGISTER の icid-value と orig-ioi も、IP-SM-GW が自分で送る要求への応答の term-ioi も保存しない。 | どれも IP-SM-GW の課金の記録のためのもので、このプロジェクトのノードは課金の記録を作らない。 |
+| IP-SM-GW、RFC 6665 4.1.2.4 | Timer N は、SUBSCRIBE を送ったインスタンスの中で動く。そのインスタンスが Timer N の切れる前に止まると、NOTIFY の来なかった購読は、期限が切れるか、次の第三者 REGISTER が置き換えるか更新するまで残る。 | ほかのインスタンスがタイマーを引き継ぐには、保存先に締め切りの索引が要るため。S-CSCF は、受け付けた SUBSCRIBE のすべてに、すぐ NOTIFY を送る。 |
 | IP-SM-GW、TS 24.341 5.3.3.2 | service-info に MSISDN が無いとき、PUR では利用者を公開ユーザー識別子で示す。UE の REGISTER の IMSI は使わない。 | IMSI は message/sip のボディに入った UE の REGISTER から取るが、S-CSCF はそのボディを送らない。Sh は公開ユーザー識別子も受け付ける（TS 29.328 Table 7.6.1）。 |
 | IP-SM-GW、TS 24.341 5.3.3.4.1 | In-Reply-To の無い delivery report は捨てる。 | TS 24.341 5.3.2.4 は UE に In-Reply-To を付けさせている。RP-MR だけで配達を探すには、Store に 2 つ目のキーが要る。 |
 | IP-SM-GW、TS 23.204 6.4 step 5 と 6.5a | ドメインを選ばない。IMS だけに配達し、失敗したら CS や PS のドメインを試さずにそのまま報告する。 | このプロジェクトには IP-SM-GW から呼べる MSC、SGSN、MME、SMSF が無く、次に試すドメインが無い。 |

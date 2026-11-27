@@ -267,10 +267,16 @@ func (g *IPSMGW) notifyDeadline() (time.Time, error) {
 //
 // The NOTIFY may reach another instance, so it is the Store that says
 // whether one came. The wait is no user of the IP-SM-GW
-// (maintenance.go): a shut down does not wait for it. A subscription
-// whose instance stops before Timer N runs out stays as it is until it
-// expires, or until the next third-party REGISTER replaces it, or
-// refreshes it with a Timer N of its own.
+// (maintenance.go): a shut down does not wait for it.
+//
+// SIMPLIFIED: RFC 6665 4.1.2.4. Timer N runs in the instance that sent
+// the SUBSCRIBE. A subscription whose instance stops before Timer N runs
+// out stays as it is until it expires, or until the next third-party
+// REGISTER replaces it, or refreshes it with a Timer N of its own; until
+// then the HSS may hold the user as taking short messages here. Taking
+// the timer over would need an index of the deadlines in the Store for
+// the sweep of another instance to find, and the S-CSCF follows every 200
+// to a SUBSCRIBE with a NOTIFY at once.
 func (g *IPSMGW) awaitNotify(publicID, callID string, deadline time.Time, log *slog.Logger) {
 	time.AfterFunc(time.Until(deadline), func() { g.notifyWaitOver(publicID, callID, deadline, log) })
 }
