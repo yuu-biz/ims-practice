@@ -27,6 +27,7 @@ func IPSMGW(t *testing.T, newPair func(t *testing.T) (ipsmgw.Store, ipsmgw.Store
 		{"TakenDeliveryLeavesNoExpiry", ipsmgwTakenDeliveryLeavesNoExpiry},
 		{"OutcomeReachesTheInstanceThatWaitsForIt", ipsmgwOutcome},
 		{"TFRIsBegunOnce", ipsmgwTFRBegunOnce},
+		{"TFRIsFoundWithoutBeginningIt", ipsmgwTFR},
 		{"NotReachableIsTakenOnce", ipsmgwNotReachable},
 		{"RegSubscription", ipsmgwRegSubscription},
 		{"RegSubscriptionOfIMSI", ipsmgwRegSubscriptionOfIMSI},
@@ -549,6 +550,34 @@ func ipsmgwTFRBegunOnce(t *testing.T, a, b ipsmgw.Store) {
 	beginTFR(t, a, "sc;4", "ref-old", now, now.Add(time.Hour))
 	if got := beginTFR(t, b, "sc;4", "ref-new", later, later.Add(time.Hour)); got != "ref-new" {
 		t.Errorf("BeginTFR after the record expired by its clock = %s, want its own delivery", got)
+	}
+}
+
+func tfrOf(t *testing.T, s ipsmgw.Store, request string, now time.Time) (string, bool) {
+	t.Helper()
+	first, ok, err := s.TFR(context.Background(), request, now)
+	if err != nil {
+		t.Errorf("TFR(%s): %v", request, err)
+	}
+	return first, ok
+}
+
+// ipsmgwTFR: every instance finds the delivery that an instance began
+// for a TFR, without beginning one itself, until the record expires by
+// the clock of the caller.
+func ipsmgwTFR(t *testing.T, a, b ipsmgw.Store) {
+	now := time.Now()
+	if got, ok := tfrOf(t, b, "sc;1", now); ok {
+		t.Errorf("TFR of a request no instance began = %s", got)
+	}
+	if got := beginTFR(t, a, "sc;1", "ref-first", now, now.Add(time.Hour)); got != "ref-first" {
+		t.Errorf("BeginTFR after a TFR that found nothing = %s, want its own delivery", got)
+	}
+	if got, ok := tfrOf(t, b, "sc;1", now); !ok || got != "ref-first" {
+		t.Errorf("TFR = %s, %v; want ref-first", got, ok)
+	}
+	if got, ok := tfrOf(t, b, "sc;1", now.Add(2*time.Hour)); ok {
+		t.Errorf("TFR after the record expired = %s", got)
 	}
 }
 

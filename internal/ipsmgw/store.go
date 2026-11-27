@@ -166,6 +166,10 @@ type Store interface {
 	// first copy for every later one. Of several instances that begin the
 	// same request at once, one has its reference kept.
 	BeginTFR(ctx context.Context, request, reference string, now, expires time.Time) (string, error)
+	// TFR returns the delivery that the TFR which request names began,
+	// and whether the Store holds a record of it at now, as BeginTFR
+	// would find it, without writing anything.
+	TFR(ctx context.Context, request string, now time.Time) (string, bool, error)
 
 	// PutNotReachable sets the IP-SM-GW's own UE-Not-Reachable-for-IP
 	// flag for the user of publicID until expires: a delivery to that
@@ -391,6 +395,16 @@ func (s *MemoryStore) BeginTFR(_ context.Context, request, reference string, now
 		}
 	})
 	return reference, nil
+}
+
+func (s *MemoryStore) TFR(_ context.Context, request string, now time.Time) (string, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	first, ok := s.tfrs[request]
+	if !ok || !now.Before(first.expires) {
+		return "", false, nil
+	}
+	return first.reference, true, nil
 }
 
 // PutNotReachable keeps the flag until expires, as an external store
