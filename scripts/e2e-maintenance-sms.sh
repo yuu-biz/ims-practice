@@ -23,6 +23,15 @@ start_network
 remember_nodes
 fail=0
 
+# The text of each of the four short messages. Each text goes out once,
+# so it names the short message it belongs to: the checks of the capture
+# below find a short message by its text, rather than by its place in the
+# order in which the four crossed the bridge.
+duty_text='Is anyone on duty?'
+back_text='Back on duty?'
+centre_text='Is the Service Centre in?'
+centre_back_text='Is the Service Centre back?'
+
 # The scenes count what the capture holds before a step, and the checks
 # of the flow read it at the end: the file that the capture service
 # writes now, the newest one.
@@ -60,7 +69,7 @@ fi
 # says SESSION_TERMINATED, so the command exits 1, hence "|| true"; the
 # registration itself goes through, since the criterion of the
 # third-party REGISTER says SESSION_CONTINUED.
-out="$(docker compose run --no-deps --rm ue sms +12025550102 'Is anyone on duty?' 2>&1 || true)"
+out="$(docker compose run --no-deps --rm ue sms +12025550102 "$duty_text" 2>&1 || true)"
 if grep -q '"msg":"registered"' <<<"$out" &&
 	grep -q '"msg":"sms not sent".*MESSAGE answered 500' <<<"$out"; then
 	echo "ok   UE 1 registered but could not send a short message while the IP-SM-GW is shut down"
@@ -80,7 +89,7 @@ fi
 # UE 2 is not running, so the SC cannot deliver the short message; what
 # this checks is that the IP-SM-GW accepts it again and the submit
 # report comes back.
-out="$(docker compose run --no-deps --rm ue sms +12025550102 'Back on duty?' 2>&1 || true)"
+out="$(docker compose run --no-deps --rm ue sms +12025550102 "$back_text" 2>&1 || true)"
 if grep -q '"msg":"submit report"' <<<"$out"; then
 	echo "ok   UE 1 sent a short message after the unlock of the IP-SM-GW"
 else
@@ -124,7 +133,7 @@ fi
 # "|| true". The IP-SM-GW is in service, so the MESSAGE gets its 202;
 # with no connection to an SC it answers with RP-Cause 41 (temporary
 # failure).
-out="$(docker compose run --no-deps --rm ue sms +12025550102 'Is the Service Centre in?' 2>&1 || true)"
+out="$(docker compose run --no-deps --rm ue sms +12025550102 "$centre_text" 2>&1 || true)"
 if grep -q '"msg":"submit report".*"state":"failed".*"rp_cause":41' <<<"$out"; then
 	echo "ok   UE 1 got RP-Cause 41 for its short message while the SC is shut down"
 else
@@ -152,7 +161,7 @@ else
 	echo "FAIL the IP-SM-GW did not open its connection to the SC again after the unlock"
 	fail=1
 fi
-out="$(docker compose run --no-deps --rm ue sms +12025550102 'Is the Service Centre back?' 2>&1 || true)"
+out="$(docker compose run --no-deps --rm ue sms +12025550102 "$centre_back_text" 2>&1 || true)"
 if grep -q '"msg":"submit report".*"state":"accepted"' <<<"$out"; then
 	echo "ok   UE 1 sent a short message after the unlock of the SC"
 else
@@ -209,27 +218,56 @@ echo "the short message while the IP-SM-GW is shut down"
 # into 500 (RFC 3261 16.7 step 6).
 #
 # The S-CSCF answers the UE before it registers the user anywhere else
-# (TS 24.229 5.4.1.7), so the 200 of the registration comes before the
-# third-party REGISTER that the IP-SM-GW refuses. The Service-Route
-# tells that 200 from the one of a deregistration, which carries none.
+# (TS 24.229 5.4.1.7), so the 200 of the registration comes before both
+# of them. The Service-Route tells that 200 from the one of a
+# deregistration, which carries none, and the service-info of the
+# third-party REGISTER tells a registration from a deregistration: "ue
+# sms" deregisters once it has its submit report, and the third-party
+# REGISTER of a deregistration carries no body.
 message='sip.CSeq.method == "MESSAGE"'
+sms='sip.Content-Type == "application/vnd.3gpp.sms"'
+thirdParty="sip.Method == \"REGISTER\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.msg_body contains \"<service-info>12025550101</service-info>\""
 expect "200 S-CSCF -> I-CSCF for UE 1's registration, with Service-Route" "$register && sip.Status-Code == 200 && ip.src == $scscf && ip.dst == $icscf && sip.Service-Route && sip.To contains \"+12025550101\""
-expect "third-party REGISTER S-CSCF -> IP-SM-GW" "sip.Method == \"REGISTER\" && ip.src == $scscf && ip.dst == $ipsmgw"
+registered="$last"
+expect "third-party REGISTER S-CSCF -> IP-SM-GW" "$thirdParty"
 refusedRegister="$last"
 expect "503 IP-SM-GW -> S-CSCF for the third-party REGISTER, with Retry-After 30" "$register && sip.Status-Code == 503 && ip.src == $ipsmgw && ip.dst == $scscf && sip.Retry-After == 30"
-expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Content-Type == \"application/vnd.3gpp.sms\""
-refusedMessage="$last"
-expect "503 IP-SM-GW -> S-CSCF with Retry-After 30" "$message && sip.Status-Code == 503 && ip.src == $ipsmgw && ip.dst == $scscf && sip.Retry-After == 30"
-expect "500 S-CSCF -> P-CSCF for the short message, without Retry-After" "$message && sip.Status-Code == 500 && ip.src == $scscf && ip.dst == $pcscf && !sip.Retry-After"
-expect "500 P-CSCF -> UE 1 for the short message, without Retry-After" "$message && sip.Status-Code == 500 && ip.src == $pcscf && ip.dst == $ue && !sip.Retry-After"
-none "202 of the IP-SM-GW while it was shut down" "frame.number > $refusedMessage && frame.number <= $last && $message && sip.Status-Code == 202 && ip.src == $ipsmgw"
-# The refused third-party REGISTER leaves no subscription behind: the
-# IP-SM-GW subscribes to the registration state only for one it took.
-none "SUBSCRIBEs of the IP-SM-GW while it was shut down" "frame.number > $refusedRegister && frame.number <= $last && sip.Method == \"SUBSCRIBE\" && ip.src == $ipsmgw"
+registerRefused="$last"
+# The third-party REGISTER and the short message are two flows that wait
+# for nothing of each other: the UE sends its short message as soon as
+# the S-CSCF has answered its REGISTER, and the S-CSCF sends the
+# third-party REGISTER beside that answer, so either of the two may reach
+# the IP-SM-GW first. The checks of the short message therefore start
+# again at the 200 of the registration, and each short message is read by
+# its own text and then by the Call-ID that goes with it, so that no
+# check can take a frame of one of the four short messages for a frame of
+# another.
+last="$registered"
+expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && $sms && gsm_sms.sms_text == \"$duty_text\""
+mo="$(field sip.Call-ID)"
+expect "503 IP-SM-GW -> S-CSCF with Retry-After 30" "$message && sip.Call-ID == \"$mo\" && sip.Status-Code == 503 && ip.src == $ipsmgw && ip.dst == $scscf && sip.Retry-After == 30"
+expect "500 S-CSCF -> P-CSCF for the short message, without Retry-After" "$message && sip.Call-ID == \"$mo\" && sip.Status-Code == 500 && ip.src == $scscf && ip.dst == $pcscf && !sip.Retry-After"
+expect "500 P-CSCF -> UE 1 for the short message, without Retry-After" "$message && sip.Call-ID == \"$mo\" && sip.Status-Code == 500 && ip.src == $pcscf && ip.dst == $ue && !sip.Retry-After"
+none "202 of the IP-SM-GW for the short message it refused" "$message && sip.Call-ID == \"$mo\" && sip.Status-Code == 202 && ip.src == $ipsmgw"
+# Whichever of the two flows ended later is where the registration after
+# the unlock begins.
+refusedEnd=$((last > registerRefused ? last : registerRefused))
+
 echo "the short message after the unlock of the IP-SM-GW"
-expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Content-Type == \"application/vnd.3gpp.sms\""
-expect "202 IP-SM-GW -> S-CSCF" "$message && sip.Status-Code == 202 && ip.src == $ipsmgw && ip.dst == $scscf"
-expect "submit report IP-SM-GW -> I-CSCF, in reply to the short message" "sip.Method == \"MESSAGE\" && ip.src == $ipsmgw && ip.dst == $icscf && sip.In-Reply-To"
+# The IP-SM-GW takes the third-party REGISTER of the registration that
+# comes now, and subscribes to the registration state of the user only
+# then: the refused one left no subscription behind, and neither did the
+# deregistration that the IP-SM-GW refused with it.
+last="$refusedEnd"
+expect "third-party REGISTER S-CSCF -> IP-SM-GW after the unlock" "$thirdParty"
+tookRegister="$last"
+expect "200 IP-SM-GW -> S-CSCF for the third-party REGISTER it took" "$register && sip.Status-Code == 200 && ip.src == $ipsmgw && ip.dst == $scscf"
+none "SUBSCRIBEs of the IP-SM-GW while it was shut down" "frame.number > $refusedRegister && frame.number < $tookRegister && sip.Method == \"SUBSCRIBE\" && ip.src == $ipsmgw"
+last="$refusedEnd"
+expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && $sms && gsm_sms.sms_text == \"$back_text\""
+mo="$(field sip.Call-ID)"
+expect "202 IP-SM-GW -> S-CSCF" "$message && sip.Call-ID == \"$mo\" && sip.Status-Code == 202 && ip.src == $ipsmgw && ip.dst == $scscf"
+expect "submit report IP-SM-GW -> I-CSCF, in reply to the short message" "sip.Method == \"MESSAGE\" && ip.src == $ipsmgw && ip.dst == $icscf && sip.In-Reply-To == \"$mo\""
 
 echo "the short message while the Service Centre is shut down"
 # The SC ends the connection that the IP-SM-GW opened (RFC 6733 5.4),
@@ -238,9 +276,10 @@ echo "the short message while the Service Centre is shut down"
 expect "DPR SC -> IP-SM-GW with Disconnect-Cause REBOOTING" "diameter.cmd.code == 282 && diameter.flags.request == 1 && ip.src == $sc && ip.dst == $ipsmgw && diameter.Disconnect-Cause == 0"
 scDPR="$last"
 expect "DPA IP-SM-GW -> SC" "diameter.cmd.code == 282 && diameter.flags.request == 0 && ip.src == $ipsmgw && ip.dst == $sc"
-expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && sip.Content-Type == \"application/vnd.3gpp.sms\""
-expect "202 IP-SM-GW -> S-CSCF" "$message && sip.Status-Code == 202 && ip.src == $ipsmgw && ip.dst == $scscf"
-expect "submit report P-CSCF -> UE 1: RP-ERROR, cause 41" "sip.Method == \"MESSAGE\" && ip.src == $pcscf && ip.dst == $ue && sip.In-Reply-To && gsm_a.rp.msg_type == 0x05 && gsm_a.rp.cause == 41"
+expect "MESSAGE S-CSCF -> IP-SM-GW with the short message" "sip.Method == \"MESSAGE\" && ip.src == $scscf && ip.dst == $ipsmgw && $sms && gsm_sms.sms_text == \"$centre_text\""
+mo="$(field sip.Call-ID)"
+expect "202 IP-SM-GW -> S-CSCF" "$message && sip.Call-ID == \"$mo\" && sip.Status-Code == 202 && ip.src == $ipsmgw && ip.dst == $scscf"
+expect "submit report P-CSCF -> UE 1: RP-ERROR, cause 41" "sip.Method == \"MESSAGE\" && ip.src == $pcscf && ip.dst == $ue && sip.In-Reply-To == \"$mo\" && gsm_a.rp.msg_type == 0x05 && gsm_a.rp.cause == 41"
 none "OFRs while the SC was shut down" "frame.number > $scDPR && frame.number <= $last && diameter.cmd.code == 8388645"
 echo "the short message after the unlock of the Service Centre"
 expect "OFR IP-SM-GW -> SC" "diameter.cmd.code == 8388645 && diameter.flags.request == 1 && ip.src == $ipsmgw && ip.dst == $sc"
