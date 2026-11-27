@@ -19,9 +19,10 @@ import re
 import subprocess
 import sys
 
-# The development records that are published.
+# The development records that are published. The project skills under
+# .claude/ are instructions for the agents that develop the repository.
 RECORDS = re.compile(
-    r"^(AGENTS\.md|CLAUDE\.md|CONTRIBUTING\.md|\.github/"
+    r"^(AGENTS\.md|CLAUDE\.md|CONTRIBUTING\.md|\.github/|\.claude/"
     r"|docs/(requirements|roadmap|unverified-clauses)\.md"
     r"|docs/design/|docs/background/)"
 )
