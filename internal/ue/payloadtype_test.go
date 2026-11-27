@@ -67,7 +67,16 @@ func TestCallerSendsWithTheAnswerAndReceivesWithTheOffer(t *testing.T) {
 		stream.Events.PayloadType != eventsPT || stream.ReceiveEvents.PayloadType != 100 {
 		t.Errorf("stream %+v, want to send 110 and 111 and to receive 96 and 100", stream)
 	}
-	if err := (<-sessions).SendDTMF("5"); err != nil {
+	session := <-sessions
+	// The status gives the send format and, beside it, the receive format
+	// that the received counts are made with.
+	if st := session.Status(); st.Codec == nil || st.Codec.PayloadType != speechPT ||
+		st.ReceiveCodec == nil || st.ReceiveCodec.PayloadType != 96 || st.ReceiveCodec.TelephoneEvent != 100 ||
+		st.Media.PacketsReceived == 0 || st.Media.FramesReceived == 0 {
+		t.Errorf("status codec %+v, receive codec %+v, media %+v, want to send 110, to receive 96 and 100, and counts of what was received",
+			st.Codec, st.ReceiveCodec, st.Media)
+	}
+	if err := session.SendDTMF("5"); err != nil {
 		t.Fatal(err)
 	}
 	if err := calleeMedia.SendDTMF("7"); err != nil {
