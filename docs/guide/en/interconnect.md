@@ -356,6 +356,61 @@ A node without a `store` section keeps the records in the memory of its process 
 
 The tests of `internal/ibcf` show the release itself. In `TestRestartedInstanceEndsTheCallsItLeft`, the first process of an instance holds a call across the border and stops without ending it; the next one sends a BYE in both dialogs and releases the TrGW contexts. It runs twice: with a `Store` in the program that the processes share, and with each process on an `ibcfstore.Store` of its own over a shared store, in place of the Valkey server. `TestRestartedInstanceEndsACallAtItsNewTarget` shows the BYE going to the Contact that a re-INVITE moved the party to.
 
+## A re-INVITE within the call
+
+A party changes the session of a call it is in with a re-INVITE: UE A1 puts the call on hold (TS 24.610), or moves its media to another port. Each IBCF on the way relays that re-INVITE like any request within the call, and every response to it, not the final one alone.
+
+The far end may answer the offer in a reliable 183 and wait for the resources of the new session to be reserved before it changes anything (RFC 3312, TS 24.229 6.1.4.2 item b). The 183, the PRACK that acknowledges it and the UPDATE that tells that the resources are reserved then all cross both IBCFs, each as a message of its own dialog:
+
+```text
+ UE A1         IBCF-A          IBCF-B          UE B1
+ |  re-INVITE: offer, Require: precondition     |
+ |------------->|  re-INVITE     |              |
+ |              |===============>|  re-INVITE   |
+ |              |                |------------->|
+ |              |                |  183: answer, Require: 100rel, RSeq
+ |              |  183: RSeq     |<-------------|
+ |              |<===============|              |
+ |  183: RSeq   |                |              |
+ |<-------------|                |              |
+ |  PRACK: RAck |                |              |
+ |------------->|  PRACK: RAck   |              |
+ |              |===============>|  PRACK: RAck |
+ |              |                |------------->|
+ |              |                |  200         |
+ |              |  200           |<-------------|
+ |              |<===============|              |
+ |  200         |                |              |
+ |<-------------|                |              |
+ |  UPDATE: the resources are reserved          |
+ |------------->|  UPDATE        |              |
+ |              |===============>|  UPDATE      |
+ |              |                |------------->|
+ |              |                |  200: answer |
+ |              |  200: answer   |<-------------|
+ |              |<===============|              |
+ |  200: answer |                |              |
+ |<-------------|                |              |
+ |              |                |  200: the re-INVITE
+ |              |  200           |<-------------|
+ |              |<===============|              |
+ |  200         |                |              |
+ |<-------------|                |              |
+ |  ACK         |                |              |
+ |------------->|  ACK           |              |
+ |              |===============>|  ACK         |
+ |              |                |------------->|
+```
+
+- **Each 183 belongs to the dialog it goes in**, with an RSeq of that dialog, and so does the PRACK that acknowledges it. The IBCF acknowledges the 183 of its other leg with a PRACK of its own, once the near side has acknowledged its copy, so the PRACKs go from end to end as they would without the IBCF (RFC 3262 4). The RAck of each PRACK names the RSeq and the CSeq of its own dialog (RFC 3262 7.2). A new offer that a side puts in its PRACK goes on in that PRACK (RFC 3262 5), through the TrGW like any other SDP.
+- **A reliable copy for a reliable response only.** The IBCF copies a provisional response reliably when it came reliably and the re-INVITE offered 100rel. One that came without 100rel is copied without it too, even where the re-INVITE offered it: the session description in such a response is no answer, and a reliable copy would have the near side take it for the answer and leave the answer that follows unread (RFC 3261 13.2.1). RFC 3262 3 leaves the choice to the UAS, which the IBCF is in that dialog. The SDP of such a response still goes through the TrGW, since the side that sent it may receive media there from now on.
+- **The answer went in the 183, so the 200 to the re-INVITE carries none** (RFC 3261 13.2.1, RFC 3262 5). A side that offered no 100rel got its copy unreliably, and takes the session description of the 2xx alone: the 200 that the IBCF sends it carries the answer of the reliable 183 instead of the empty body of the 200 that came.
+- **The re-INVITE does not hold its own PRACK and UPDATE up.** The IBCF sends the requests of one side on in the order they came, each once the one before has its response, so that the far end never gets them the other way round (RFC 3261 12.2.2). A re-INVITE has its final response only at the end of this flow, so the requests after it may go as soon as the far end has answered it with a provisional response: the far end has the re-INVITE by then, with the CSeq that the IBCF gave it.
+- **No PRACK, no re-INVITE.** When the near side does not acknowledge a reliable 183 within 64\*T1, 32 seconds, the IBCF ends the re-INVITE with 500, as RFC 3262 3 has a UAS do. The 183 of the other leg then gets no PRACK either, and the far end ends its own re-INVITE the same way, 32 seconds after it sent that 183.
+- **A CANCEL for the re-INVITE splits on the answer**, as RFC 6141 3.3 and 3.8 do. While no reliable provisional response has carried the session description of the re-INVITE, nothing of the session has changed, and the IBCF answers the re-INVITE 487 (Request Terminated) at once; the session stays as it was (RFC 3261 14.1). Once a reliable response has carried it, the change may have been made, and only the far end can tell: the IBCF leaves the re-INVITE to the final response of its other leg and passes that on, whether it is the 200 that RFC 6141 3.3 asks the far end for or an error response. The CANCEL itself ends at the IBCF, which answers it 200 (RFC 3261 9.2), and the IBCF sends none in its other dialog (see "What this project simplifies").
+
+The UEs of this project answer a re-INVITE with a final response alone, so no capture of the scripts shows this flow. The tests of `internal/b2bua` run it in one process: `TestReliable183ToAReINVITECrossesBothLegs` for the reliable 183, its PRACK, the UPDATE and the 200, and `TestAnUnreliable183ToAReINVITEIsCopiedUnreliably` and `TestAReINVITEWithout100relKeepsTheAnswerForThe2xx` for the two copies that do not go reliably. The MMTel AS relays all of it the same way (see [the supplementary services guide](mmtel.md)).
+
 ## When the TrGW does not take an SDP
 
 Every SDP of a call goes through the TrGW: the offer of the INVITE, and each one after it, such as the offer of an UPDATE, that of the re-INVITE of a hold, or the SDP of a PRACK. For each one the IBCF tells the termination that faces the sending side where that side now receives, with a `Modify`, and then writes the address of the TrGW towards the other side into the SDP (TS 24.229 6.7.1.4.1, TS 29.162 9.1.1 and 9.1.3). When the `Modify` fails, the IBCF has no SDP of its own to pass on. The SDP that came names the address of the sending side: that of a node inside the network, or that of the TrGW of the other network. TS 24.229 5.10.6.3 has the IBCF modify the SDP according to 6.7.1 when the TrGW translates the addresses, and the IBCF cannot do that for this SDP, so it does not let the SDP cross. If it did, the other side would send its RTP straight to that address, past the TrGW, and network B would learn an address inside network A.
@@ -382,6 +437,7 @@ A request with such an SDP goes no further, and the IBCF answers it itself with 
 
 - **A final response other than 2xx leaves the session as it was before the request.** RFC 3261 14.1 says so for a re-INVITE, and RFC 3311 5.3 for an UPDATE. Only a 481, a 408 or no answer at all ends the dialog (RFC 3261 12.2.1.2), so the IBCF answers with none of them. The media goes on as the last offer and answer set it up, through the TrGW.
 - **An IBCF on the way that passed the offer on puts its TrGW back.** When IBCF-B refuses the offer of UE A1, IBCF-A has told TrGW-A already to send where that offer said, as TS 29.162 9.1.1.2 lets it do on the offer. The 500 leaves UE A1 on the media of the last offer and answer, so IBCF-A has TrGW-A send there again with another `Modify`. The same holds for any final response other than 2xx, such as a 488 of UE B1, or a request that gets no answer. Neither TS 29.162 9.1.3 nor TS 24.229 6.7.1 names a procedure of its own for this; it follows from the session that RFC 3261 14.1 and RFC 3311 5.3 leave. When TrGW-A does not take that `Modify` either, its termination keeps sending where UE A1 no longer receives, and IBCF-A releases the call as below.
+- **An answer in a provisional response that is not reliable puts two terminations back.** A far end may show its answer in a 183 that is not reliable, at another port, and then refuse the offer. The IBCF passes that 183 on and its SDP through the TrGW, since the far end may receive media at that port from now on, but the session description of such a response is no answer (RFC 3261 13.2.1): after the error response the session is the one of the last offer and answer. So the IBCF puts both terminations of the call back, the one that the offer moved and the one that the 183 moved. After an answer in a reliable 183 it puts neither back: that answer is the one that counts, both sides have it, and the change of the session counts as made (RFC 6141 3.3). `TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer` and `TestRejectedOfferAfterAReliableAnswerKeepsIt` show the two.
 - **An offer from network B**, such as that of an UPDATE of UE B1, takes the `Modify` of the termination that faces network B. The 500 then goes back to IBCF-B, which passes it on to UE B1, and UE A1 gets nothing.
 - **The sending side may send the offer again later** (RFC 3261 21.5.1).
 - **Which answers say that nothing changed.** The media relay carries out none of a request that it answers with an error, whether over its control API or in an H.248 Error descriptor. The one exception is an error that says that it has no such context or termination, which comes below.
@@ -617,6 +673,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | Where | What is left out | Why |
 | --- | --- | --- |
 | IBCF, TS 24.229 5.10.2.4, 5.10.3.4 | The IBCF ends a call by itself only when one of its two dialogs fails, when the TrGW does not take an SDP of the call, and when it takes the place of an earlier process of its instance. The TrGW reports nothing to the IBCF by itself, so a call whose TrGW context is lost goes on without media until a party hangs up, or until the next SDP of the call finds the context gone. The records of an instance that never starts again stay in the Store, with their TrGW contexts. | The TrGW of this project reports no failures to the IBCF, and the instances of this project keep their names when they start again. |
+| IBCF, RFC 3261 9.1, RFC 6141 3.3 | A CANCEL for a re-INVITE within a call ends at the IBCF, which does not cancel the re-INVITE in its other dialog. The far end answers that one as it would have without the CANCEL, and the two sides can end up with different sessions. | No UE of this project cancels a re-INVITE: it waits for the final response, which comes at once unless the far end holds the change back with preconditions. |
 | IBCF, TS 24.229 5.10.5 | The Contact of a 3xx does not cross, so a redirection from the other network reaches the caller without its targets. | The Contact of a 3xx names where to try next, not a dialog, and no node of this project answers with a 3xx. |
 | IBCF, RFC 3891 3 | A Replaces that names an early dialog goes on as it came, so the UA at the far end does not find that dialog. | The IBCF writes the dialogs of a call in its record once both are confirmed, and no node of this project replaces an early dialog. |
 | IBCF, RFC 3515 2.1 | A Refer-To that holds a Replaces goes on as it came. When a user transfers one user of the other network to another user there, the user that gets the INVITE with that Replaces would find no dialog of its own. | This project has no call transfer (TS 24.629). A UE that merges its calls into a conference sends its REFERs to the focus of its own network. |
