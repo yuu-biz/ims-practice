@@ -155,3 +155,40 @@ func sendRTP(t *testing.T, from *net.UDPConn, to netip.AddrPort, payload []byte)
 		t.Fatal(err)
 	}
 }
+
+// TestTrGWKeepsTheOtherStreamsOfTheOffer: a stream that has no c= line
+// of its own goes by the session-level address (RFC 8866 5.7). Only the
+// audio stream goes through the TrGW, so the video stream still goes to
+// the address that the peer offered.
+func TestTrGWKeepsTheOtherStreamsOfTheOffer(t *testing.T) {
+	minPort, maxPort := rtptest.PortRange(t, 4)
+	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, nil, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer relay.Close()
+	server := httptest.NewServer(openapitest.Load(t, "../agw/openapi.yaml").Handler(t, agw.Handler(relay)))
+	defer server.Close()
+	b := &IBCF{trgw: agw.NewClient(server.URL)}
+	c, err := b.reserveMedia(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.releaseMedia(c, slog.New(slog.DiscardHandler))
+
+	offer := &sip.Message{Method: sip.INVITE, Body: []byte("v=0\r\no=- 1 1 IN IP4 198.51.100.60\r\ns=-\r\nc=IN IP4 198.51.100.60\r\nt=0 0\r\n" +
+		"m=audio 30002 RTP/AVP 0\r\nm=video 30004 RTP/AVP 96\r\n")}
+	if _, err := b.throughTrGW(offer, c, interconnect.Entry); err != nil {
+		t.Fatal(err)
+	}
+	description, err := sdp.Parse(offer.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := description.Address(description.Media[0]); got != c.Core {
+		t.Errorf("the audio stream goes to %s, want %s", got, c.Core)
+	}
+	if got, want := description.Address(description.Media[1]), netip.MustParseAddrPort("198.51.100.60:30004"); got != want {
+		t.Errorf("the video stream goes to %s, want %s", got, want)
+	}
+}

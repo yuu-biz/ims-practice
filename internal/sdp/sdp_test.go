@@ -150,6 +150,66 @@ func TestSetAudio(t *testing.T) {
 	}
 }
 
+// TestSetAudioKeepsOtherStreams is RFC 8866 5.7: a stream without a
+// c= line of its own uses the session-level one. The address of the
+// session must stay while another stream uses it, so that only the
+// stream that goes through the relay moves.
+func TestSetAudioKeepsOtherStreams(t *testing.T) {
+	const offer = "v=0\r\n" +
+		"o=- 1 1 IN IP4 192.0.2.1\r\n" +
+		"s=-\r\n" +
+		"c=IN IP4 192.0.2.1\r\n" +
+		"t=0 0\r\n" +
+		"m=audio 40000 RTP/AVP 0\r\n" +
+		"m=video 40002 RTP/AVP 96\r\n" +
+		"a=rtpmap:96 H264/90000\r\n"
+	relay := netip.MustParseAddrPort("172.28.0.50:30000")
+	s, err := Parse([]byte(offer))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SetAudio(relay); err != nil {
+		t.Fatal(err)
+	}
+	// Read the result as a receiver of the SDP does.
+	got, err := Parse(s.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if addr := got.Address(got.Media[0]); addr != relay {
+		t.Errorf("audio goes to %v, want %v", addr, relay)
+	}
+	if want := netip.MustParseAddrPort("192.0.2.1:40002"); got.Address(got.Media[1]) != want {
+		t.Errorf("video goes to %v, want %v", got.Address(got.Media[1]), want)
+	}
+}
+
+// TestSetAudioWithOwnAddress is the same when the stream that goes
+// through the relay has a c= line of its own and another one uses the
+// session-level address.
+func TestSetAudioWithOwnAddress(t *testing.T) {
+	const offer = "v=0\r\n" +
+		"o=- 1 1 IN IP4 192.0.2.1\r\n" +
+		"s=-\r\n" +
+		"c=IN IP4 192.0.2.1\r\n" +
+		"t=0 0\r\n" +
+		"m=audio 40000 RTP/AVP 0\r\n" +
+		"c=IN IP4 192.0.2.9\r\n" +
+		"m=video 40002 RTP/AVP 96\r\n"
+	relay := netip.MustParseAddrPort("172.28.0.50:30000")
+	s, _ := Parse([]byte(offer))
+	if err := s.SetAudio(relay); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := Parse(s.Bytes())
+	if addr := got.Address(got.Media[0]); addr != relay {
+		t.Errorf("audio goes to %v, want %v", addr, relay)
+	}
+	if want := netip.MustParseAddrPort("192.0.2.1:40002"); got.Address(got.Media[1]) != want {
+		t.Errorf("video goes to %v, want %v", got.Address(got.Media[1]), want)
+	}
+}
+
 // TestHold is RFC 3264 8.4: the side that holds offers sendonly (or
 // inactive when it was only receiving), the other side answers
 // recvonly (or inactive), and the stream comes back with sendrecv.

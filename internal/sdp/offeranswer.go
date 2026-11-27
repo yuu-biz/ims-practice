@@ -117,19 +117,44 @@ func (s Session) Audio() (netip.AddrPort, int, error) {
 
 // SetAudio points the audio stream of s at addr. A media relay rewrites
 // the SDP it passes on this way, so that each side sends its RTP to the
-// relay. The session-level address follows, and a media-level one is
-// dropped, so that the two cannot disagree.
+// relay.
+//
+// A stream without a c= line of its own uses the session-level one
+// (RFC 8866 5.7), so the session-level address changes only when no
+// other stream uses it; the stream's own c= line is then dropped, so
+// that the two cannot disagree. Otherwise the new address would move
+// the other streams to the relay too, where nothing listens on their
+// ports, and the stream gets a c= line of its own instead.
+//
+// The address of the o= line follows in both cases. It names the
+// creator of the description, which is now the relay (RFC 8866 5.2).
 func (s *Session) SetAudio(addr netip.AddrPort) error {
 	for i, m := range s.Media {
 		if m.Type == "audio" && m.Port != 0 {
 			s.Media[i].Port = int(addr.Port())
+			s.Origin.Address = addr.Addr()
+			if s.othersUseSessionAddress(i) {
+				s.Media[i].Connection = addr.Addr()
+				return nil
+			}
 			s.Media[i].Connection = netip.Addr{}
 			s.Connection = addr.Addr()
-			s.Origin.Address = addr.Addr()
 			return nil
 		}
 	}
 	return errors.New("sdp: no audio stream")
+}
+
+// othersUseSessionAddress reports whether a stream other than the one at
+// index i has no c= line of its own and so goes by the session-level
+// one (RFC 8866 5.7).
+func (s Session) othersUseSessionAddress(i int) bool {
+	for j, m := range s.Media {
+		if j != i && !m.Connection.IsValid() {
+			return true
+		}
+	}
+	return false
 }
 
 // HoldDirection is the direction to offer when putting a stream on
