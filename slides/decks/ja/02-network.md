@@ -2,6 +2,54 @@
 title: この IMS の地図
 footer: ims-practice 勉強会 2. 網の地図
 lang: ja
+format: visual
+---
+
+```ims-model
+nodes:
+  - {id: ue, label: UE, role: 電話, at: [0, 1]}
+  - {id: pcscf, label: P-CSCF, role: 最初の中継点, at: [1, 1]}
+  - {id: icscf, label: I-CSCF, role: 網の入口, at: [2, 1]}
+  - {id: scscf, label: S-CSCF, role: 登録とサービス, at: [3, 1]}
+  - {id: hss, label: HSS, role: 加入者のデータ, at: [3, 0]}
+  - {id: ipsmgw, label: IP-SM-GW, role: SMS の AS, at: [4, 0]}
+  - {id: sc, label: SC, role: SMS のサービスセンタ, at: [4, -1]}
+  - {id: mmtel, label: MMTel AS, role: 付加サービスの AS, at: [4, 2]}
+  - {id: mrfc, label: MRFC, role: MRF の SIP の側, at: [5, 2]}
+  - {id: mrfp, label: MRFP, role: MRF のメディアの側, at: [5, 3]}
+  - {id: agw, label: IMS-AGW, role: メディア中継ノード, at: [1, 2]}
+  - {id: epc, label: EPC, role: スタブと PCRF, at: [0, 2]}
+  - {id: ibcf, label: IBCF, role: 網の出入口, at: [3, 2]}
+  - {id: trgw, label: TrGW, role: 境界のメディア中継, at: [2, 2]}
+  - {id: peer-ibcf, label: IBCF, role: 相手の網の出入口, at: [3, 3]}
+  - {id: peer-trgw, label: TrGW, role: 相手の網のメディア中継, at: [2, 3]}
+groups:
+  - {id: peer, label: 相手の網, nodes: [peer-ibcf, peer-trgw]}
+events:
+  # SIP を運ぶ参照点
+  - {id: gm, rel: Gm, from: ue, to: pcscf, proto: SIP}
+  - {id: mw-p-i, rel: Mw, from: pcscf, to: icscf, proto: SIP}
+  - {id: mw-i-s, rel: Mw, from: icscf, to: scscf, proto: SIP}
+  - {id: isc-mmtel, rel: ISC, from: scscf, to: mmtel, proto: SIP}
+  - {id: isc-ipsmgw, rel: ISC, from: scscf, to: ipsmgw, proto: SIP}
+  - {id: mr, rel: Mr', from: mmtel, to: mrfc, proto: SIP}
+  - {id: mx, rel: Mx, from: scscf, to: ibcf, proto: SIP}
+  - {id: ici, rel: Ici, from: ibcf, to: peer-ibcf, proto: SIP}
+  # Diameter を運ぶ参照点
+  - {id: cx-i, rel: Cx, from: icscf, to: hss, proto: Diameter}
+  - {id: cx-s, rel: Cx, from: scscf, to: hss, proto: Diameter}
+  - {id: sh-ipsmgw, rel: Sh, from: ipsmgw, to: hss, proto: Diameter}
+  - {id: sh-mmtel, rel: Sh, from: mmtel, to: hss, proto: Diameter}
+  - {id: sgd, rel: SGd, from: ipsmgw, to: sc, proto: Diameter}
+  - {id: s6c, rel: S6c, from: sc, to: hss, proto: Diameter}
+  - {id: rx, rel: Rx, from: pcscf, to: epc, proto: Diameter}
+  # HTTP、H.248、メディア
+  - {id: ut, rel: Ut, from: ue, to: mmtel, proto: HTTP}
+  - {id: mp, rel: Mp, from: mrfc, to: mrfp, proto: HTTP}
+  - {id: iq, rel: Iq, from: pcscf, to: agw, proto: HTTP}
+  - {id: izi, rel: Izi, from: trgw, to: peer-trgw, proto: RTP}
+```
+
 ---
 
 # この IMS の地図
@@ -26,6 +74,46 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 
 ## IMS が SIP のプロキシに足したもの
 
+```ims-scene
+id: jobs
+nodes: [ue, pcscf, icscf, scscf, hss, ipsmgw, sc, mmtel, mrfc, mrfp, agw, epc]
+lead: IMS は SIP のプロキシの仕事を、役目が 1 つずつのノードに分けました。
+steps:
+  - id: pcscf
+    title: 電話から見て最初の SIP の中継点
+    focus: [pcscf]
+    zoom: [ue, pcscf, icscf]
+    text: P-CSCF です。UE の要求はどれもここから入ります。
+  - id: icscf
+    title: この利用者を担当するノードを探す
+    focus: [icscf]
+    zoom: [icscf, scscf, hss]
+    text: I-CSCF です。自分では状態を持たず、HSS に尋ねます。
+  - id: scscf
+    title: 登録を保持し、サービスを呼び出す
+    focus: [scscf]
+    zoom: [icscf, scscf, hss]
+    text: S-CSCF です。認証し、登録を保持し、iFC を評価します。
+  - id: hss
+    title: 加入者のデータを持つ
+    focus: [hss]
+    zoom: [scscf, hss, ipsmgw]
+    text: HSS です。識別子、鍵、iFC、サービスの設定を持ちます。
+  - id: as
+    title: 通話を変える
+    focus: [mmtel, ipsmgw]
+    zoom: [scscf, mmtel, ipsmgw]
+    checkpoint: true
+    text: アプリケーションサーバーです。MMTel AS は転送や規制を、IP-SM-GW はショートメッセージを受け持ちます。
+  - id: media
+    title: メディアを中継し、流し、混ぜる
+    focus: [agw, mrfc, mrfp]
+    text: |
+      メディア中継ノード（IMS-AGW）と MRF です。
+      役目ごとにノードが分かれているので、役目ごとに必要なだけ台数を増やせます。
+```
+
+
 - 2 台の電話をつなぐだけなら、SIP のプロキシでもできます。IMS はその仕事を、役目が 1 つずつのノードに分け、2 つのノードの間のインタフェースに名前を付けました（TS 23.228）。
 - 名前が付いていることが大事です。作る会社の違うノードどうしも、事業者の違う網どうしも、名前の付いたインタフェースで出会います。
 - 仕事を分けたので、役目ごとに必要なだけ台数を増やせます。キャプチャを見れば、どのノードが何をしたかも分かります。
@@ -44,6 +132,31 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 ---
 
 ## 信号の背骨
+
+```ims-scene
+id: backbone
+nodes: [ue, pcscf, icscf, scscf, mmtel, ipsmgw]
+lead: UE の要求は P-CSCF から入り、Mw で CSCF を渡り、ISC で AS に届きます。どれも SIP です。
+steps:
+  - id: gm
+    title: 電話と網が出会う Gm
+    show: [gm]
+    zoom: [ue, pcscf]
+    text: 電話が出会うインタフェースは Gm と、自分の設定のための Ut の 2 つです。
+  - id: mw
+    title: CSCF どうしの Mw
+    show: [mw-p-i, mw-i-s]
+    zoom: [pcscf, icscf, scscf]
+    text: 中継点はどれも SIP を 5060 番で運ぶので、1 つのメッセージはどの中継点でもだいたい同じに見えます。
+  - id: isc
+    title: AS へ向かう ISC
+    show: [isc-mmtel, isc-ipsmgw]
+    focus: [scscf, mmtel, ipsmgw]
+    text: |
+      AS は経路の途中にいて、終点ではありません。MMTel AS は要求を S-CSCF に返します。
+      IP-SM-GW は返さずに応答します。ショートメッセージはそこで終わるからです。
+```
+
 
 ```text
   UE --- Gm --- P-CSCF --- Mw --- I-CSCF --- Mw --- S-CSCF --- ISC --- AS
@@ -125,6 +238,30 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 
 ## SIP を運ぶ参照点
 
+```ims-scene
+id: sip-points
+nodes: [ue, pcscf, icscf, scscf, mmtel, ipsmgw, mrfc, ibcf, peer-ibcf]
+lead: どれも SIP を平文で運びます。どの参照点かは、キャプチャのアドレスで分かります。
+steps:
+  - id: core
+    title: Gm と Mw
+    show: [gm, mw-p-i, mw-i-s]
+    zoom: [ue, pcscf, icscf, scscf]
+    text: P-CSCF は UE の側に Gm を、網の側に Mw を持ちます。ここではどちらも同じアドレスとポートです。
+  - id: services
+    title: ISC と Mr'
+    show: [isc-mmtel, isc-ipsmgw, mr]
+    focus: [scscf, mmtel, ipsmgw, mrfc]
+    zoom: [scscf, mmtel, ipsmgw, mrfc]
+    text: ISC で第三者 REGISTER と iFC が送る INVITE が、Mr' で音声ガイダンスや会議を頼む INVITE が流れます。
+  - id: border
+    title: 網の外へ向かう Mx と Ici
+    show: [mx, ici]
+    focus: [scscf, ibcf, peer-ibcf]
+    text: Mx で網から出ていく要求が IBCF に届き、Ici で 2 つの網の IBCF がつながります。
+```
+
+
 | 参照点 | どことどこの間か | どこで見えるか |
 | --- | --- | --- |
 | Gm | UE と P-CSCF | UE の REGISTER と INVITE のすべて |
@@ -142,6 +279,37 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 ---
 
 ## Diameter を運ぶ参照点
+
+```ims-scene
+id: diameter-points
+nodes: [pcscf, epc, icscf, scscf, hss, ipsmgw, sc, mmtel]
+lead: SIP は要求を先へ運び、Diameter は問いを出して答えを待ちます。Diameter の線の多くは HSS に集まります。
+steps:
+  - id: cx
+    title: CSCF と HSS の Cx
+    show: [cx-i, cx-s]
+    zoom: [icscf, scscf, hss]
+    text: どの S-CSCF が担当か、認証の情報、ユーザープロファイルを求めます。
+  - id: sh
+    title: AS と HSS の Sh
+    show: [sh-ipsmgw, sh-mmtel]
+    focus: [ipsmgw, mmtel, hss]
+    zoom: [hss, ipsmgw, mmtel, scscf]
+    text: 利用者の設定、その番号、Ut で使うパスワードを読み書きします。
+  - id: sms
+    title: SMS の SGd と S6c
+    show: [sgd, s6c]
+    focus: [ipsmgw, sc, hss]
+    checkpoint: true
+    text: SGd はショートメッセージそのものを、S6c は宛先を担当するノードと、メッセージを抱える SC を運びます。
+  - id: rx
+    title: P-CSCF と PCRF の Rx
+    show: [rx]
+    focus: [pcscf, epc]
+    zoom: [pcscf, epc, icscf]
+    text: 通話のメディアの許可と、そのメディアを失ったときの知らせです。接続は 7 本、どれも 3868 番です。
+```
+
 
 ```text
   I-CSCF   --- Cx  ---> HSS <--- Cx  --- S-CSCF
@@ -166,6 +334,36 @@ ims-practice 勉強会 第 2 回（ノード、ノードの間の参照点、地
 ---
 
 ## HTTP、H.248、メディアの参照点
+
+```ims-scene
+id: other-points
+nodes: [ue, pcscf, agw, mmtel, mrfc, mrfp, trgw, peer-trgw]
+lead: メディアは信号の経路をたどりません。RTP の行き先は双方の SDP が決めます。
+steps:
+  - id: ut
+    title: 利用者が自分の設定を読み書きする Ut
+    show: [ut]
+    text: XCAP を載せた HTTP です（TS 24.623）。
+  - id: mp
+    title: MRFC が MRFP を操作する Mp
+    show: [mp]
+    focus: [mrfc, mrfp]
+    zoom: [mmtel, mrfc, mrfp]
+    text: 標準では H.248 です。ここでは命令 1 つに操作 1 つの簡単な HTTP の API です。
+  - id: iq
+    title: P-CSCF が中継ノードを操作する Iq
+    show: [iq]
+    focus: [pcscf, agw]
+    zoom: [ue, pcscf, agw]
+    checkpoint: true
+    text: 既定では同じ HTTP の API です。`deploy/h248/h248.yaml` を使うと H.248 になります。
+  - id: izi
+    title: 境界を越えるメディアの Izi
+    show: [izi]
+    focus: [trgw, peer-trgw]
+    text: 2 つの網の TrGW のあいだを、RTP が通ります。
+```
+
 
 | 参照点 | どことどこの間か | プロトコル |
 | --- | --- | --- |
