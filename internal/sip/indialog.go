@@ -979,12 +979,14 @@ func (r *InDialogRequest) acceptReInvite(body Body, headers []HeaderField) (*Mes
 // When the re-INVITE has 100rel in Supported or Require, the response
 // goes reliably (RFC 3262 3), with the Contact of the call: the
 // re-INVITE is a target refresh request, and a reliable provisional
-// response to it gives the peer the local target (RFC 6141 4.5). The UA
-// retransmits the response until its PRACK comes, and Progress returns
-// then. After 64*T1 without a PRACK, the UA rejects the re-INVITE with
-// 500 and Progress returns ErrNoPRACK. Without 100rel, the response
-// goes unreliably, and Progress returns once it is sent. Accept and
-// Reject wait for Progress to return.
+// response to it gives the peer the local target (RFC 6141 4.5), and
+// keeps the remote target that the re-INVITE gave even when the
+// re-INVITE then fails (4.6). The UA retransmits the response until its
+// PRACK comes, and Progress returns then. After 64*T1 without a PRACK,
+// the UA rejects the re-INVITE with 500 and Progress returns
+// ErrNoPRACK. Without 100rel, the response goes unreliably, and
+// Progress returns once it is sent. Accept and Reject wait for Progress
+// to return.
 //
 // The first reliable response with a session description carries the
 // answer to the offer of the re-INVITE, or the offer when the
@@ -1030,6 +1032,9 @@ func (r *InDialogRequest) Progress(code int, body Body, headers ...HeaderField) 
 			return err
 		}
 		r.makeReliable(resp)
+		// RFC 6141 4.6: the target refresh of the re-INVITE holds from
+		// now on, whatever its final response.
+		r.prevTarget = ""
 	}
 	err := r.st.Respond(resp)
 	pracked := r.pracked
