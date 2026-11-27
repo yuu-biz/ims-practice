@@ -128,3 +128,53 @@ func TestACancelledRelayedReInviteThatTheFarLegAnswersWith2xx(t *testing.T) {
 		t.Error("the role was told to put back what it changed for a re-INVITE that got a 2xx")
 	}
 }
+
+// TestACancelledRelayedReInviteBeforeAnyAnswerGetsTheFarLegsFinalResponse:
+// the callee cancels its re-INVITE while only a 180 has come, so no
+// answer has reached it. The far end may have made the change of the
+// session already all the same, and only it can tell (RFC 6141 3.3,
+// 3.8), so the B2BUA answers the callee's re-INVITE with no 487 of its
+// own: the caller's 200 is what the callee gets, and both ends are on
+// the new session.
+func TestACancelledRelayedReInviteBeforeAnyAnswerGetsTheFarLegsFinalResponse(t *testing.T) {
+	rc := newRawCallee(t, timers)
+	b2b := newB2BUA(t, &hooks{crossing: true}, rc.uri())
+	reinvites := make(chan *sip.InDialogRequest, 2)
+	callerWire := newWire()
+	caller := startUA(t, "caller", timers, callerWire, func(in *sip.IncomingCall) { in.Reject(480) })
+	// The caller stands for an end that has made the change of the
+	// session as soon as the re-INVITE came, and so answers the cancelled
+	// re-INVITE itself, with a 2xx (RFC 6141 3.3).
+	inv := invitation(t, b2b, func(r *sip.InDialogRequest) { reinvites <- r })
+	inv.RelayReInviteCancel = true
+	out, err := caller.Invite(inv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, final := finalOf(t, out); final.StatusCode != 200 {
+		t.Fatalf("the call got %d", final.StatusCode)
+	}
+	d := within(t, "dialog at the callee", rc.dialog)
+	ct := rc.send(&d, sip.INVITE, reOffer, sip.HeaderField{Name: "Contact", Value: "<" + rc.uri() + ">"})
+	r := within(t, "the re-INVITE of the callee at the caller", reinvites)
+	if err := r.ProgressUnreliably(180, sip.Body{}); err != nil {
+		t.Fatalf("180: %v", err)
+	}
+	if p := provisionalTo(t, ct); p.StatusCode != 180 {
+		t.Fatalf("the callee got %d, want the 180 of the caller", p.StatusCode)
+	}
+	if err := ct.Cancel(cancelReason.Header()); err != nil {
+		t.Fatalf("the callee could not cancel its re-INVITE: %v", err)
+	}
+	select {
+	case <-r.Cancelled():
+	case <-time.After(5 * time.Second):
+		t.Fatal("the re-INVITE at the caller was not cancelled")
+	}
+	if _, err := r.Accept(reAnswer); err != nil {
+		t.Fatalf("the caller could not accept its cancelled re-INVITE: %v", err)
+	}
+	if resp := finalTo(ct); resp == nil || resp.StatusCode != 200 || string(resp.Body) != string(reAnswer.Content) {
+		t.Fatalf("the callee's re-INVITE got %v, want the 200 of the caller with its answer", resp)
+	}
+}

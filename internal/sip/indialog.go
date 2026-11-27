@@ -1032,7 +1032,9 @@ func (d *CallDialog) receiveReInvite(st *ServerTransaction) {
 // session as it is now; while preconditions still hold the change back,
 // the user ends it with Reject(487). A B2BUA cancels the re-INVITE that
 // it relayed to its other leg, and passes the final response from there
-// on in the same way.
+// on in the same way. It has the UA leave the final response to it from
+// the start (IncomingCall.RelayReInviteCancel), since only the far end
+// can tell whether the change was made.
 func (r *InDialogRequest) Cancelled() <-chan struct{} {
 	if r.Request.Method != INVITE {
 		return nil
@@ -1057,7 +1059,8 @@ func (r *InDialogRequest) CancelRequest() *Message {
 // description (Cancelled). Like Reject, the 487 does not wait for the
 // PRACK of a reliable provisional response (RFC 3262 3). It is decided
 // with c.mu held, so that no such response can go between the check
-// and the 487.
+// and the 487. A call whose user relays the re-INVITE answers it itself
+// (call.relayReInviteCancel).
 func (r *InDialogRequest) watchCancel() {
 	c := r.d.c
 	select {
@@ -1068,7 +1071,7 @@ func (r *InDialogRequest) watchCancel() {
 		return
 	}
 	c.mu.Lock()
-	if r.described || r.answerable() != nil {
+	if r.described || c.relayReInviteCancel || r.answerable() != nil {
 		c.mu.Unlock()
 		return
 	}

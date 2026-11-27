@@ -192,6 +192,24 @@ func (c *IncomingCall) RelayPRACK() {
 	c.relay = true
 }
 
+// RelayReInviteCancel has the UA leave the final response of a
+// re-INVITE that the peer cancels to the handler of the call (Handle),
+// where it otherwise answers the re-INVITE 487 (Request Terminated)
+// itself while no reliable provisional response has carried its session
+// description (InDialogRequest.Cancelled). A B2BUA that relays the
+// re-INVITE cancels it on its other leg, and only the far end can tell
+// whether it has made the change of the session already: it answers
+// 2xx when it has (RFC 6141 3.3, 3.8). The B2BUA passes that final
+// response on, so a 487 of its own would leave the two ends on
+// different sessions. The user calls it before the first request within
+// the dialog, as Handle. Invitation.RelayReInviteCancel does the same
+// for a call that the UA makes.
+func (c *IncomingCall) RelayReInviteCancel() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.relayReInviteCancel = true
+}
+
 // SetContact has the responses of the call and its later messages carry
 // contact instead of the UA's own Contact (RFC 3261 12.1.1), such as the
 // conference URI with the isfocus feature parameter in the 200 of a

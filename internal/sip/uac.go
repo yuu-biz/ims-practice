@@ -50,6 +50,10 @@ type Invitation struct {
 	// for a response that carries an offer: its PRACK has to carry the
 	// answer, which only the user has.
 	ManualPRACK bool
+	// RelayReInviteCancel leaves the final response of a re-INVITE of
+	// the peer that the peer cancels to the user of the call, as
+	// IncomingCall.RelayReInviteCancel does. A B2BUA sets it.
+	RelayReInviteCancel bool
 	// OnRequest, when set, is called in a goroutine of its own for each
 	// request within a dialog of the call that the UA leaves to the
 	// user, who answers it with Accept or Reject.
@@ -129,6 +133,7 @@ func (ua *UA) Invite(inv Invitation) (*OutgoingCall, error) {
 
 	c := &OutgoingCall{call: newCall(ua, ua.stack), responses: make(chan *Message, responseBuffer)}
 	c.onRequest, c.manualPRACK = inv.OnRequest, inv.ManualPRACK
+	c.relayReInviteCancel = inv.RelayReInviteCancel
 	if inv.Contact.URI != "" {
 		c.contact = contact
 	}

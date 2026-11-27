@@ -49,6 +49,13 @@ type call struct {
 	// of the dialog with a Record-Route of its own URI.
 	contact     string
 	recordRoute bool
+	// relayReInviteCancel leaves the final response of a re-INVITE of
+	// the peer that the peer cancels to the user of the call in every
+	// case, where the UA otherwise answers it 487 itself while no
+	// reliable provisional response has carried its session description
+	// (InDialogRequest.Cancelled). A B2BUA sets it (RelayReInviteCancel,
+	// Invitation.RelayReInviteCancel).
+	relayReInviteCancel bool
 }
 
 // handOver starts onRequest for r, numbered after the requests that
