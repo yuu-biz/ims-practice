@@ -201,7 +201,7 @@ $FAMILIES.event .pill { fill: $STAGEFILL; opacity: .94; }
 /* The reading view, which is also what is printed. */
 #reading { background: #fff; color: $TEXT; max-width: 960px; margin: 0 auto; padding: 24px 28px 60px; box-sizing: border-box; min-height: 100%; }
 body.reading { background: #fff; overflow: auto; }
-body.reading #app { display: none; }
+body.reading #app { display: none !important; }
 .reading-head { display: flex; align-items: baseline; gap: 16px; border-bottom: 2px solid $ACCENT; margin-bottom: 18px; }
 .reading-head h1 { flex: 1; font-size: 28px; margin: 8px 0; color: $INK; }
 .reading-head button { font: inherit; padding: 6px 12px; }
