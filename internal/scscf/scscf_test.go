@@ -759,7 +759,7 @@ func TestTheSAROfAnAuthenticationTimeoutIsSentAgain(t *testing.T) {
 		{"the HSS takes the SAR and the SAA is lost", answerLost},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newHarness(t, Config{RegAwaitAuth: 500 * time.Millisecond, ExpiryLease: 100 * time.Millisecond})
+			h := newHarness(t, Config{RegAwaitAuth: time.Second, ExpiryLease: 100 * time.Millisecond})
 			h.hss.lose(cx.AuthenticationTimeout, tc.lost)
 			if r := h.register(sip.NewCallID(), 1, 600000, initial); r.StatusCode != 401 {
 				t.Fatalf("REGISTER got %d, want 401", r.StatusCode)
@@ -793,7 +793,7 @@ func TestTheSAROfAnAuthenticationTimeoutAfterARefusal(t *testing.T) {
 			[]cx.ServerAssignmentType{cx.AuthenticationTimeout}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newHarness(t, Config{RegAwaitAuth: 500 * time.Millisecond, ExpiryLease: 100 * time.Millisecond})
+			h := newHarness(t, Config{RegAwaitAuth: time.Second, ExpiryLease: 100 * time.Millisecond})
 			h.hss.refuse(cx.AuthenticationTimeout, tc.result)
 			if r := h.register(sip.NewCallID(), 1, 600000, initial); r.StatusCode != 401 {
 				t.Fatalf("REGISTER got %d, want 401", r.StatusCode)
@@ -813,7 +813,7 @@ func TestTheSAROfAnAuthenticationTimeoutAfterARefusal(t *testing.T) {
 // therefore costs a bounded number of SARs, one per claim of the expiry,
 // and the expiry does not stay in the Store for ever.
 func TestTheSAROfAnAuthenticationTimeoutStopsWithTheChallenge(t *testing.T) {
-	h := newHarness(t, Config{RegAwaitAuth: 400 * time.Millisecond, ExpiryLease: 100 * time.Millisecond})
+	h := newHarness(t, Config{RegAwaitAuth: time.Second, ExpiryLease: 100 * time.Millisecond})
 	if r := h.register(sip.NewCallID(), 1, 600000, initial); r.StatusCode != 401 {
 		t.Fatalf("REGISTER got %d, want 401", r.StatusCode)
 	}
