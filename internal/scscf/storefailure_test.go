@@ -469,3 +469,27 @@ func TestAnExpiryIsClaimedAgainWhenTheStoreFails(t *testing.T) {
 		t.Errorf("the registration is still there after the expiry: %v, %v", ok, err)
 	}
 }
+
+// TestMemoryStoreForgetsAChallengePastItsKeepUntil: a challenge whose
+// KeepUntil has passed is gone from the MemoryStore once it is read, as
+// one with a time to live is from a shared store. An expiry of
+// reg-await-auth whose SAR never got an answer ends at that KeepUntil
+// without removing the challenge itself, which would otherwise stay in
+// memory until the user registers again.
+func TestMemoryStoreForgetsAChallengePastItsKeepUntil(t *testing.T) {
+	s := NewMemoryStore()
+	ctx := context.Background()
+	past := time.Now().Add(-time.Second)
+	if err := s.PutChallenge(ctx, Challenge{PrivateIdentity: "user@" + "ims.example", Nonce: "n", Expires: past, KeepUntil: past}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := s.Challenge(ctx, "user@ims.example"); ok || err != nil {
+		t.Fatalf("Challenge past its KeepUntil = %v, %v; want none", ok, err)
+	}
+	s.mu.Lock()
+	left := len(s.challenges)
+	s.mu.Unlock()
+	if left != 0 {
+		t.Errorf("the MemoryStore keeps %d challenges past their KeepUntil, want none", left)
+	}
+}

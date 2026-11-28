@@ -469,13 +469,23 @@ func NewMemoryStore() *MemoryStore {
 func key(privateID string) string { return strings.ToLower(privateID) }
 
 // Challenge finds a challenge until its KeepUntil, as an external store
-// would with a time to live. The instance that handles its reg-await-auth
-// removes it before then, so it takes no room after that.
+// would with a time to live, and forgets it once a read finds it past
+// that.
 func (s *MemoryStore) Challenge(_ context.Context, privateID string) (Challenge, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	c, ok := s.challenges[key(privateID)]
-	if !ok || !c.KeepUntil.IsZero() && !time.Now().Before(c.KeepUntil) {
+	k := key(privateID)
+	c, ok := s.challenges[k]
+	if !ok {
+		return Challenge{}, false, nil
+	}
+	if !c.KeepUntil.IsZero() && !time.Now().Before(c.KeepUntil) {
+		// Past its KeepUntil the challenge is gone, as one with a time to
+		// live in a shared store is: the expiry that finds it gone, after
+		// the SAR of AUTHENTICATION_TIMEOUT got no answer, does not remove
+		// it itself (SCSCF.regAwaitAuthExpired). The expiry item is left
+		// to the instance that claims it.
+		delete(s.challenges, k)
 		return Challenge{}, false, nil
 	}
 	return c, true, nil
