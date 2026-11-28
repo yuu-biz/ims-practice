@@ -465,6 +465,7 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 
 - **確立したダイアログでは、双方に BYE を送ります**（TS 24.229 5.2.8.1.2）。[網が bearer を落とす](volte.md#網が-bearer-を落とす)ときと同じ 2 つの BYE です。
 - **BYE が 200 を追い越すことはありません。** UPDATE のときは、P-CSCF が 200 を先へ渡してから BYE を送ります。re-INVITE への 200 は ACK を待つので、解放も ACK を待ちます。TS 24.229 6.2 と同じです。BYE を送るのは、UE 1 の ACK が P-CSCF を通ったあとです。ACK が来ないときは、64*T1、つまり 32 秒たってから BYE を送ります。着信側も、そこで ACK を待つのをやめます（RFC 3261 13.3.1.4）。アンサーが re-INVITE への 183 で届き、その re-INVITE が失敗したときは、ACK は P-CSCF を通りません。2xx 以外の最終応答への ACK は、1 区間ごとに返るためです（RFC 3261 17.1.1.3）。そのときは、その応答を先へ渡したところで BYE を送ります。
+- **信頼性のない 183 にだけ入っていた SDP は、アンサーではありません。** 中継ノードはその SDP を受け取り、P-CSCF は終端にその SDP が示す先へ送らせます。やり直しの最中の早期メディアを、オファーした側へ届けるためです。それでもアンサーは 200 か信頼性のある暫定応答に入るものです（RFC 3261 13.2.1）。そのため、この 183 のあとの 200 の SDP を中継ノードが受け取らなかったときは、183 が無かったときと同じようにダイアログを解放します。中継ノードがアンサーを受け取った 200 は別です。相手は ACK が届くまで 200 を送り直し、その送り直しの `Modify` が失敗しても何も変わりません。そのアンサーはすでに中継ノードに入っているためです。
 
 ```text
  UE 1          P-CSCF          メディア中継ノード  網
@@ -507,7 +508,7 @@ UE 2 の P-CSCF では、同じことが逆の向きに起きます。183 や 20
 
 - **PCRF はこのアンサーを受け取りません。** P-CSCF は呼の Rx のセッションを終わらせ（TS 29.214 4.4.4）、中継ノードのコンテキストを解放します。
 
-`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestResponseWhoseSDPTheP_CSCFCannotReadEndsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAReINVITEThatFailsIsReleasedAtOnce`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`、2 つの P-CSCF のインスタンスが 1 つの保存先を共有する `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall` です。
+`internal/pcscf` の試験は、アンサーの `Modify` を断る中継ノードを使って、これらの流れを 1 つのプロセスの中で動かします。`TestRefusedAnswerOfA183EndsTheCall`、`TestRefusedAnswerOfThe200EndsTheCall`、`TestRefusedRetransmissionOfThe200KeepsTheCall`、`TestRefusedRetransmissionOfAReliable183KeepsTheCall`、`TestResponseWhoseSDPTheP_CSCFCannotReadEndsTheCall`、`TestRefusedAnswerWithinTheDialogReleasesTheCall`、`TestRefusedAnswerOfAReINVITEThatFailsIsReleasedAtOnce`、`TestRefusedAnswerOfThe2xxAfterAPreviewReleasesTheDialog`、`TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall`、2 つの P-CSCF のインスタンスが 1 つの保存先を共有する `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall` です。
 
 ## 中継ノードがオファーを受け取らないとき
 

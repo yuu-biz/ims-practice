@@ -446,6 +446,7 @@ An answer within the dialog, in the 200 to an UPDATE or to a re-INVITE such as t
 
 - **In a confirmed dialog, each party gets a BYE** (TS 24.229 5.2.8.1.2), the same two BYEs as when [the network takes the bearer](volte.md#the-network-takes-the-bearer).
 - **No BYE overtakes the 200.** After an UPDATE the BYEs go once the P-CSCF has passed the 200 on. The 200 to a re-INVITE waits for its ACK, and so does the release, as in TS 24.229 6.2: the BYEs go once the ACK of UE 1 has passed the P-CSCF. When no ACK comes, they go after 64*T1, 32 seconds, when the callee too gives up waiting for the ACK (RFC 3261 13.3.1.4). When the answer came in a 183 to the re-INVITE, and the re-INVITE then fails, no ACK passes the P-CSCF at all, as the ACK of a final response other than 2xx goes hop by hop (RFC 3261 17.1.1.3), and the BYEs go once that response has gone.
+- **An SDP that only showed in a 183 that is not reliable is no answer.** The relay took that SDP, and the P-CSCF had the termination send where it said, so that the early media of the renegotiation reaches the party that offered. The answer is still the one in the 200 or in a reliable provisional response (RFC 3261 13.2.1). So when the relay does not take the SDP of the 200 after such a 183, the P-CSCF releases the dialog, as it does without the 183 before it. A 200 whose answer the relay did take is another matter: the far end sends it again until its ACK comes, and a `Modify` of such a retransmission that fails changes nothing, since that answer is in the relay already.
 
 ```text
  UE 1          P-CSCF          media relay      network
@@ -488,7 +489,7 @@ An answer within the dialog, in the 200 to an UPDATE or to a re-INVITE such as t
 
 - **The PCRF never gets the answer.** The P-CSCF ends the Rx session of the call (TS 29.214 4.4.4) and removes the relay context.
 
-The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the answer: `TestRefusedAnswerOfA183EndsTheCall`, `TestRefusedAnswerOfThe200EndsTheCall`, `TestRefusedRetransmissionOfThe200KeepsTheCall`, `TestRefusedRetransmissionOfAReliable183KeepsTheCall`, `TestResponseWhoseSDPTheP_CSCFCannotReadEndsTheCall`, `TestRefusedAnswerWithinTheDialogReleasesTheCall`, `TestRefusedAnswerOfAReINVITEThatFailsIsReleasedAtOnce`, `TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall` and, with two instances of the P-CSCF on one store, `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall`.
+The tests of `internal/pcscf` run these flows in one process, with a relay that refuses the `Modify` of the answer: `TestRefusedAnswerOfA183EndsTheCall`, `TestRefusedAnswerOfThe200EndsTheCall`, `TestRefusedRetransmissionOfThe200KeepsTheCall`, `TestRefusedRetransmissionOfAReliable183KeepsTheCall`, `TestResponseWhoseSDPTheP_CSCFCannotReadEndsTheCall`, `TestRefusedAnswerWithinTheDialogReleasesTheCall`, `TestRefusedAnswerOfAReINVITEThatFailsIsReleasedAtOnce`, `TestRefusedAnswerOfThe2xxAfterAPreviewReleasesTheDialog`, `TestRefusedAnswerOfAnUPDATEInTheEarlyDialogEndsTheCall` and, with two instances of the P-CSCF on one store, `TestRefusedAnswerOfAnUPDATEAtAnotherInstanceEndsTheCall`.
 
 ## When the relay does not take an offer
 

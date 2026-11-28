@@ -3,6 +3,7 @@ package pcscf
 import (
 	"context"
 	"net/netip"
+	"slices"
 	"testing"
 	"time"
 
@@ -419,6 +420,69 @@ func TestAnswerAfterAPreviewIsAuthorisedOnce(t *testing.T) {
 	wantAuthorised(t, pcrf, "for the answer of the 200", moved)
 	if n := len(pcrf.mediaRequests()); n != before+1 {
 		t.Errorf("the PCRF got %d service information for the re-INVITE, want one for its 200", n-before)
+	}
+}
+
+// wantACKAndBYE checks that the far end got the ACK of a 2xx and the
+// BYE of a release. The P-CSCF sends the ACK first, and the stack of the
+// far end hands each message it takes to a goroutine of its own, so the
+// two may reach the test either way round.
+func wantACKAndBYE(t *testing.T, requests <-chan *sip.Message) {
+	t.Helper()
+	got := []sip.Method{nextRequest(t, "the far end", requests).Method, nextRequest(t, "the far end", requests).Method}
+	if !slices.Contains(got, sip.ACK) || !slices.Contains(got, sip.BYE) {
+		t.Errorf("the far end got %v, want the ACK of the 2xx and the BYE of the release", got)
+	}
+}
+
+// TestRefusedAnswerOfThe2xxAfterAPreviewReleasesTheDialog: the relay
+// took the SDP of a 183 that is not reliable, which is no answer (RFC
+// 3261 13.2.1), and then does not take the answer of the 2xx. The
+// P-CSCF has no answer with the relay's address to pass on (TS 24.229
+// 6.7.2.1), and the far end has taken the offer already, so the 2xx goes
+// on as it came and the P-CSCF releases the dialog (TS 24.229 5.2.8.1.2)
+// once the ACK of that 2xx has passed, so that no BYE overtakes it (RFC
+// 3261 15).
+func TestRefusedAnswerOfThe2xxAfterAPreviewReleasesTheDialog(t *testing.T) {
+	pcrf := &fakePolicy{}
+	c := newRawINVITEWith(t, pcrf)
+	c.upCall(t)
+	authorised := len(pcrf.mediaRequests())
+
+	ct, st := c.reinvite(t, "2", "2", moved)
+	farMoved := netip.MustParseAddrPort("192.0.2.99:6008")
+	progress := sip.NewResponse(st.Request, 183, "")
+	progress.Add("Contact", "<"+c.farContact+">")
+	progress.Add("Content-Type", "application/sdp")
+	progress.Body = sdp.Offer("3", farMoved).Bytes()
+	st.Respond(progress)
+	r := next(t, ct.Responses())
+	for r.StatusCode == 100 {
+		r = next(t, ct.Responses())
+	}
+	if r.StatusCode != 183 {
+		t.Fatalf("the UE got %d, want the 183 of the far end", r.StatusCode)
+	}
+
+	// The relay has restarted and knows the context no longer.
+	c.relay.refuseModify(agw.Core)
+	answer := sip.NewResponse(st.Request, 200, "")
+	answer.Add("Contact", "<"+c.farContact+">")
+	answer.Add("Content-Type", "application/sdp")
+	answer.Body = sdp.Offer("3", farMoved).Bytes()
+	st.Respond(answer)
+	if got := final(t, ct.Responses(), 3*time.Second); got.StatusCode != 200 {
+		t.Fatalf("the re-INVITE got %d, want the 200 of the far end", got.StatusCode)
+	}
+	noRequest(t, "the far end before the ACK", c.farGot)
+
+	c.ack("2")
+	wantACKAndBYE(t, c.farGot)
+	if m := nextRequest(t, "the UE", c.ueGot); m.Method != sip.BYE {
+		t.Errorf("the UE got %s, want the BYE of the release", m.Method)
+	}
+	if n := len(pcrf.mediaRequests()); n != authorised {
+		t.Errorf("the PCRF got %d service information for the answer that the relay did not take, want none", n-authorised)
 	}
 }
 
