@@ -167,7 +167,10 @@ func TestMpNeverLatches(t *testing.T) {
 // behind NAT, which sends from ue while its SDP names sdp. Added
 // without ipnapt/latch, the termination sends to sdp (H.248.37
 // (06/2008) 6.6.1); LATCH, OFF and RELATCH in a Modify then each take
-// effect (6.6.1 to 6.6.3).
+// effect (6.6.1 to 6.6.3). A Modify that carries a Remote descriptor
+// and RELATCH together, as the P-CSCF sends for an offer that moves the
+// UE, leaves the latched address until a packet comes from the new
+// source (6.6.2, 6.6.4) and then follows that source.
 func TestIqGatewayLatchesOnlyWhenAsked(t *testing.T) {
 	minPort, maxPort := rtptest.PortRange(t, 20)
 	relay, err := agw.NewRelay(netip.MustParseAddr("127.0.0.1"), minPort, maxPort, nil, nil, slog.New(slog.DiscardHandler))
@@ -214,6 +217,17 @@ func TestIqGatewayLatchesOnlyWhenAsked(t *testing.T) {
 	exchange(ue, sdpConn, "OFF")
 	modify(agw.NAPTRelatch)
 	exchange(other, other, "RELATCH")
+
+	// The termination sends to other, which it latched. A new offer of
+	// the UE names sdp again and asks for a re-latch.
+	if err := b.controller.Modify(ctx, c.ID, agw.Access,
+		agw.TerminationRequest{Remote: localAddr(sdpConn), Latch: agw.NAPTRelatch}); err != nil {
+		t.Fatal(err)
+	}
+	network.WriteToUDPAddrPort([]byte("to the latched address"), core)
+	expectPacket(t, other, "to the latched address")
+	exchange(ue, ue, "a Remote descriptor with RELATCH")
+
 	if err := b.controller.Subtract(ctx, c.ID); err != nil {
 		t.Fatal(err)
 	}
