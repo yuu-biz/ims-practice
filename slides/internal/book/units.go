@@ -42,7 +42,10 @@ type Unit struct {
 	Verified string `yaml:"verified"`
 }
 
-var evidence = []string{"code", "test", "capture", "illustration"}
+var (
+	evidence = []string{"code", "test", "capture", "illustration"}
+	commitID = regexp.MustCompile(`^[0-9a-f]{40}$`)
+)
 
 // LoadUnits reads the record of the units.
 func LoadUnits(path string) ([]Unit, error) {
@@ -79,8 +82,13 @@ func CheckUnits(b *Book, units []Unit) []error {
 				problems = append(problems, fmt.Errorf("%s: no question in %s", where, lang))
 			}
 		}
-		if u.Setup == "" || u.Verified == "" || len(u.Evidence) == 0 {
-			problems = append(problems, fmt.Errorf("%s: setup, evidence and verified are required", where))
+		if u.Setup == "" || len(u.Evidence) == 0 {
+			problems = append(problems, fmt.Errorf("%s: setup and evidence are required", where))
+		}
+		// A commit, not a name that moves such as HEAD or a branch:
+		// what was checked against is fixed.
+		if !commitID.MatchString(u.Verified) {
+			problems = append(problems, fmt.Errorf("%s: verified is the 40 hexadecimal digits of a commit, not %q", where, u.Verified))
 		}
 		for _, e := range u.Evidence {
 			if !slices.Contains(evidence, e) {
@@ -115,7 +123,8 @@ func CheckUnits(b *Book, units []Unit) []error {
 }
 
 // checkDefinition reports a <file>:<name> whose file does not define a
-// function, a method, a type, a variable or a constant of that name.
+// function, a method, a type, a variable or a constant of that name at
+// its top level, or in a group of "type (", "var (" or "const (".
 func checkDefinition(root, ref string) error {
 	file, name, ok := strings.Cut(ref, ":")
 	if !ok {
@@ -126,11 +135,22 @@ func checkDefinition(root, ref string) error {
 		return fmt.Errorf("%s does not exist", file)
 	}
 	q := regexp.QuoteMeta(name)
-	definition := regexp.MustCompile(`(?m)^(func (\([^)]*\) )?` + q + `[\[(]|type ` + q + `\b|\t` + q + `\s+(=|[A-Za-z*\[])|(var|const) ` + q + `\b)`)
-	if !definition.Match(text) {
-		return fmt.Errorf("%s defines no %s", file, name)
+	top := regexp.MustCompile(`^(func (\([^)]*\) )?` + q + `[\[(]|(type|var|const) ` + q + `\b)`)
+	grouped := regexp.MustCompile(`^\t` + q + `\b`)
+	group := false
+	for _, line := range strings.Split(string(text), "\n") {
+		switch {
+		case top.MatchString(line):
+			return nil
+		case line == "type (" || line == "var (" || line == "const (":
+			group = true
+		case line == ")":
+			group = false
+		case group && grouped.MatchString(line):
+			return nil
+		}
 	}
-	return nil
+	return fmt.Errorf("%s defines no %s", file, name)
 }
 
 // Stale lists, for each unit, the files of its code and its tests that
@@ -148,6 +168,9 @@ func Stale(root string, units []Unit) []string {
 		}
 		slices.Sort(code)
 		code = slices.Compact(code)
+		if len(code) == 0 {
+			continue // nothing of the code to change under it
+		}
 		if err := exec.Command("git", "-C", root, "cat-file", "-e", u.Verified+"^{commit}").Run(); err != nil {
 			out = append(out, fmt.Sprintf("%s: git does not have the commit %s that it was verified against", u.ID, u.Verified))
 			continue

@@ -173,7 +173,8 @@ func WriteFigures(b *Book) ([]string, error) {
 		}
 		files, _ := filepath.Glob(filepath.Join(dir, "*"))
 		for _, f := range files {
-			if !keep[filepath.Clean(f)] {
+			// Only a file named as a figure is one that this drew.
+			if figureFile.MatchString(filepath.Base(f)) && !keep[filepath.Clean(f)] {
 				if err := os.Remove(f); err != nil {
 					return written, err
 				}

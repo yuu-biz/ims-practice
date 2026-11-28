@@ -164,13 +164,30 @@ func zennTarget(b *Book, c *Chapter, target, repository string, chapters map[str
 	return strings.TrimRight(repository, "/") + "/" + repositoryPath(c.Path, file, b.Root) + fragment
 }
 
-// rewriteLinks replaces the target of each link and image of a line.
+// rewriteLinks replaces the target of each link and image of a line. A
+// link that starts inside inline code is text that the reader sees as
+// it is, and stays; a link whose text has code in it is a link.
 func rewriteLinks(line string, to func(target string, image bool) string) string {
-	return anyLink.ReplaceAllStringFunc(line, func(m string) string {
-		g := anyLink.FindStringSubmatch(m)
-		return g[1] + "[" + g[2] + "](" + to(g[3], g[1] == "!") + ")"
-	})
+	spans := inlineCodeSpan.FindAllStringIndex(line, -1)
+	var out strings.Builder
+	last := 0
+	for _, m := range anyLink.FindAllStringSubmatchIndex(line, -1) {
+		inCode := false
+		for _, s := range spans {
+			inCode = inCode || (s[0] < m[0] && m[0] < s[1])
+		}
+		if inCode {
+			continue
+		}
+		out.WriteString(line[last:m[0]])
+		out.WriteString(line[m[2]:m[3]] + "[" + line[m[4]:m[5]] + "](" + to(line[m[6]:m[7]], m[3] > m[2]) + ")")
+		last = m[1]
+	}
+	out.WriteString(line[last:])
+	return out.String()
 }
+
+var inlineCodeSpan = regexp.MustCompile("(`+)[^`].*?(`+)")
 
 var anyLink = regexp.MustCompile(`(!?)\[([^\]]*)\]\(([^)\s]+)\)`)
 
@@ -182,12 +199,12 @@ func cover(title string) string {
 	b.WriteString(`<rect width="500" height="700" fill="#F6F5F1"/><rect x="0" y="0" width="500" height="14" fill="#2F6FA3"/>`)
 	words := strings.Fields(title)
 	if len(words) <= 1 {
-		words = splitRunes(title, 11)
+		words = splitRunes(title, 10)
 	}
 	var lines []string
 	cur := ""
 	for _, w := range words {
-		if len([]rune(cur+w)) > 14 && cur != "" {
+		if len([]rune(cur+w)) > 12 && cur != "" {
 			lines = append(lines, strings.TrimSpace(cur))
 			cur = ""
 		}

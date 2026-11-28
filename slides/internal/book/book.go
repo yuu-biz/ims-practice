@@ -88,12 +88,19 @@ type Link struct {
 }
 
 var (
-	imagePattern  = regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)\)`)
+	imagePattern  = regexp.MustCompile(`!\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
+	bookSlug      = regexp.MustCompile(`^[0-9a-z_-]{12,50}$`)
+	chapterName   = regexp.MustCompile(`^[0-9a-z_-]{1,50}$`)
+	figureFile    = regexp.MustCompile(`^[0-9a-z-]+\.[0-9a-z-]+\.[0-9a-z-]+\.svg$`)
 	linkPattern   = regexp.MustCompile(`\]\(([^)\s]+)\)`)
 	onlyLink      = regexp.MustCompile(`^\[[^\]]+\]\(([^)\s#]+)\)$`)
 	figurePattern = regexp.MustCompile(`^figures/([0-9a-z-]+)\.([0-9a-z-]+)\.([0-9a-z-]+)\.svg$`)
-	fencePattern  = regexp.MustCompile("^(```+|~~~+)\\s*([A-Za-z0-9_-]*)\\s*$")
-	inlineCode    = regexp.MustCompile("`[^`]*`")
+	// A fence opens a code block as Markdown has it: up to three spaces,
+	// three or more backticks or tildes, and an info string of any kind,
+	// such as "go" or Zenn's "go:main.go"; its first word is the
+	// language. A backtick fence has no backtick in its info string.
+	fencePattern = regexp.MustCompile("^ {0,3}(```+|~~~+)\\s*([^\\s`:]*)[^`]*$")
+	inlineCode   = regexp.MustCompile("`[^`]*`")
 )
 
 // Load reads the book under dir, whose repository has its root at root.
@@ -110,6 +117,21 @@ func Load(dir, root string) (*Book, []error) {
 		return nil, []error{fmt.Errorf("%s: %w", filepath.Join(dir, "book.yaml"), err)}
 	}
 	var problems []error
+	// The names that Zenn takes: a book of 12 to 50 of a-z, 0-9, "-" and
+	// "_", and chapters of the same letters, each once.
+	if !bookSlug.MatchString(b.Config.Slug) {
+		problems = append(problems, fmt.Errorf("%s: the slug %q is not 12 to 50 of a-z, 0-9, - and _", filepath.Join(dir, "book.yaml"), b.Config.Slug))
+	}
+	seen := map[string]bool{}
+	for _, name := range b.Config.Chapters {
+		if !chapterName.MatchString(name) || seen[name] {
+			problems = append(problems, fmt.Errorf("%s: the chapter %q is not a name of a-z, 0-9, - and _ that comes once", filepath.Join(dir, "book.yaml"), name))
+		}
+		seen[name] = true
+	}
+	if len(problems) > 0 {
+		return nil, problems
+	}
 	for _, lang := range Languages {
 		for _, name := range b.Config.Chapters {
 			c, err := readChapter(filepath.Join(dir, lang, name+".md"), lang, name, root)

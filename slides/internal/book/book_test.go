@@ -50,7 +50,7 @@ func chapterTwo(title string) string {
 	return "# " + title + "\n\nText.\n\n## Details\n\nMore text.\n"
 }
 
-const bookYAML = "slug: demo-book\n" +
+const bookYAML = "slug: demo-book-of-tests\n" +
 	"title:\n  ja: デモの本\n  en: A demo book\n" +
 	"summary:\n  ja: 要約\n  en: A summary\n" +
 	"topics: [ims, sip]\n" +
@@ -187,6 +187,21 @@ func TestCheckReportsWhatIsWrong(t *testing.T) {
 		write(t, root, filepath.Join(ja, "one.md"), strings.Replace(read(t, chapter), `return "hello"`, `return "bye"`, 1))
 		reportsOnly(t, problems(t, root), filepath.Join(ja, "one.md")+":9:", "func Hello() string {", "not in internal/x/x.go")
 	})
+	// A fence with more than a language after it, as Zenn writes a file
+	// name, or indented as in a list, still opens a code block: an
+	// excerpt under it is checked, and the prose after it is read.
+	for _, fence := range []string{"```go:x.go", "```go title=x", "   ```go"} {
+		t.Run("an excerpt under the fence "+fence, func(t *testing.T) {
+			root := repository(t)
+			chapter := filepath.Join(root, ja, "one.md")
+			text := strings.Replace(read(t, chapter), "```go\n", fence+"\n", 1)
+			text = strings.Replace(text, `return "hello"`, `return "bye"`, 1)
+			write(t, root, filepath.Join(ja, "one.md"), text+"\nSee [nothing](nowhere.md).\n")
+			got := problems(t, root)
+			reports(t, got, "not in internal/x/x.go")
+			reports(t, got, "nowhere.md does not exist")
+		})
+	}
 	t.Run("a figure file that differs from its drawing", func(t *testing.T) {
 		root := repository(t)
 		write(t, root, filepath.Join(ja, "figures", "demo.flow.send.svg"), "<svg xmlns=\"http://www.w3.org/2000/svg\"/>\n")
@@ -301,11 +316,11 @@ func TestZennWritesTheBook(t *testing.T) {
 	if _, err := Zenn(load(t, root), "ja", out, repo); err != nil {
 		t.Fatal(err)
 	}
-	config := read(t, filepath.Join(out, "books", "demo-book", "config.yaml"))
+	config := read(t, filepath.Join(out, "books", "demo-book-of-tests", "config.yaml"))
 	if !strings.Contains(config, "published: false") || !strings.Contains(config, "chapters:\n  - one\n  - two\n") {
 		t.Errorf("config.yaml is not unpublished with the chapters one and two in order:\n%s", config)
 	}
-	one := read(t, filepath.Join(out, "books", "demo-book", "one.md"))
+	one := read(t, filepath.Join(out, "books", "demo-book-of-tests", "one.md"))
 	if !strings.HasPrefix(one, "---\ntitle: \"一つ目\"\n---\n") {
 		t.Errorf("the chapter does not start with its title in front matter:\n%s", one)
 	}
@@ -315,7 +330,7 @@ func TestZennWritesTheBook(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"![A sends a request](/images/demo-book/demo.flow.send.png)",
+		"![A sends a request](/images/demo-book-of-tests/demo.flow.send.png)",
 		"[internal/x/x.go](" + repo + "/internal/x/x.go)",
 		"[the details](two#details)",
 		"```go\nfunc Hello() string {\n\treturn \"hello\"\n```",
@@ -325,7 +340,7 @@ func TestZennWritesTheBook(t *testing.T) {
 		}
 	}
 	figure := read(t, filepath.Join(root, "docs", "book", "ja", "figures", "demo.flow.send.svg"))
-	if got := read(t, filepath.Join(out, "images", "demo-book", "demo.flow.send.svg")); got != figure {
+	if got := read(t, filepath.Join(out, "images", "demo-book-of-tests", "demo.flow.send.svg")); got != figure {
 		t.Error("the image of the book is not the figure of the chapter")
 	}
 }
@@ -387,4 +402,87 @@ func TestStaleListsUnitsWhoseCodeChanged(t *testing.T) {
 	if len(got) != 1 || !strings.Contains(got[0], "hello") || !strings.Contains(got[0], "internal/x/x.go") || !strings.Contains(got[0], "one") {
 		t.Errorf("Stale = %q, want the unit hello, whose internal/x/x.go changed", got)
 	}
+}
+
+// TestLoadRefusesNamesThatZennDoesNotTake makes sure that a slug or a
+// chapter name that Zenn would refuse, or that would write outside the
+// book, stops the book before anything is written.
+func TestLoadRefusesNamesThatZennDoesNotTake(t *testing.T) {
+	for _, change := range [][2]string{
+		{"slug: demo-book-of-tests", "slug: \"\""},
+		{"slug: demo-book-of-tests", "slug: ../../outside-of-it"},
+		{"  - two\n", "  - one\n"},
+	} {
+		root := repository(t)
+		path := filepath.Join("docs", "book", "book.yaml")
+		write(t, root, path, strings.Replace(read(t, filepath.Join(root, path)), change[0], change[1], 1))
+		if _, problems := Load(filepath.Join(root, "docs", "book"), root); len(problems) == 0 {
+			t.Errorf("book.yaml with %q loads without a problem", change[1])
+		}
+	}
+}
+
+// TestWriteFiguresKeepsWhatIsNoFigure makes sure that drawing the
+// figures again removes a figure that no chapter shows, and nothing else.
+func TestWriteFiguresKeepsWhatIsNoFigure(t *testing.T) {
+	root := repository(t)
+	dir := filepath.Join("docs", "book", "ja", "figures")
+	write(t, root, filepath.Join(dir, "README.md"), "kept\n")
+	write(t, root, filepath.Join(dir, "demo.gone.step.svg"), "<svg/>\n")
+	if _, err := WriteFigures(load(t, root)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, dir, "README.md")); err != nil {
+		t.Errorf("the README in figures/ is gone: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, dir, "demo.gone.step.svg")); err == nil {
+		t.Error("a figure that no chapter shows is still there")
+	}
+}
+
+// TestZennLeavesInlineCodeAsItIs makes sure that the Markdown of a link
+// that a chapter shows as inline code reaches the reader as written,
+// while a link whose text is code is made to work in the book.
+func TestZennLeavesInlineCodeAsItIs(t *testing.T) {
+	root, _ := committed(t)
+	path := filepath.Join("docs", "book", "ja", "two.md")
+	quoted := "Write `[the file](../../../internal/x/x.go)` to link it, as [`x.go`](../../../internal/x/x.go) does.\n"
+	write(t, root, path, read(t, filepath.Join(root, path))+"\n"+quoted)
+	git(t, root, "commit", "-q", "-am", "quote")
+	commit := git(t, root, "rev-parse", "HEAD")
+	out := t.TempDir()
+	if _, err := Zenn(load(t, root), "ja", out, "https://github.com/o/r/blob/"+commit); err != nil {
+		t.Fatal(err)
+	}
+	got := read(t, filepath.Join(out, "books", "demo-book-of-tests", "two.md"))
+	want := "Write `[the file](../../../internal/x/x.go)` to link it, as [`x.go`](https://github.com/o/r/blob/" + commit + "/internal/x/x.go) does."
+	if !strings.Contains(got, want) {
+		t.Errorf("the chapter has no line %q:\n%s", want, got)
+	}
+}
+
+// TestCheckUnitsWantsAFixedCommitAndADefinition makes sure that a unit
+// verified against a name that moves, such as HEAD, is reported, and
+// that a struct field of the same name is no definition of a function.
+func TestCheckUnitsWantsAFixedCommitAndADefinition(t *testing.T) {
+	root := repository(t)
+	write(t, root, "internal/x/y.go", "package x\n\ntype T struct {\n\tGoodbye string\n}\n")
+	b := load(t, root)
+	units, err := LoadUnits(filepath.Join(root, "docs", "book", "units.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	units[0].Verified = "HEAD"
+	reports(t, errorStrings(CheckUnits(b, units)), "verified is the 40 hexadecimal digits")
+	units[0].Verified = strings.Repeat("0", 40)
+	units[0].Code = append(units[0].Code, "internal/x/y.go:Goodbye")
+	reports(t, errorStrings(CheckUnits(b, units)), "internal/x/y.go defines no Goodbye")
+}
+
+func errorStrings(errs []error) []string {
+	var out []string
+	for _, e := range errs {
+		out = append(out, e.Error())
+	}
+	return out
 }
