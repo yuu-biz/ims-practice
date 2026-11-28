@@ -70,6 +70,10 @@ type Dialog struct {
 	// PolicySession is the policy session in which the PCRF authorised
 	// the media of the dialog (TS 29.214 4.4.1), or empty.
 	PolicySession policy.SessionID
+	// PendingOffer is the offer that the 2xx of a re-INVITE without one
+	// carried, which the ACK of that 2xx answers (RFC 3261 14.1), or nil
+	// when no such offer has come.
+	PendingOffer *ResponseOffer
 	// KeepUntil is when the Store forgets the dialog, or zero to keep it
 	// until the P-CSCF takes it (TakeDialog). A dialog that the P-CSCF
 	// releases gets one (releasedKeep), so that it goes also when the
@@ -81,6 +85,27 @@ type Dialog struct {
 	// 9). The later requests of the dialog and their responses carry it
 	// (chargeRequest, chargeResponse). Empty when the INVITE had none.
 	ICID string
+}
+
+// ResponseOffer is the SDP offer that the 2xx of a re-INVITE without an
+// offer carried, as a Dialog keeps it until the ACK of that 2xx brings
+// the answer (RFC 3261 13.2.1, 14.1). The ACK may pass another P-CSCF
+// instance than the re-INVITE, so it is in the Store rather than in the
+// transaction.
+type ResponseOffer struct {
+	// CSeq is the sequence number of the re-INVITE. Its ACK carries the
+	// same one (RFC 3261 13.2.2.4), which tells the ACK that answers
+	// this offer from the ACK of another request.
+	CSeq uint32
+	// SDP is the offer as the UE sees it, and UE the address of the UE,
+	// for the service information that the PCRF gets with the answer (TS
+	// 29.214 A.1).
+	SDP []byte
+	UE  netip.Addr
+	// Authorized is true once the PCRF has the answer of the ACK. The
+	// far end sends its 2xx again until the ACK comes, so the same ACK
+	// comes again, and the PCRF gets that answer once (TS 29.214 A.1).
+	Authorized bool
 }
 
 // ReleaseCause is why the P-CSCF releases a dialog itself.
@@ -289,6 +314,37 @@ func (d *Dialog) ofAnotherDialog(req *sip.Message, toUE bool) bool {
 		header = "From"
 	}
 	return d.Confirmed && tagOf(req.Get(header)) != tagOf(d.remote().NameAddr)
+}
+
+// answering is the offer that the 2xx of a re-INVITE without one
+// carried and that ack, the ACK of that 2xx, answers: the ACK carries
+// the CSeq number of the re-INVITE (RFC 3261 13.2.2.4). It is nil for
+// the ACK of any other request, and for an ACK that brings no answer,
+// which ends the offer: the 2xx then only repeated the offer of a
+// reliable provisional response that the PRACK has answered (RFC 3262
+// 5). first is false for an ACK that comes again, whose answer goes to
+// the relay once more but to the PCRF only once.
+//
+// The Dialogs that the Store gives out may share one ResponseOffer, so
+// the one that answering marks is a copy, as for a RelayContext
+// (agreeing).
+func (d *Dialog) answering(ack *sip.Message) (offer *ResponseOffer, first bool) {
+	cseq, err := sip.ParseCSeq(ack.Get("CSeq"))
+	if err != nil || d.PendingOffer == nil || d.PendingOffer.CSeq != cseq.Number {
+		return nil, false
+	}
+	if !carriesSDP(ack, d.Relay) {
+		d.PendingOffer = nil
+		return nil, false
+	}
+	offer = d.PendingOffer
+	if offer.Authorized {
+		return offer, false
+	}
+	authorized := *offer
+	authorized.Authorized = true
+	d.PendingOffer = &authorized
+	return offer, true
 }
 
 // noteRequest keeps the CSeq of the party that sent req, a request

@@ -84,11 +84,13 @@ func (s *setup) toUE() bool { return s.leg == terminating }
 // pass through the P-CSCF, and the offer in out, the INVITE on
 // its way to the next hop, pointed at the termination facing that hop.
 //
-// SIMPLIFIED: RFC 3264 and RFC 3262. An INVITE without SDP, whose offer
-// comes in a reliable response with the answer in the PRACK or the ACK,
-// gets no relay context, and its SDP is left as it is and is not
-// authorised. The same holds for a re-INVITE without SDP. Offers in
-// requests within the dialog are handled by renegotiate.
+// SIMPLIFIED: RFC 3264 and RFC 3262. An initial INVITE without SDP,
+// whose offer comes in a reliable response or in the 2xx with the answer
+// in the PRACK or the ACK, gets no relay context, and its SDP is left as
+// it is and is not authorised. A re-INVITE without SDP has the relay
+// context of the dialog, and offerInResponse puts the offer of its 2xx
+// through it; offers in requests within the dialog are handled by
+// renegotiate.
 //
 // SIMPLIFIED: RFC 3264 6. Only the first audio stream with a port goes
 // through the relay, even when the answer accepts another one instead.

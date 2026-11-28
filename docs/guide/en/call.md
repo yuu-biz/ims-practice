@@ -362,6 +362,43 @@ In Wireshark, `http.request.uri == "/contexts" && http.request.method == "POST"`
 
 The administrative state belongs to the process of the node: a node that starts again is `UNLOCKED`. `scripts/e2e-maintenance-sip.sh` runs these steps and checks the capture.
 
+## A re-INVITE that asks for an offer
+
+A re-INVITE usually carries the offer, and its 2xx the answer. A re-INVITE without a body asks the other party for the offer instead: the 2xx carries it, and the ACK carries the answer (RFC 3261 13.2.1, 14.1). A UE sends one when it wants the session the other party now proposes, as after a transfer, rather than proposing one itself.
+
+The offer and the answer then cross the P-CSCF the other way round, and both go through the relay context of the call:
+
+```text
+ UE 1          P-CSCF          media relay      network
+ | re-INVITE without a body       |                 |
+ |-------------->| re-INVITE                        |
+ |               |--------------------------------->|
+ |               |       200 (INVITE) with the offer|
+ |               |<---------------------------------|
+ |               | PUT .../terminations/core        |  Modify: where the far end receives
+ |               |--------------->|                 |
+ |  200 (INVITE) |                |                 |  the offer names the access termination
+ |<--------------|                |                 |
+ |  ACK with the answer           |                 |
+ |-------------->|                |                 |
+ |               | PUT .../terminations/access      |  Modify: where UE 1 receives
+ |               |--------------->|                 |
+ |               | ACK                              |  the answer names the core termination
+ |               |--------------------------------->|
+ |               | AAR: the media of the session    |  to the PCRF
+```
+
+- **The offer of the 2xx moves the core termination.** It comes from the far end, so the termination that faces the network learns where the far end now takes its media, and UE 1 hears the address of the access termination (TS 24.229 6.7.2.1). The core termination does not latch, and sends where the SDP says.
+- **The answer of the ACK moves the access termination.** It comes from UE 1, so that termination learns where UE 1 now takes its media, and the far end hears the address of the core termination. When UE 1 moved its media, the `Modify` asks the termination to latch again, as the offer of a re-INVITE of UE 1 does.
+- **The PCRF gets the service information with the answer** (TS 29.214 A.1), not with the offer alone: a bearer is reserved for media that are negotiated. The far end sends its 2xx again until the ACK arrives, so the same ACK may come more than once; the answer reaches the relay again each time, which moves nothing, and reaches the PCRF once.
+- **The P-CSCF keeps the offer of the 2xx with the dialog**, in the store that its instances share, because the ACK is a request of its own and may pass another instance than the re-INVITE.
+- **When the relay does not take the offer of the 2xx**, the P-CSCF has no SDP of its own to pass on. The 2xx is the final response of the request and goes on as it came, and the P-CSCF releases the dialog once the ACK has passed, as it does for an answer that the relay does not take. The answer of that ACK then reaches neither the relay nor the PCRF.
+- **When the relay does not take the answer of the ACK**, the ACK goes no further: no response to an ACK is allowed, and an ACK that carried the address of UE 1 would take the media of the far end past the relay. The P-CSCF releases the dialog, and the far end sends its 2xx again until the BYE arrives, or until it gives up waiting for the ACK after 64*T1 (RFC 3261 13.3.1.4).
+
+When the other party answers such a re-INVITE with the offer in a reliable 183 instead, the PRACK carries the answer (RFC 3262 5). Both go through the relay the same way; what the P-CSCF leaves out there is in [What this project simplifies](#what-this-project-simplifies).
+
+The tests `TestOfferInThe2xxOfAReINVITEWithoutAnOfferIsRelayedAndAuthorised`, `TestOfferInThe2xxOfTheUEIsRelayedAndAuthorised`, `TestACKWithTheAnswerSentAgainReachesThePCRFOnce`, `TestACKOfAnotherRequestLeavesTheOfferOfThe2xxWaiting`, `TestOfferOfTheNextUPDATEThatFailsGoesBackToTheOfferOfThe2xx`, `TestRefusedOfferInThe2xxReleasesTheDialog`, `TestRefusedAnswerInTheACKReleasesTheDialog` and `TestACKWithoutAnAnswerAfterAnOfferInAReliable183` of `internal/pcscf` run these flows in one process.
+
 ## When the relay does not take an answer
 
 The P-CSCF points every SDP answer at the relay before it passes the answer on (steps 8 and 10). It first tells the termination that faces the answering party where that party receives, with a `Modify` (TS 29.334 5.17.2.3), and only then writes the address of its other termination into the SDP (TS 24.229 6.7.2.1). A relay that is restarting, or that has lost the context, refuses the `Modify` or does not answer it in time. The P-CSCF then has no answer of its own to pass on, and the answer that came names the address of the far party. A UE that got it would send its RTP past the relay, and the PCRF would authorise media on a path that the call does not take. So the P-CSCF ends the call. It does the same with an answer that it cannot read: SDP that does not parse, a body without `Content-Type`, which RFC 3261 20.15 forbids, and an SDP in a part of a multipart body.
@@ -601,7 +638,7 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | P-CSCF, TS 24.229 5.2.6.4.4 step 1 and 5.2.6.4.8 step 2 | The P-Asserted-Identity of the UE that answers carries no display name. | The user profiles of this project hold no display name, so the S-CSCF puts none in P-Associated-URI at registration, and the P-CSCF has none to add. |
 | P-CSCF, TS 24.229 4.4.2 and RFC 3325 5 | The P-CSCF tells a request from the network by how it is addressed, since the UEs and the network reach it at the same address and port. Any host that reaches that port can send a request with the URI that the P-CSCF put in Path as its top Route and the contact of a UE as its Request-URI. The P-CSCF forwards it to the UE without an IP association, and the P-Asserted-Identity that the host wrote reaches the UE as one that the network asserts. | A real P-CSCF takes the requests of the network (Mw) on an interface of its own, which only the nodes of the network reach. The containers of this project share one network, and the security that a commercial network puts on that boundary is out of scope. |
 | P-CSCF, TS 24.229 5.2.6.3.5 step 7 and 5.2.6.3.9 step 3 | A request that the UE sends in a dialog other than that of an INVITE, such as the refresh of its subscription, carries no P-Charging-Vector. A response of the UE in such a dialog takes the icid-value of the request that it answers. | The P-CSCF keeps only the dialogs of INVITEs, and with them the icid-value of the INVITE. |
-| P-CSCF, RFC 3264 and RFC 3262 | An INVITE without an offer gets no relay context: the offer that then comes in a reliable 1xx or in the 2xx, and the answer in the PRACK or the ACK, are left as they are. An offer in an UPDATE or a re-INVITE goes through the relay like the one in the INVITE. | The UE simulator always puts its offer in the INVITE. |
+| P-CSCF, RFC 3264 and RFC 3262 | An initial INVITE without an offer gets no relay context: the offer that then comes in a reliable 1xx or in the 2xx, and the answer in the PRACK or the ACK, are left as they are. An offer in an UPDATE or a re-INVITE goes through the relay like the one in the INVITE, and so do the offer in the 2xx of a re-INVITE without one and the answer in its ACK. When that offer comes in a reliable 1xx instead, with the answer in the PRACK, both go through the relay but the PCRF gets no service information for them: the 2xx of a PRACK carries no SDP to send it with. | The UE simulator always puts its offer in the INVITE, and no node of this project sends a re-INVITE without one. |
 | P-CSCF, RFC 3264 6 | Only the first audio stream with a port goes through the relay. Another stream gets no termination and keeps the address it was offered with, which the other side sees. | The UE simulator offers a single stream. |
 | P-CSCF, RFC 5621 4.2 and TS 24.229 6.7.2.1 | An SDP in a part of a multipart body does not go through the relay. A request that carries one gets 415, and a response ends the call, as one whose answer the relay does not take. | A UA has to read multipart bodies, and the SDP of an emergency call comes in one, with the location of the UE. No node of this project sends a multipart body in an INVITE dialog. |
 | P-CSCF, TS 24.229 5.2.8.1.1 | When a request within an early dialog, such as an UPDATE whose answer the relay does not take, passes another instance of the P-CSCF than its INVITE, the INVITE is answered 500 and cancelled only when its next response reaches the instance that forwards it: a provisional response or the 200, or a final response that ends the INVITE anyway. Without one, Timer C of that instance ends it (RFC 3261 16.8): 3 minutes 30 seconds here, as RFC 3261 16.6 step 11 asks for more than 3 minutes. Until then the INVITE goes on, without media through the relay. When that instance has stopped, the store forgets the dialog after the same time. | Only the instance that forwards an INVITE can answer and cancel it. The instances share one store and do not ask one another: the instance that releases the dialog marks it in the store, and the other finds the mark with the next response. In the preconditions of a VoLTE call, the 180 comes right after the 200 to the UPDATE. The PCRF sends the events of a session to the instance that opened it, so a lost bearer always reaches the instance that forwards the INVITE. |
