@@ -234,7 +234,7 @@ func registration() scscf.Registration {
 func scscfChallenge(t *testing.T, a, b scscf.Store) {
 	expires := time.Now().Add(time.Minute).Round(time.Millisecond)
 	c := scscf.Challenge{PrivateIdentity: impi, PublicIdentity: impu, CallID: "reg-1", Realm: "ims.mnc001.mcc001.3gppnetwork.org",
-		Nonce: "n1", Algorithm: sip.AlgorithmAKAv1MD5, XRES: []byte{1, 2, 3, 4}, HSSHost: "hss", ServerName: "sip:scscf-1", Expires: expires, KeepUntil: expires.Add(time.Minute)}
+		Nonce: "n1", Algorithms: []string{sip.AlgorithmAKAv2SHA256, sip.AlgorithmAKAv1MD5}, XRES: []byte{1, 2, 3, 4}, HSSHost: "hss", ServerName: "sip:scscf-1", Expires: expires, KeepUntil: expires.Add(time.Minute)}
 	if _, ok := getChallenge(t, b, impi); ok {
 		t.Fatal("a challenge before PutChallenge")
 	}

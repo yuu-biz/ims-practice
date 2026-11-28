@@ -24,10 +24,12 @@ type Challenge struct {
 	CallID string
 	Realm  string
 	Nonce  string
-	// Algorithm is the one of the WWW-Authenticate: MD5 for SIP Digest,
-	// AKAv1-MD5 for IMS AKA.
-	Algorithm string
-	HA1       string // from the MAA, for SIP Digest
+	// Algorithms are the ones of the WWW-Authenticate header fields that
+	// the 401 carried, the most preferred first (TS 24.229 5.4.1.2.1A,
+	// 5.4.1.2.1B): MD5 for SIP Digest, AKAv1-MD5 for IMS AKA. The UE
+	// answers with one of them.
+	Algorithms []string
+	HA1        string // from the MAA, for SIP Digest
 	// RAND and XRES come from the authentication vector of IMS AKA. RAND
 	// is kept for a re-synchronisation (TS 24.229 5.4.1.2.1A), XRES to
 	// check the response (5.4.1.2.2 step 4).
@@ -51,13 +53,34 @@ type Challenge struct {
 	KeepUntil time.Time
 }
 
-// digestHA1 is H(A1) of the response that the challenge expects: the one
-// of the MAA for SIP Digest, and for IMS AKA the one with XRES as the
-// password (RFC 3310 3.3). It is empty for a registration without a
-// challenge.
-func (c Challenge) digestHA1() string {
-	if c.Algorithm == sip.AlgorithmAKAv1MD5 {
-		return sip.HA1(c.Algorithm, c.PrivateIdentity, c.Realm, aka.DigestPassword(c.XRES))
+// offers reports whether the 401 offered algorithm, so that a response
+// is checked against the algorithm the UE chose and no other (TS 24.229
+// 5.4.1.2.2 step 3, 5.4.1.2.2A step 3). Credentials without an
+// algorithm parameter mean MD5 (RFC 3310 3.1).
+func (c Challenge) offers(algorithm string) bool {
+	if algorithm == "" {
+		algorithm = "MD5"
+	}
+	return slices.ContainsFunc(c.Algorithms, func(a string) bool { return strings.EqualFold(a, algorithm) })
+}
+
+// imsAKA reports whether the challenge is one of IMS AKA rather than of
+// SIP Digest: it offers an AKA version (TS 33.203 6.1.1).
+func (c Challenge) imsAKA() bool {
+	return c.offers(sip.AlgorithmAKAv1MD5)
+}
+
+// digestHA1 is H(A1) of the response that the challenge expects for
+// algorithm: the one of the MAA for SIP Digest, and for IMS AKA the one
+// with XRES as the password (RFC 3310 3.3). It is empty for an
+// algorithm that the challenge did not offer, and so for a registration
+// without a challenge.
+func (c Challenge) digestHA1(algorithm string) string {
+	switch {
+	case !c.offers(algorithm):
+		return ""
+	case strings.EqualFold(algorithm, sip.AlgorithmAKAv1MD5):
+		return sip.HA1(algorithm, c.PrivateIdentity, c.Realm, aka.DigestPassword(c.XRES))
 	}
 	return c.HA1
 }
