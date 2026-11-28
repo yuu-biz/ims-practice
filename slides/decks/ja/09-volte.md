@@ -78,7 +78,7 @@ events:
       - 送り先: UE の 5060 番から P-CSCF の 5060 番へ
       - Security-Client: 自分のアソシエーションの申し出
       - Require: "`sec-agree`。Proxy-Require にも入る"
-      - Authorization: "`algorithm=AKAv1-MD5`。nonce と response は空"
+      - Authorization: "algorithm は入れない。nonce と response は空"
   - id: pcscf-keep
     do: Security-Client を預かる
     at: pcscf
@@ -128,14 +128,14 @@ events:
     fields:
       - nonce: RAND と AUTN の base64
       - P-CSCF 向けのもの: "`ik` と `ck` のパラメータ"
-      - 取っておくもの: RAND と XRES
+      - 取っておくもの: RAND、XRES、IK、CK
   - id: r401-s-i
     msg: "401"
     from: scscf
     to: icscf
     proto: SIP
     fields:
-      - WWW-Authenticate: "nonce、`algorithm=AKAv1-MD5`、`ik`、`ck`"
+      - WWW-Authenticate: "algorithm ごとに 1 つ。`AKAv2-SHA-256` が先、`AKAv1-MD5` が後。どちらにも nonce、`ik`、`ck`"
   - id: r401-i-p
     msg: "401"
     from: icscf
@@ -171,7 +171,7 @@ events:
     fields:
       - 送り先: UE の 5062 番から P-CSCF の 5064 番へ
       - Security-Verify: P-CSCF の Security-Server を写したもの
-      - Authorization: RES をパスワードにした response
+      - Authorization: "`algorithm=AKAv2-SHA-256`。RES と IK と CK から作るパスワードの response"
   - id: pcscf-verify
     do: 取り決めを確かめる
     at: pcscf
@@ -195,7 +195,7 @@ events:
     do: RES を確かめる
     at: scscf
     fields:
-      - 計算: XRES をパスワードにした Digest
+      - 計算: UE が書いた algorithm の Digest。パスワードは XRES と IK と CK から作る
       - 一致したとき: SAR で登録を HSS に知らせる
   - id: sar
     msg: SAR
@@ -873,7 +873,9 @@ steps:
     show: [scscf-challenge]
     zoom: [icscf, hss, scscf]
     checkpoint: true
-    text: RAND と AUTN をそのまま base64 にして nonce にします。鍵は P-CSCF 向けの別のパラメータに入れます。
+    text: |
+      RAND と AUTN をそのまま base64 にして nonce にします。鍵は P-CSCF 向けの別のパラメータに入れます。
+      WWW-Authenticate は示す algorithm ごとに 1 つで、優先する順に並べます。先が AKAv2-SHA-256、後が後方互換のための AKAv1-MD5 です。
   - id: back
     title: 401 が P-CSCF まで戻る
     only: [r401-s-i, r401-i-p]
@@ -895,9 +897,9 @@ steps:
 | --- | --- | --- |
 | 698 | UE:5060 → P-CSCF:5060 | `Security-Client`、`Require: sec-agree`。空の nonce と response。 |
 | 709 | P-CSCF → I-CSCF | Security-Client を外して保存。`integrity-protected="no"`。 |
-| 724 | S-CSCF → HSS（MAR） | 方式 `Digest-AKAv1-MD5` の項目を 1 つ求める。 |
+| 724 | S-CSCF → HSS（MAR） | 方式 `Digest-AKAv1-MD5` の項目を 1 つ求める。この方式名は AKA のどちらの版でも同じ。 |
 | 726 | HSS → S-CSCF（MAA） | RAND と AUTN、XRES、CK、IK。 |
-| 727 | S-CSCF → I-CSCF（401） | nonce は RAND と AUTN の base64。`ik` と `ck`。 |
+| 727 | S-CSCF → I-CSCF（401） | WWW-Authenticate が 2 つ。`AKAv2-SHA-256` が先。nonce は RAND と AUTN の base64。`ik` と `ck`。 |
 | 737 | P-CSCF → UE（401） | `ik` と `ck` を外し、`Security-Server` を足す。 |
 
 > 手順書 [「シーケンス図」](../../../docs/guide/ja/volte.md#シーケンス図) の 1 から 6。TS 24.229 5.1.1.2.2、5.2.2.1、5.2.2.2、5.4.1.1、5.4.1.2.1A。RFC 3329 2.3.1。TS 33.203 Annex H、7.2。TS 29.229 6.3.9。TS 33.102 6.3.2。TS 29.228 6.3。RFC 3310 3.2。
@@ -945,7 +947,7 @@ steps:
     only: [reg2-i-s, scscf-verify]
     zoom: [icscf, hss, scscf]
     checkpoint: true
-    text: 取っておいた XRES で同じ Digest を計算し、届いた response と比べます。
+    text: 取っておいた XRES、IK、CK から、UE が書いた algorithm のパスワードを作り、同じ Digest を計算して届いた response と比べます。
   - id: sar
     title: HSS に登録を知らせる（SAR と SAA）
     show: [sar, saa]
@@ -980,7 +982,7 @@ steps:
 | 740 | UE | AUTN の MAC と SQN を確かめ、RES、CK、IK を計算する。 |
 | 740 | UE:5062 → P-CSCF:5064 | `Security-Verify` に Security-Server を写す。RES で計算した response。 |
 | 749 | P-CSCF → I-CSCF | 取り決めを確かめ、`integrity-protected="yes"`。 |
-| 760、764 | S-CSCF、SAR | XRES で Digest を計算して比べる。一致したので登録する。 |
+| 760、764 | S-CSCF、SAR | UE が書いた algorithm の Digest を計算して比べる。一致したので登録する。 |
 | 783 | P-CSCF:5064 → UE:5062 | 200 OK。アソシエーションが確立する。 |
 | 786 | P-CSCF → PCRF | AAR。信号の経路（Rx の節）。 |
 
@@ -995,7 +997,7 @@ steps:
 - AUTN の MAC が合えば、網が K を知っていることが分かります。網の側も認証されるわけで、SIP Digest には無かった向きです。UE は SQN が新しいことも確かめます。
 - Security-Verify で、P-CSCF は、途中の誰かが強い方式の申し出を消していないかを確かめます。200 OK と #786 の AAR は、どちらが先に P-CSCF を出ることもあります。
 - 再登録と登録の解除は、アソシエーションの上で、新しい challenge なしに行います（TS 24.229 5.1.1.4.2、5.1.1.6.2）。
-- フィルタ。`sip.Security-Client || sip.Security-Server || sip.Security-Verify`、`sip.WWW-Authenticate contains "AKAv1-MD5"`（`contains "ck="` にすると、S-CSCF からの 401 だけが残ります）、保護ポートは `udp.port == 5064 || tcp.port == 5064` です。
+- フィルタ。`sip.Security-Client || sip.Security-Server || sip.Security-Verify`、`sip.WWW-Authenticate contains "AKAv2-SHA-256" || sip.WWW-Authenticate contains "AKAv1-MD5"`（`contains "ck="` にすると、S-CSCF からの 401 だけが残ります）、保護ポートは `udp.port == 5064 || tcp.port == 5064` です。
 
 ---
 
@@ -1030,7 +1032,7 @@ func NewAuthenticationVector(secret Secret, rand RAND, sqn SQN, amf AMF) Authent
 
 - 標準では、401 のあとのメッセージをすべて IPsec の ESP で保護します（TS 33.203 7.1）。
 - このプロジェクトは既定では、アソシエーションを取り決めて保存し、保護ポートも使いますが、ESP はかけません。キャプチャを読めるようにするためです。保護しない IMS-AKA は標準に無い、独自の簡略化です。IPsec を使わない形は、TLS の上の AKAv2-SHA-256 だけです（TS 24.229 4.2B.1）。
-- `deploy/esp` の構成では、UE と P-CSCF のあいだに ESP をかけます。完全性は保護し、暗号化は null（`ealg=null`）なので、中身はやはり読めます（[「ESP をかけた sec-agree」](../../../docs/guide/ja/volte.md#esp-をかけた-sec-agree)）。
+- `deploy/esp` の構成では ESP をかけ、完全性を保護します。暗号化は null なので中身は読めます（[「ESP をかけた sec-agree」](../../../docs/guide/ja/volte.md#esp-をかけた-sec-agree)）。`deploy/esp/encryption.yaml` を重ねると AES-CBC で暗号化し、P-CSCF が書き出す鍵で読みます（[「秘匿までかけた ESP」](../../../docs/guide/ja/volte.md#秘匿までかけた-esp)）。
 
 | 既定の構成で本物の網と違う点 | 理由 |
 | --- | --- |
@@ -1038,7 +1040,7 @@ func NewAuthenticationVector(secret Secret, rand RAND, sqn SQN, amf AMF) Authent
 | TCP の要求は Via の sent-by で UE を見分ける | INVITE と、1300 バイトを超える REGISTER は TCP になる（RFC 3261 18.1.1） |
 
 - 既定の構成では、鍵を読み込まなくても SIP を Wireshark で読め、コンテナに NET_ADMIN も要りません。アソシエーションは IK と CK と一緒に P-CSCF の SA の表に入ります。
-- AKAv1-MD5 だけなのは、S-CSCF を確かめる独立した相手の SIPp がそれしか話さないからです。SIPp は RES と Digest を別の人が書いたコードで計算します。
+- 電話機は AKAv2-SHA-256 で答えます。この版のパスワードは RES と IK と CK を結び付けた値です（RFC 4169 2.1）。S-CSCF を確かめる独立した相手の SIPp は、最初の REGISTER で AKAv1-MD5 を指定するので、challenge もその 1 つになります。SIPp は RES と Digest を別の人が書いたコードで計算します。
 
 > 手順書 [「ESP を使わない sec-agree」](../../../docs/guide/ja/volte.md#esp-を使わない-sec-agree)
 
@@ -1513,7 +1515,7 @@ volte12 <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 
 - REGISTER の Contact には ICSI も +sip.instance も audio のタグもありません。INVITE とその応答の Contact には ICSI と audio があります。
 - CMR に従うには、符号化できる UE が要ります。この UE は、前もって符号化したフレームを送ります。
-- 既定の構成では、キャプチャを読めるようにするために ESP をかけません。`deploy/esp` の構成では、暗号化を null にした ESP をかけます。
+- 既定の構成では、キャプチャを読めるようにするために ESP をかけません。`deploy/esp` の構成では、暗号化を null にした ESP をかけます。`deploy/esp/encryption.yaml` を重ねると、AES-CBC で暗号化もします。
 - どのノードも IPv4 で、1 つの Docker のネットワークにいます。
 - 国の標準（日本では TTC）は網どうしの接続を扱うので、1 つの網の中の通話の形は変えません。セッションタイマーの長さのような違いは、接続する相手の網ごとのプロファイルに置きます。[網間接続の手順書](../../../docs/guide/ja/interconnect.md) で扱います。
 
@@ -1527,7 +1529,7 @@ volte12 <- EPC と PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 | --- | --- |
 | EPC スタブ | NAS の符号化、S1-AP、無線、GTP-U、Gx、attach の認証が無い。bearer は記録だけ。 |
 | PCRF | 許可するのは音声だけで、QCI 1。DRA を使わない。 |
-| P-CSCF、UE、S-CSCF | 既定では ESP をかけない（`deploy/esp` の構成ではかける）。AKAv1-MD5 だけ。 |
+| P-CSCF、UE、S-CSCF | 既定では ESP をかけない（`deploy/esp` の構成ではかける）。 |
 | P-CSCF | bearer を失うとすぐに解放する（通話ごとに音声の流れは 1 つだから）。BYE なしで終わったダイアログは `Store` に残る（UE ごとのダイアログの索引を持たず、複数の P-CSCF が同じ利用者を受け持てるようにするため）。 |
 | UE と AMR | CMR と mode-set に従わない。PDN 接続を失うと止まる。 |
 

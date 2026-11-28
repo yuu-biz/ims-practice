@@ -114,16 +114,16 @@ K と OPc は MILENAGE の試験データ 1 の値です。OPc は事業者の O
 ### シーケンス図
 
 ```text
-#698  volte10:5060 -> P-CSCF:5060  REGISTER   Security-Client, Require: sec-agree, Authorization with an empty response
+#698  volte10:5060 -> P-CSCF:5060  REGISTER   Security-Client, Require: sec-agree, Authorization with no algorithm and an empty response
 #709  P-CSCF -> I-CSCF             REGISTER   Authorization: ... integrity-protected="no"
 #712  I-CSCF -> HSS                UAR / UAA
 #721  I-CSCF -> S-CSCF             REGISTER
 #724  S-CSCF -> HSS                MAR        SIP-Auth-Data-Item: SIP-Authentication-Scheme Digest-AKAv1-MD5
 #726  HSS -> S-CSCF                MAA 2001   SIP-Authenticate (RAND, AUTN), SIP-Authorization (XRES), Confidentiality-Key, Integrity-Key
-#727  S-CSCF -> I-CSCF             401        WWW-Authenticate: nonce, algorithm=AKAv1-MD5, ik, ck
+#727  S-CSCF -> I-CSCF             401        two WWW-Authenticate: the nonce, algorithm=AKAv2-SHA-256 then AKAv1-MD5, ik, ck
 #734  I-CSCF -> P-CSCF             401
 #737  P-CSCF:5060 -> volte10:5060  401        ik and ck taken out, Security-Server added
-#740  volte10:5062 -> P-CSCF:5064  REGISTER   Security-Client, Security-Verify, Authorization with the response from RES
+#740  volte10:5062 -> P-CSCF:5064  REGISTER   Security-Client, Security-Verify, Authorization with algorithm=AKAv2-SHA-256 and its response
 #749  P-CSCF -> I-CSCF             REGISTER   Authorization: ... integrity-protected="yes"
 #752  I-CSCF -> HSS                UAR / UAA
 #760  I-CSCF -> S-CSCF             REGISTER
@@ -135,16 +135,16 @@ K と OPc は MILENAGE の試験データ 1 の値です。OPc は事業者の O
 #793  PCRF -> P-CSCF               AAA 2001
 ```
 
-1. **保護されていない REGISTER（#698）。** UE は最初の REGISTER を、自分のポート 5060 から P-CSCF のポート 5060 に送ります。そこへ送る REGISTER はこれだけです（TS 24.229 5.1.1.2.2）。`Require: sec-agree` と `Proxy-Require: sec-agree` を付け、自分のセキュリティアソシエーションを `Security-Client: ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=52975;port-s=5062` で提示します（RFC 3329 2.3.1、TS 33.203 Annex H）。Authorization の username には私的な識別子を入れ、`algorithm=AKAv1-MD5` と、空の nonce と response も入れます。
+1. **保護されていない REGISTER（#698）。** UE は最初の REGISTER を、自分のポート 5060 から P-CSCF のポート 5060 に送ります。そこへ送る REGISTER はこれだけです（TS 24.229 5.1.1.2.2）。`Require: sec-agree` と `Proxy-Require: sec-agree` を付け、自分のセキュリティアソシエーションを `Security-Client: ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=52975;port-s=5062` で提示します（RFC 3329 2.3.1、TS 33.203 Annex H）。Authorization の username には私的な識別子を入れ、nonce と response は空にします。algorithm は入れず、challenge が示すものの中から UE が選びます。
 2. **P-CSCF が Security-Client を預かる（#709）。** P-CSCF は sec-agree を伴う Security-Client を見て、IMS-AKA を選びます（TS 24.229 5.2.2.1）。Security-Client を外して保存し、Authorization に `integrity-protected="no"` を入れます。この REGISTER はまだ何にも保護されていないからです（5.2.2.2）。
-3. **S-CSCF がベクトルを求める（#724）。** `integrity-protected="no"` は、IMS-AKA の最初の登録という意味です（5.4.1.1）。MAR は方式 `Digest-AKAv1-MD5` の項目を 1 つ求めます（TS 29.229 6.3.9）。
+3. **S-CSCF がベクトルを求める（#724）。** `integrity-protected="no"` は、IMS-AKA の最初の登録という意味です（5.4.1.1）。MAR は方式 `Digest-AKAv1-MD5` の項目を 1 つ求めます（TS 29.229 6.3.9）。この方式名は Digest AKA のどちらの版も指します。HSS が作るベクトルはどちらでも同じで、版で変わるのは、そのベクトルからパスワードを作る手順だけです（6.3.9 の NOTE 1）。
 4. **HSS がベクトルを作る（#726）。** HSS は SQN_HE を進め、RAND を作り、MILENAGE で XRES、CK、IK、AUTN を計算します（TS 33.102 6.3.2、TS 35.206）。SIP-Authenticate は RAND と AUTN を並べた 32 オクテット、SIP-Authorization は XRES、Confidentiality-Key と Integrity-Key は CK と IK です（TS 29.228 6.3）。
-5. **401（#727）。** S-CSCF は RAND と AUTN を base64 にして nonce に入れ（RFC 3310 3.2）、IK と CK を P-CSCF 向けに `ik` と `ck` のパラメータに入れます（TS 24.229 5.4.1.2.1A）。答えを確かめるために、RAND と XRES を取っておきます。
+5. **401（#727）。** S-CSCF は RAND と AUTN を base64 にして nonce に入れ（RFC 3310 3.2）、IK と CK を P-CSCF 向けに `ik` と `ck` のパラメータに入れます（TS 24.229 5.4.1.2.1A）。WWW-Authenticate は示す algorithm ごとに 1 つ入れ、優先する順に並べます。先に `algorithm=AKAv2-SHA-256`、次に後方互換のために残されている `algorithm=AKAv1-MD5` です（TS 33.203 6.1.1）。どちらも 1 つの認証ベクトルを指すので、nonce は同じです。Authorization でどちらかの algorithm を指定してきた REGISTER には、その 1 つだけを返します。AKAv1-MD5 しか話さない独立したユーザーエージェントは、この形で登録します（5.4.1.2.1A の項目 1 c）。答えを確かめるために、RAND、XRES、IK、CK を取っておきます。
 6. **P-CSCF が一時的なアソシエーションを作る（#737）。** P-CSCF は 401 から `ik` と `ck` を外します。鍵が UE まで運ばれることはありません。そのうえで自分のアソシエーションを `Security-Server: ipsec-3gpp;q=0.1;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=50711;port-s=5064` で提示します（5.2.2.2、TS 33.203 7.2）。
 7. **UE が網を確かめる（#740）。** USIM は AUTN の MAC を計算し、AUTN の中の MAC と比べます。一致すれば、網が K を知っていると分かります。SQN が新しいことも確かめ（TS 33.102 6.3.3、C.2）、RES、CK、IK を計算します。
-8. **アソシエーションを通る REGISTER（#740）。** UE は保護サーバーポート 5062 から、P-CSCF の保護サーバーポート 5064 に答えを送ります（TS 33.203 7.1）。Security-Client をもう一度入れ、Security-Server を `Security-Verify` に写します。途中で誰かがもっと強い提案を消していないかを、P-CSCF が確かめられるようにするためです（RFC 3329）。Digest の response は RES をパスワードにして計算します（RFC 3310 3.3）。
+8. **アソシエーションを通る REGISTER（#740）。** UE は保護サーバーポート 5062 から、P-CSCF の保護サーバーポート 5064 に答えを送ります（TS 33.203 7.1）。Security-Client をもう一度入れ、Security-Server を `Security-Verify` に写します。途中で誰かがもっと強い提案を消していないかを、P-CSCF が確かめられるようにするためです（RFC 3329）。UE は、自分が対応する algorithm のうち 401 で最初に並んでいる challenge を選び、その algorithm を Authorization に書きます（TS 24.229 5.1.1.5.1）。ここでは `AKAv2-SHA-256` です。AKAv2-SHA-256 のパスワードは、`RES || IK || CK` を鍵にして文字列 `http-digest-akav2-password` の HMAC-SHA-256 を取り、base64 にした値です。Digest は SHA-256 なので、response は 16 進で 64 桁になり、UE が RES だけでなくセッション鍵も持っていることを示します（RFC 4169 2.1）。`AKAv1-MD5` では、パスワードは RES そのもので、Digest は MD5 です（RFC 3310 3.3）。
 9. **P-CSCF が取り決めを確かめる（#749）。** REGISTER は UE のアドレスとポートから保護ポートに届き、Security-Verify は P-CSCF が送ったものと一致します。1300 バイトを超える REGISTER は TCP で別のポートから届きます。そのときは、P-CSCF は UE のポートを Via から取ります。P-CSCF は Authorization に `integrity-protected="yes"` を入れます。
-10. **S-CSCF が RES を確かめる（#760、#764）。** S-CSCF は XRES で Digest を計算して比べます（TS 24.229 5.4.1.2.2）。一致したので、SAR を送って UE を登録します。
+10. **S-CSCF が RES を確かめる（#760、#764）。** S-CSCF は、UE が書いた algorithm のパスワードを認証ベクトルから作り、その Digest を計算して比べます。401 で示していない algorithm の response は、403 で断ります（TS 24.229 5.4.1.2.2、5.4.1.2.3A）。一致したので、SAR を送って UE を登録します。
 11. **200 OK（#783）。** 200 はアソシエーションを通って戻り、アソシエーションはこれで確立します。寿命は登録に合わせて決まります（5.2.2.2）。これ以降、UE はすべての要求をポート 5064 に送り、Route の P-CSCF の URI にもそのポートを書きます。P-CSCF は UE の 5062 番に送ります。P-CSCF が足した Path も保護ポートを指します。
 12. **信号の経路（#786）。** UE が登録されると、P-CSCF は、UE が信号用の bearer を失ったら知らせるように PCRF に頼みます（TS 29.214 A.4）。TS 29.213 B.1 の流れのとおり、頼むのは最初の登録が成功したあとなので、認証に失敗した UE のために Rx のセッションを開くことはありません。200 OK とこの AAR は、どちらが先に P-CSCF を出るかが決まっていません。
 
@@ -218,7 +218,7 @@ ESP が無いので、本物の網と 2 つの点が違います。
 
 ### ESP をかけた sec-agree
 
-同じ網で、信号を本当に保護することもできます。完全性の保護は両端が取り決めたアルゴリズムで行い、暗号化は null にします。キャプチャで中身を読めるのは、この暗号化のおかげです。ESP の完全性の保護は、TS 33.203 6.3 がどの場合にも求めています。一方、秘匿は P-CSCF の方針が求めるときにだけかけます（6.2）。`ealg=null` も、sec-agree が運ぶ値の 1 つです（Annex H）。つまり、暗号化を null にした網は実際の事業者も運用できる形で、その SIP はそのまま読めます。
+同じ網で、信号を本当に保護することもできます。完全性の保護は両端が取り決めたアルゴリズムで行い、暗号化は null にします。暗号化するかどうかを決めるのは P-CSCF です。ESP の完全性の保護は、TS 33.203 6.3 がどの場合にも求めています。一方、秘匿は P-CSCF の運用方針が求めるときにだけかけます（5.1.3 の項目 2、6.2）。`ealg=null` も、sec-agree が運ぶ値の 1 つです（Annex H）。つまり、暗号化を null にした網は実際の事業者も運用できる形で、その SIP はそのまま読めます。下の[秘匿までかけた ESP](#秘匿までかけた-esp)では、秘匿までかけます。
 
 ESP を有効にした構成で起動します。
 
@@ -227,6 +227,8 @@ docker compose -f compose.yaml -f deploy/esp/esp.yaml --profile volte up -d --bu
 ```
 
 この構成は、P-CSCF と 2 台の VoLTE の UE に NET_ADMIN と保護クライアントポートを与えます。P-CSCF では `sec_agree.esp.protected_client_port`、UE では `-port-c` です。どちらの端も、このポートを開いて自分の要求をそこから送り、認証を伴う登録のたびに 4 つのセキュリティアソシエーションをカーネルに入れます。カーネルは両端の保護ポートの間のパケットを保護し、そこに ESP 無しで届いたパケットを捨てます。
+
+ESP をかける UE は、自分が対応する暗号化アルゴリズムを提示します。TS 33.203 5.1.3 の項目 1 が、どの UE にもそう求めています。`Security-Client` には `ealg=aes-cbc` と `ealg=null` が並び、どちらにも同じ SPI と保護ポートが入ります。P-CSCF は自分の方針が許すものを提示し、両端は P-CSCF の一覧のうち UE も提示している最初の組み合わせを採ります（7.2）。この構成は秘匿をかけないので、401 の `Security-Server` は `ealg=null` だけを `q=0.1` で示します。UE が何を提示していても、両端が作るのは暗号化を null にしたアソシエーションです。
 
 コンテナは自分のカーネルを持ちません。エンジンが動くマシンのカーネルを使うので、セキュリティアソシエーションもそのカーネルに入り、アソシエーションを保持する Linux カーネルの XFRM と、その ESP への対応が要ります。たいていの Linux のカーネルには、どちらもあります。Windows でも、Docker Desktop が WSL2 をバックエンドにすると、エンジンは専用の Linux カーネルの上で動くので、やはりあります。ノードは NET_ADMIN で必要なものを読み込むので、手で用意するものはありません。カーネルにこれらが無い環境では、ノードはアソシエーションを入れられません。P-CSCF は `ip xfrm` の誤りを添えて `the store failed` をログに書き、REGISTER に 500 を返します。保護のない信号に切り替わるのではなく、登録そのものが失敗します。
 
@@ -270,9 +272,69 @@ tshark -r captures/ims-*.pcap -o esp.enable_encryption_decode:TRUE \
 
 ESP をかけても、本物の網と 3 つの点が違います。保護クライアントポートは、どちらの端でも設定に書いた 1 つのポートで、UE が変わっても認証をやり直しても同じです。TS 33.203 7.4.0 は、認証を伴う再登録のたびに変えることを求めています。2 つ目は、P-CSCF がコアへの転送を、要求が届いたトランスポートからそのまま行うことです。そのためコアには保護サーバーポートからの要求が届き、そのパケットを守るアソシエーションはありません。P-CSCF 自身が UE に送る要求は保護クライアントポートから、それ以外は待ち受けているポートから出ます。3 つ目は、セキュリティアソシエーションが、それを作った 1 台の P-CSCF のカーネルにしか無いことです。SA の表は複数の P-CSCF で共有できますが、ある 1 台を通して登録した UE が別の 1 台に送ると、アソシエーションが無いものとして扱われ、登録をやり直します。
 
+### 秘匿までかけた ESP
+
+信号を秘匿するかどうかを決めるのは P-CSCF です（TS 33.203 5.1.3 の項目 2）。ファイルを 1 つ重ねると、秘匿までかかります。
+
+```sh
+docker compose -f compose.yaml -f deploy/esp/esp.yaml \
+  -f deploy/esp/encryption.yaml --profile volte up -d --build
+```
+
+上の構成から変わるのは 2 つで、どちらも P-CSCF です。`sec_agree.esp` に `confidentiality: true` が増えるので、P-CSCF は `ealg=aes-cbc` を `q=0.2` で、`ealg=null` を `q=0.1` で提示し、aes-cbc も提示した UE には AES-CBC を選びます（7.2）。もう 1 つは `wireshark_sa_file: /captures/esp_sa` で、この節の残りで扱う鍵のファイルです。そのために P-CSCF はキャプチャの置き場も見られるようにします。UE は何も変わりません。保護クライアントポートを持つ UE は、自分が対応する暗号化アルゴリズムをすでに提示しています。
+
+鍵の長さが 128 ビットの AES-CBC は RFC 3602 の暗号化アルゴリズムで、その鍵は CK そのものです。CK がすでに 128 ビットなので、Annex I は鍵を広げません。完全性のアルゴリズムと IK_ESP は変わらないので、1 つのセキュリティアソシエーションが鍵を 2 つ持つようになります。
+
+```sh
+docker compose exec pcscf ip xfrm state
+```
+
+```sh
+ip xfrm state add src 172.28.0.120 dst 172.28.0.40 proto esp spi 0x3b9b0ea3 \
+  reqid 1000017571 mode transport replay-window 32 \
+  auth-trunc 'hmac(sha256)' 0x<IK_ESP> 128 enc 'cbc(aes)' 0x<CK_ESP>
+```
+
+Annex H はほかに `aes-gcm` と `aes-gcm-us` の 2 つの暗号化アルゴリズムを挙げています。どちらも RFC 4106 の AES-GCM で、完全性チェック値は 16 オクテット、違うのは暗号の salt の作り方です。完全性の保護も自分で行うので、`alg=null` と組み合わせ、完全性のアルゴリズムは別に持ちません。Annex H と Annex I は `aes-cbc` と `aes-gcm` を推奨していないと書いているので、ここで標準が推奨する暗号化アルゴリズムは、salt を一意にする AES-GCM だけです。
+
+同じ標準が指している決め方は、別のことを言っています。TS 33.203 7.1 はどの暗号化アルゴリズムを使うかを TS 33.210 5.3.3 に委ねます。5.3.3 は RFC 8221 の適合条件に従うよう求めており、RFC 8221 では鍵の長さが 128 ビットの AES-CBC が、実装しなければならないアルゴリズムの 1 つです。RFC 8221 の 3 章は、手で鍵を決める使い方では、AES-GCM を含むカウンタモードのアルゴリズムを使ってはならないとしています。鍵交換のプロトコルが無いので、カウンタや nonce が 2 回使われるのを止めるものも無いからです。そのうえで、手で鍵を決める使い方に向く、実装しなければならない暗号化アルゴリズムは AES-CBC だけだと書いています。IMS-AKA のセキュリティアソシエーションは、認証の鍵から手で決めるものです（Annex H）。`aes-gcm-us` の一意な salt は、3GPP がこの危険に答えた形で、Annex I はアソシエーションごとに別の salt を作ります。
+
+このプロジェクトが実装したのは AES-CBC です。実装しなければならないアルゴリズムであり、手で鍵を決める使い方に RFC 8221 が残したものであり、上の構成の完全性のアルゴリズムをそのまま横に残せて、鍵の導出も要りません。sec-agree はどちらの値も運ぶので（Annex H）、AES-CBC の網も事業者は運用できます。
+
+キャプチャでは、登録した VoLTE の UE と P-CSCF の間に読めるものが無くなります。上の構成の設定では、もう SIP は見つかりません。完全性チェック値の長さは合っているのに、その下にあるのが暗号文だからです。平文のまま残るのは、最初の REGISTER とその 401、そしてほかのノードどうしのやり取りだけです。両端が何に決めたかは、その REGISTER と 401 の sec-agree に出ます。`Security-Client` と `Security-Server` の `ealg=aes-cbc` です。
+
+鍵はキャプチャの中にありません。`ik` と `ck` を運ぶ 401 は P-CSCF より先には進まず、P-CSCF が応答から外してから UE に渡します。そもそも IK_ESP は、Annex I が鍵導出関数でそこから作る値です。そこで P-CSCF が鍵を書き出します。`wireshark_sa_file` を設定すると、認証ごとに 4 つのセキュリティアソシエーションをそのファイルに書き足します。形式は Wireshark の ESP SAs の表の行で、キャプチャを読む人が鍵を入れるのはこの表です。
+
+```sh
+cat captures/esp_sa
+```
+
+```text
+"IPv4","172.28.0.121","172.28.0.40","0x4ec1f1d4","AES-CBC [RFC3602]","0x<CK_ESP>","HMAC-SHA-256-128 [RFC4868]","0x<IK_ESP>"
+"IPv4","172.28.0.40","172.28.0.121","0x94c0a72e","AES-CBC [RFC3602]","0x<CK_ESP>","HMAC-SHA-256-128 [RFC4868]","0x<IK_ESP>"
+```
+
+1 行が 1 つのアソシエーションです。2 つのアドレス、SPI、暗号化アルゴリズムと CK_ESP、完全性のアルゴリズムと IK_ESP が並びます。1 回の認証で作る 4 つのアソシエーションは、どちらの鍵も同じで（TS 33.203 6.2、6.3）、アドレスと SPI だけが違います。このファイルからは何も消えません。キャプチャはアソシエーションより長く残るので、記録したすべての登録の行が残っていなければならないためです。
+
+ファイルにある鍵はこの構成の試験用の加入者のものです。学習者がキャプチャを読めるように、平文で書いてあります。実際の加入者の網はこのようなファイルを書きません。だから P-CSCF が書くのは、構成がファイルを指定したときだけです。置き場をキャプチャと同じ場所にしたのも同じ理由で、この鍵はキャプチャと同じだけ公開されるものです。
+
+**Edit > Preferences > Protocols > ESP** で **Attempt to detect/decode encrypted ESP payloads** に印を付け、**ESP SAs** を開いて、ファイルの行をアソシエーションごとに 1 行ずつ足します。列はファイルの項目と同じ順です。コマンドラインでは 1 行が 1 つの `-o` になるので、ファイルの行の数だけ `-o` を並べると、2 台の UE の SIP が、それを運んでいた ESP から復号されて戻ってきます。
+
+```sh
+esp_sa=()
+while IFS= read -r row; do esp_sa+=(-o "uat:esp_sa:$row"); done <captures/esp_sa
+tshark -r captures/ims-*.pcap -o esp.enable_encryption_decode:TRUE "${esp_sa[@]}" \
+  -d tcp.port==5062,sip -d tcp.port==5064,sip \
+  -Y 'esp && sip'
+```
+
+暗号化しないときと同じく、2 つの `-d` は保護ポートを TCP の上の SIP として指定します。
+
+Wireshark は 1 つのパケットを、アドレスと SPI が合う最初の行で読みます。2 台の UE の行が互いの邪魔をすることはなく、前の登録の行は単に合わないだけです。アドレスや SPI を `*` にした行は、どのパケットにも合います。UE が 1 台なら動きますが、2 台目には違う鍵を渡してしまいます。
+
 ### SIPp
 
-SIPp は `images/softphone/sipp/register-aka.xml` のシナリオで、IMS-AKA で登録します。SIPp はすべてを 1 つのポート 5060 から送るので、そのポートが保護サーバーポートにもなります。SIPp 3.7 は K と OP を文字列のバイトとして受け取るので、加入者 11 の鍵は印字できる文字列の `ims-practice-K01` と `ims-practice-OP1` にしました。hss.yaml にはその 16 進と、その OP から MILENAGE で作った OPc を書いています。SIPp は RES と Digest を自分で計算するので、S-CSCF の計算をほかの人が書いたコードと照らし合わせられます。
+SIPp は `images/softphone/sipp/register-aka.xml` のシナリオで、IMS-AKA で登録します。SIPp はすべてを 1 つのポート 5060 から送るので、そのポートが保護サーバーポートにもなります。SIPp 3.7 は K と OP を文字列のバイトとして受け取るので、加入者 11 の鍵は印字できる文字列の `ims-practice-K01` と `ims-practice-OP1` にしました。hss.yaml にはその 16 進と、その OP から MILENAGE で作った OPc を書いています。SIPp は RES と Digest を自分で計算するので、S-CSCF の計算をほかの人が書いたコードと照らし合わせられます。SIPp が話すのは AKAv1-MD5 だけです。最初の REGISTER でその algorithm を指定するので、challenge もその 1 つになります。volte10 と volte12 は algorithm を指定せず、AKAv2-SHA-256 で答えます。
 
 ## ISIM の無い端末の識別子
 
@@ -572,6 +634,8 @@ UE -> peer  ACK
 
 `scripts/e2e-esp.sh` は、UE と P-CSCF のあいだの信号に IPsec の ESP をかけて登録と通話を行い、キャプチャに加えてカーネルのセキュリティアソシエーションも確かめます。その構成を手で起動する方法と、取れたキャプチャの読み方は、[ESP をかけた sec-agree](#esp-をかけた-sec-agree)にあります。
 
+`scripts/e2e-esp-encryption.sh` は、同じ流れを P-CSCF の秘匿の方針を足した構成で流します。アソシエーションが AES-CBC を運んでいること、暗号化が null のときの設定ではキャプチャに SIP が見つからないこと、P-CSCF が書いた鍵で REGISTER と通話を復号できることを確かめます。その構成の起動とキャプチャの読み方は、[秘匿までかけた ESP](#秘匿までかけた-esp)にあります。
+
 ### ラボで
 
 ```sh
@@ -639,7 +703,7 @@ docker compose run --rm --entrypoint sipp softphone -sf /etc/sipp/register-aka.x
 | フィルタ | 見つかるもの |
 | --- | --- |
 | `sip.Security-Client \|\| sip.Security-Server \|\| sip.Security-Verify` | sec-agree のメッセージ。 |
-| `sip.WWW-Authenticate contains "AKAv1-MD5"` | IMS-AKA の challenge。`contains "ck="` で、S-CSCF が P-CSCF に送るものが見つかる。 |
+| `sip.WWW-Authenticate contains "AKAv2-SHA-256" \|\| sip.WWW-Authenticate contains "AKAv1-MD5"` | IMS-AKA の challenge。algorithm を指定しなかった UE への 401 には、どちらも 1 つずつ入っている。`contains "ck="` で、S-CSCF が P-CSCF に送るものが見つかる。 |
 | `udp.port == 5064 \|\| tcp.port == 5064` | P-CSCF の保護サーバーポートを通るもの。 |
 | `diameter.3GPP-SIP-Authentication-Scheme == "Digest-AKAv1-MD5"` | IMS-AKA の MAR と MAA。 |
 | `diameter.cmd.code in {265, 258, 274, 275}` | Rx。AAR と AAA、RAR と RAA、ASR と ASA、STR と STA。 |
@@ -703,11 +767,10 @@ docker compose run --rm --entrypoint sipp softphone -sf /etc/sipp/register-aka.x
 | P-CSCF、TS 24.229 5.2.8.1.2 | 確立した通話が資源を失ったとき、bearer を失ったことに served user の UE が自分で気づくのを待たない。この節は相手側にだけ BYE を送るが、P-CSCF は相手側の名前で UE にも BYE を送る。 | 網が音声の bearer だけを解放したあとも、UE には信号の経路が残っているため。bearer を失ったことに対処しない UE は、BYE が来なければ、網が終えた通話にとどまってしまう。 |
 | P-CSCF、TS 24.229 5.2.8.1.4、5.2.8.3 | P-CSCF を通る BYE なしに終わったダイアログは `Store` に残る。応答済みのものは `ims_answered_sessions` にも残る。 | 利用者ごとのダイアログの索引か、P-CSCF のセッションタイマーが要る。 |
 | P-CSCF、RFC 3264、RFC 3262 | SDP の無い INVITE と re-INVITE には、中継のコンテキストも許可も無い。 | UE シミュレータはいつも INVITE で offer する。 |
-| P-CSCF と UE、TS 33.203 7.1、7.2 | 既定では IPsec の ESP をかけない。アソシエーションは取り決めて保存し、保護サーバーポートを使い、クライアントポートは使わない。`deploy/esp` の構成では ESP をかけ、このポートも開く。アソシエーションは、それを作った 1 台の P-CSCF のカーネルにあり、共有した Store の SA の表には付いてこない。 | どちらでもキャプチャを読めるようにするため。保護しない IMS-AKA は標準に無い。カーネルが持てるのは、その 1 台のアソシエーションだけ。 |
+| P-CSCF と UE、TS 33.203 5.1.3、7.1、7.2 | 既定では IPsec の ESP をかけない。アソシエーションは取り決めて保存し、保護サーバーポートを使い、クライアントポートは使わない。UE は暗号化アルゴリズムを提示しない。5.1.3 の項目 1 は、どの UE にも必ず提示するよう求めている。`deploy/esp` の構成では ESP をかけ、このポートも開く。アソシエーションは、それを作った 1 台の P-CSCF のカーネルにあり、共有した Store の SA の表には付いてこない。 | どちらでもキャプチャを読めるようにするため。保護しない IMS-AKA は標準に無い。ESP をかけない UE は、何を提示しても暗号化しない。カーネルが持てるのは、その 1 台のアソシエーションだけ。 |
 | P-CSCF と UE、TS 33.203 7.4.0 | ESP をかけるとき、保護クライアントポートはどちらの端も設定に書いた 1 つのポートで、UE が変わっても認証をやり直しても同じ。標準は、認証を伴う再登録のたびに変えることを求めている。 | アソシエーションの組ごとに別のポートにすると、組ごとにソケットが要るため。UE が違えば、アソシエーションはアドレスで区別できる。 |
 | UE、TS 33.203 7.4.1a | ESP をかけるとき、古いアソシエーションの上で始めた再登録が失敗しても、UE は古いアソシエーションを残さない。7.4.1a は残すよう求めている。古いアソシエーションは、すでに無くなっている。新しいアソシエーションは同じポートに結び付くので、UE がチャレンジに答えたときに、カーネルの中で古いものと入れ替わっている。UE も古いものを忘れ、保護しないで登録し直す。 | 上の行のとおり、保護クライアントポートは UE の設定に書いた 1 つのポートだから。7.4.1a は、アソシエーションがもう使えないとみなした UE に、保護しないで登録し直すよう求めている。 |
 | P-CSCF、TS 24.229 5.2.2.3 | UE は要求が届いたアドレスとポートで見分ける。TCP の要求と、ESP をかけたときのすべての要求は、Via の sent-by で見分ける。 | ESP が無いと、TCP の接続はそのときどきのポートから来て、その sent-by を認証するものも無い。ESP をかけると、すべての要求が保護クライアントポートから来る。このポートはどの記録の鍵でもなく、送り手はセキュリティアソシエーションで認証される。 |
-| S-CSCF、TS 33.203 6.1.1、TS 24.229 5.4.1.2.1A | AKAv1-MD5 だけで、AKAv2-SHA-256 は無い。 | SIPp が AKAv1-MD5 しか話さない。 |
 | AKA、TS 33.102 C.2.2、C.3.4 | 受け入れる SQN の古さの限度 L を使わず、IND を領域ごとに分けない。 | Profile 2 は L の値を示していない。IMS は 1 つの領域で、MAR ごとにベクトルは 1 つ。 |
 | UE、TS 24.301、TS 36.331 | UE のパケットは Docker のネットワークにそのまま出る。 | 無線もトンネルも無い。 |
 | UE、TS 24.229 7.2A.4.3 | アクセスの種類はいつも `3GPP-E-UTRAN-FDD`。 | スタブはセルの複信方式を伝えない。 |

@@ -26,34 +26,66 @@ func newAKAHarness(t *testing.T) *harness {
 		hss.Subscription{PrivateIdentity: impi, PublicIdentities: []string{impu}, AKA: &hss.AKACredentials{Secret: testSet1}})
 }
 
-// akaInitial is the first REGISTER of TS 24.229 5.1.1.2.2 as the P-CSCF
-// forwards it: empty nonce and response, integrity-protected "no"
-// (5.2.2.2 item 1).
+// akaInitial is the first REGISTER of TS 24.229 5.1.1.2.2 item a as the
+// P-CSCF forwards it: empty nonce and response, no algorithm, and
+// integrity-protected "no" (5.2.2.2 item 1).
 var akaInitial = `Digest username="` + impi + `", realm="` + domain + `", nonce="", uri="sip:` + domain +
-	`", response="", algorithm=AKAv1-MD5, integrity-protected="no"`
+	`", response="", integrity-protected="no"`
 
-// akaChallenge reads the 401 of 5.4.1.2.1A.
-func akaChallenge(t *testing.T, r *sip.Message) sip.Challenge {
+// akaInitialNaming is akaInitial with an algorithm named, as a UE that
+// speaks one AKA version alone sends it (5.4.1.2.1A item 1 c).
+func akaInitialNaming(algorithm string) string {
+	return `Digest username="` + impi + `", realm="` + domain + `", nonce="", uri="sip:` + domain +
+		`", response="", algorithm=` + algorithm + `, integrity-protected="no"`
+}
+
+// akaChallenges reads the challenges of the 401 of 5.4.1.2.1A, in the
+// order the S-CSCF offers them, each with IK and CK for the P-CSCF.
+func akaChallenges(t *testing.T, r *sip.Message) []sip.Challenge {
 	t.Helper()
 	if r.StatusCode != 401 {
 		t.Fatalf("got %d, want 401", r.StatusCode)
 	}
-	ch, err := sip.ParseChallenge(r.Get("WWW-Authenticate"))
-	if err != nil {
-		t.Fatal(err)
+	var challenges []sip.Challenge
+	for _, v := range r.GetAll("WWW-Authenticate") {
+		ch, err := sip.ParseChallenge(v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ch.Realm != "scscf."+domain || len(ch.QOP) != 1 || ch.QOP[0] != "auth" {
+			t.Fatalf("WWW-Authenticate = %s", v)
+		}
+		challenges = append(challenges, ch)
 	}
-	if ch.Algorithm != sip.AlgorithmAKAv1MD5 || ch.Realm != "scscf."+domain || len(ch.QOP) != 1 || ch.QOP[0] != "auth" {
-		t.Fatalf("WWW-Authenticate = %s", r.Get("WWW-Authenticate"))
+	if len(challenges) == 0 {
+		t.Fatal("the 401 carries no WWW-Authenticate")
 	}
-	return ch
+	return challenges
+}
+
+// akaChallenge is the challenge of the 401 that a UE answers: the
+// topmost one it supports (TS 24.229 5.1.1.5.1).
+func akaChallenge(t *testing.T, r *sip.Message) sip.Challenge {
+	t.Helper()
+	return akaChallenges(t, r)[0]
+}
+
+// akaPassword is the Digest password of the AKA version that ch names:
+// RES for AKAv1-MD5 (RFC 3310 3.3), and RES with IK and CK for
+// AKAv2-SHA-256 (RFC 4169 2.1).
+func akaPassword(ch sip.Challenge, res aka.Response) string {
+	if ch.Algorithm == sip.AlgorithmAKAv2SHA256 {
+		return aka.AKAv2DigestPassword(res.RES, res.IK, res.CK)
+	}
+	return aka.DigestPassword(res.RES)
 }
 
 // akaAnswer is the Authorization of the REGISTER that answers ch,
 // computed with password, as the P-CSCF forwards it with integrity.
 func akaAnswer(ch sip.Challenge, password string, integrity sip.IntegrityProtected) sip.Credentials {
 	c := sip.Credentials{Username: impi, Realm: ch.Realm, Nonce: ch.Nonce, URI: "sip:" + domain,
-		Algorithm: sip.AlgorithmAKAv1MD5, CNonce: "0a4f113b", QOP: "auth", NC: "00000001"}
-	c.Response, _ = sip.DigestResponse(sip.HA1(impi, ch.Realm, password), sip.REGISTER, c)
+		Algorithm: ch.Algorithm, CNonce: "0a4f113b", QOP: "auth", NC: "00000001"}
+	c.Response, _ = sip.DigestResponse(sip.HA1(c.Algorithm, impi, ch.Realm, password), sip.REGISTER, c)
 	c.SetIntegrityProtected(integrity)
 	return c
 }
@@ -86,13 +118,13 @@ func TestRegistrationWithIMSAKA(t *testing.T) {
 		t.Errorf("ik %s, ck %s; want the IK and CK the USIM derives", ik, ck)
 	}
 
-	creds := akaAnswer(ch, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes)
+	creds := akaAnswer(ch, akaPassword(ch, res), sip.IntegrityProtectedYes)
 	r := h.register(callID, 2, 600000, creds.String())
 	if r.StatusCode != 200 {
 		t.Fatalf("answer got %d, want 200", r.StatusCode)
 	}
 	// RFC 3310 3.5: rspauth with XRES as the password.
-	rspauth, _ := sip.DigestResponse(sip.HA1(impi, ch.Realm, aka.DigestPassword(res.RES)), "", creds)
+	rspauth, _ := sip.DigestResponse(sip.HA1(creds.Algorithm, impi, ch.Realm, akaPassword(ch, res)), "", creds)
 	if got := r.Get("Authentication-Info"); !strings.Contains(got, `rspauth="`+rspauth+`"`) {
 		t.Errorf("Authentication-Info = %q, want rspauth %s", got, rspauth)
 	}
@@ -111,35 +143,127 @@ func TestRegistrationWithIMSAKA(t *testing.T) {
 	}
 }
 
+// TS 33.203 6.1.1 and TS 24.229 5.4.1.2.1A item 1 c: the 401 to a
+// REGISTER that names no algorithm offers both algorithms of IMS AKA,
+// AKAv2-SHA-256 first, with IK and CK in each; the 401 to one that names
+// an algorithm of IMS AKA offers that one alone, which is what an
+// independent peer that speaks AKAv1-MD5 only receives.
+func TestIMSAKAOfferedAlgorithms(t *testing.T) {
+	for name, tc := range map[string]struct {
+		initial string
+		want    []string
+	}{
+		"no algorithm named": {akaInitial, []string{sip.AlgorithmAKAv2SHA256, sip.AlgorithmAKAv1MD5}},
+		"AKAv1-MD5 named":    {akaInitialNaming(sip.AlgorithmAKAv1MD5), []string{sip.AlgorithmAKAv1MD5}},
+		"AKAv2-SHA-256 named": {akaInitialNaming(sip.AlgorithmAKAv2SHA256),
+			[]string{sip.AlgorithmAKAv2SHA256}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newAKAHarness(t)
+			challenges := akaChallenges(t, h.register(sip.NewCallID(), 1, 600000, tc.initial))
+			var got []string
+			for _, ch := range challenges {
+				got = append(got, ch.Algorithm)
+				// 5.4.1.2.1A item 1 c: each challenge carries the keys, so
+				// the P-CSCF finds them whichever one the UE answers.
+				if _, _, ok := ch.Keys(); !ok {
+					t.Errorf("the %s challenge has no ik and ck", ch.Algorithm)
+				}
+				if ch.Nonce != challenges[0].Nonce {
+					t.Errorf("the %s challenge has another nonce: one vector gives one nonce", ch.Algorithm)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("the 401 offers %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TS 33.203 6.1.1 with each version of Digest AKA: the S-CSCF accepts
+// the response of the algorithm the UE answered with, and the rspauth
+// of the 200 is computed with the same password (RFC 3310 3.5, RFC 4169
+// 2.1).
+func TestIMSAKAAcceptsTheAlgorithmTheUEChose(t *testing.T) {
+	for _, algorithm := range []string{sip.AlgorithmAKAv2SHA256, sip.AlgorithmAKAv1MD5} {
+		t.Run(algorithm, func(t *testing.T) {
+			h := newAKAHarness(t)
+			callID := sip.NewCallID()
+			// A UE that names no algorithm is offered both and answers the
+			// topmost it supports (TS 24.229 5.1.1.5.1); the challenge of
+			// the other algorithm carries the same nonce.
+			challenges := akaChallenges(t, h.register(callID, 1, 600000, akaInitial))
+			i := slices.IndexFunc(challenges, func(ch sip.Challenge) bool { return ch.Algorithm == algorithm })
+			if i < 0 {
+				t.Fatalf("the 401 offers no %s", algorithm)
+			}
+			ch := challenges[i]
+			res, err := authenticate(t, aka.NewUSIM(testSet1, 0), ch)
+			if err != nil {
+				t.Fatal(err)
+			}
+			creds := akaAnswer(ch, akaPassword(ch, res), sip.IntegrityProtectedYes)
+			r := h.register(callID, 2, 600000, creds.String())
+			if r.StatusCode != 200 {
+				t.Fatalf("answer got %d, want 200", r.StatusCode)
+			}
+			rspauth, _ := sip.DigestResponse(sip.HA1(algorithm, impi, ch.Realm, akaPassword(ch, res)), "", creds)
+			if got := r.Get("Authentication-Info"); !strings.Contains(got, `rspauth="`+rspauth+`"`) {
+				t.Errorf("Authentication-Info = %q, want rspauth %s", got, rspauth)
+			}
+		})
+	}
+}
+
 // TS 33.203 6.1.3: a USIM ahead of the HSS answers with auts; the
 // S-CSCF passes it with the stored RAND to the HSS, and the new
-// challenge is one the USIM takes.
+// challenge is one the USIM takes. The REGISTER with auts names the
+// algorithm the UE chose, so the new 401 offers that one (TS 24.229
+// 5.4.1.2.1A item 1 c), and its response uses the empty password
+// whichever version it is (RFC 3310 3.4).
 func TestIMSAKAResynchronisation(t *testing.T) {
-	h := newAKAHarness(t)
-	// The first vector of the HSS has SQN 1 with IND 1 (TS 33.102 C.3.4),
-	// which this USIM has seen beaten.
-	usim := aka.NewUSIM(testSet1, aka.NewSQN(5000, 1))
-	callID := sip.NewCallID()
+	for name, tc := range map[string]struct {
+		initial string
+		want    string
+	}{
+		"AKAv2-SHA-256": {akaInitial, sip.AlgorithmAKAv2SHA256},
+		"AKAv1-MD5":     {akaInitialNaming(sip.AlgorithmAKAv1MD5), sip.AlgorithmAKAv1MD5},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newAKAHarness(t)
+			// The first vector of the HSS has SQN 1 with IND 1 (TS 33.102
+			// C.3.4), which this USIM has seen beaten.
+			usim := aka.NewUSIM(testSet1, aka.NewSQN(5000, 1))
+			callID := sip.NewCallID()
 
-	ch := akaChallenge(t, h.register(callID, 1, 600000, akaInitial))
-	_, err := authenticate(t, usim, ch)
-	var failure aka.SynchronisationFailure
-	if !errors.As(err, &failure) {
-		t.Fatalf("USIM: %v, want a synchronisation failure", err)
-	}
-	// RFC 3310 3.4: auts, and a response with the empty password.
-	resync := akaAnswer(ch, "", sip.IntegrityProtectedNo)
-	resync.SetAUTS(aka.EncodeAUTS(failure.AUTS))
-	again := akaChallenge(t, h.register(callID, 2, 600000, resync.String()))
-	if again.Nonce == ch.Nonce {
-		t.Fatal("the second challenge repeats the first")
-	}
-	res, err := authenticate(t, usim, again)
-	if err != nil {
-		t.Fatalf("USIM refused the challenge after the resynchronisation: %v", err)
-	}
-	if r := h.register(callID, 3, 600000, akaAnswer(again, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes).String()); r.StatusCode != 200 {
-		t.Fatalf("answer got %d, want 200", r.StatusCode)
+			ch := akaChallenge(t, h.register(callID, 1, 600000, tc.initial))
+			if ch.Algorithm != tc.want {
+				t.Fatalf("the challenge names %s, want %s", ch.Algorithm, tc.want)
+			}
+			_, err := authenticate(t, usim, ch)
+			var failure aka.SynchronisationFailure
+			if !errors.As(err, &failure) {
+				t.Fatalf("USIM: %v, want a synchronisation failure", err)
+			}
+			// RFC 3310 3.4: auts, and a response with the empty password.
+			resync := akaAnswer(ch, "", sip.IntegrityProtectedNo)
+			resync.SetAUTS(aka.EncodeAUTS(failure.AUTS))
+			challenges := akaChallenges(t, h.register(callID, 2, 600000, resync.String()))
+			again := challenges[0]
+			if len(challenges) != 1 || again.Algorithm != tc.want {
+				t.Fatalf("the second 401 offers %d challenges, the first %s; want one %s", len(challenges), again.Algorithm, tc.want)
+			}
+			if again.Nonce == ch.Nonce {
+				t.Fatal("the second challenge repeats the first")
+			}
+			res, err := authenticate(t, usim, again)
+			if err != nil {
+				t.Fatalf("USIM refused the challenge after the resynchronisation: %v", err)
+			}
+			if r := h.register(callID, 3, 600000, akaAnswer(again, akaPassword(again, res), sip.IntegrityProtectedYes).String()); r.StatusCode != 200 {
+				t.Fatalf("answer got %d, want 200", r.StatusCode)
+			}
+		})
 	}
 }
 
@@ -156,7 +280,7 @@ func TestIMSAKANetworkAuthenticationFailure(t *testing.T) {
 	if _, err := authenticate(t, aka.NewUSIM(stranger, 0), ch); !errors.Is(err, aka.ErrMACFailure) {
 		t.Fatalf("USIM with another K: %v, want ErrMACFailure", err)
 	}
-	failure := sip.Credentials{Username: impi, Realm: ch.Realm, Nonce: ch.Nonce, URI: "sip:" + domain, Algorithm: sip.AlgorithmAKAv1MD5}
+	failure := sip.Credentials{Username: impi, Realm: ch.Realm, Nonce: ch.Nonce, URI: "sip:" + domain, Algorithm: ch.Algorithm}
 	failure.SetIntegrityProtected(sip.IntegrityProtectedNo)
 	if r := h.register(callID, 2, 600000, failure.String()); r.StatusCode != 403 {
 		t.Fatalf("got %d, want 403", r.StatusCode)
@@ -172,29 +296,67 @@ func TestIMSAKANetworkAuthenticationFailure(t *testing.T) {
 	}
 }
 
-// TS 24.229 5.4.1.2.3A: a wrong response, or the right one on another
-// Call-ID, gets 403.
+// TS 24.229 5.4.1.2.3A: a wrong response, the right one on another
+// Call-ID, and one computed for an algorithm the 401 did not offer, all
+// get 403. The last is the response of AKAv1-MD5 to a 401 that offered
+// AKAv2-SHA-256 alone, which a UE would send to have the weaker version
+// accepted (RFC 4169 4.1).
 func TestIMSAKAWrongAnswersAreForbidden(t *testing.T) {
 	for name, tc := range map[string]struct {
-		password func(res []byte) string
+		initial  string
+		password func(ch sip.Challenge, res aka.Response) string
+		answered func(ch sip.Challenge) sip.Challenge
 		callID   func(first string) string
 	}{
-		"wrong response": {func([]byte) string { return "not RES" }, func(first string) string { return first }},
-		"other Call-ID":  {aka.DigestPassword, func(string) string { return sip.NewCallID() }},
+		"wrong response": {
+			akaInitial,
+			func(sip.Challenge, aka.Response) string { return "not RES" },
+			func(ch sip.Challenge) sip.Challenge { return ch },
+			func(first string) string { return first },
+		},
+		"other Call-ID": {
+			akaInitial, akaPassword,
+			func(ch sip.Challenge) sip.Challenge { return ch },
+			func(string) string { return sip.NewCallID() },
+		},
+		"an algorithm the 401 did not offer": {
+			akaInitialNaming(sip.AlgorithmAKAv2SHA256),
+			func(_ sip.Challenge, res aka.Response) string { return aka.DigestPassword(res.RES) },
+			func(ch sip.Challenge) sip.Challenge { ch.Algorithm = sip.AlgorithmAKAv1MD5; return ch },
+			func(first string) string { return first },
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newAKAHarness(t)
 			callID := sip.NewCallID()
-			ch := akaChallenge(t, h.register(callID, 1, 600000, akaInitial))
+			ch := akaChallenge(t, h.register(callID, 1, 600000, tc.initial))
 			res, err := authenticate(t, aka.NewUSIM(testSet1, 0), ch)
 			if err != nil {
 				t.Fatal(err)
 			}
-			answer := akaAnswer(ch, tc.password(res.RES), sip.IntegrityProtectedYes)
+			answer := akaAnswer(tc.answered(ch), tc.password(ch, res), sip.IntegrityProtectedYes)
 			if r := h.register(tc.callID(callID), 2, 600000, answer.String()); r.StatusCode != 403 {
 				t.Fatalf("got %d, want 403", r.StatusCode)
 			}
 		})
+	}
+}
+
+// TS 24.229 5.4.1.2.2 step 3: a response whose algorithm the 401 did not
+// offer is refused before any digest is compared. The challenge holds no
+// H(A1) for such an algorithm, so a response computed over the empty
+// one, which anybody can compute without a credential of the user, must
+// not be taken for the expected response.
+func TestIMSAKARefusesAnAlgorithmWithoutAnExpectedResponse(t *testing.T) {
+	h := newAKAHarness(t)
+	callID := sip.NewCallID()
+	ch := akaChallenge(t, h.register(callID, 1, 600000, akaInitial))
+	c := sip.Credentials{Username: impi, Realm: ch.Realm, Nonce: ch.Nonce, URI: "sip:" + domain,
+		Algorithm: "MD5", CNonce: "0a4f113b", QOP: "auth", NC: "00000001"}
+	c.Response, _ = sip.DigestResponse("", sip.REGISTER, c)
+	c.SetIntegrityProtected(sip.IntegrityProtectedYes)
+	if r := h.register(callID, 2, 600000, c.String()); r.StatusCode != 403 {
+		t.Fatalf("got %d, want 403", r.StatusCode)
 	}
 }
 
@@ -221,7 +383,7 @@ func TestProtectedREGISTERWithoutContactFetchesTheBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	creds := akaAnswer(ch, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes)
+	creds := akaAnswer(ch, akaPassword(ch, res), sip.IntegrityProtectedYes)
 	if r := h.register(callID, 2, 600000, creds.String()); r.StatusCode != 200 {
 		t.Fatalf("answer got %d, want 200", r.StatusCode)
 	}

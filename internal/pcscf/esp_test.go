@@ -2,8 +2,11 @@ package pcscf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -181,9 +184,9 @@ func (h *espHarness) associations(spiUC, spiPC uint32) SecurityAssociations {
 	ue := netip.MustParseAddrPort("127.0.0.1:5062")
 	return SecurityAssociations{
 		UE: ue, Temporary: true, PrivateIdentity: impi, Expires: time.Now().Add(ims.RegAwaitAuth),
-		UEMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms[0],
+		UEMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms(ims.WithoutConfidentiality)[0],
 			SPIC: spiUC, SPIS: spiUC + 1, PortC: 50001, PortS: ue.Port()},
-		PCSCFMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms[0],
+		PCSCFMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms(ims.WithoutConfidentiality)[0],
 			SPIC: spiPC, SPIS: spiPC + 1, PortC: h.p.protectedClientPort(), PortS: 5064},
 	}
 }
@@ -538,5 +541,151 @@ func TestAdmitProtected(t *testing.T) {
 	h.p.store.DeleteAssociation(context.Background(), sip.Destination{Transport: sip.UDP, Addr: sas.UE})
 	if h.p.AdmitProtected(request(sas.UEMechanism.PortC)) {
 		t.Error("a request without an IP association was admitted from the protected client port")
+	}
+}
+
+// TestESPConfidentialityPolicy: the P-CSCF decides whether the
+// signalling is encrypted (TS 33.203 5.1.3 item 2). With the policy
+// that applies confidentiality it offers AES-CBC before null in
+// Security-Server, selects AES-CBC for a UE that offers it too, and
+// keeps that transform in the SA table, from which the security
+// associations of the kernel are set up.
+func TestESPConfidentialityPolicy(t *testing.T) {
+	h := newAKAHarnessOf(t, akaOptions{protectedPort: true, esp: true, uePortC: true, confidentiality: true})
+	r, _ := h.register(false, "", "600000")
+	if r.StatusCode != 401 {
+		t.Fatalf("the first REGISTER got %d, want the challenge", r.StatusCode)
+	}
+	server, err := ims.IPsec3GPPMechanisms(r, "Security-Server")
+	if err != nil || len(server) != 2 {
+		t.Fatalf("Security-Server = %v (%v), want the two transforms of the policy", r.GetAll("Security-Server"), err)
+	}
+	if server[0].EncryptionAlgorithm != "aes-cbc" || server[0].Preference != "0.2" ||
+		server[1].EncryptionAlgorithm != "null" || server[1].Preference != "0.1" {
+		t.Errorf("Security-Server offers %+v, want AES-CBC before null", server)
+	}
+	sas, ok, err := h.store.SecurityAssociations(context.Background(), h.ueKey())
+	if err != nil || !ok {
+		t.Fatalf("the SA table has no entry for the UE: %v, %v", ok, err)
+	}
+	for _, m := range []ims.IPsec3GPP{sas.UEMechanism, sas.PCSCFMechanism} {
+		if m.EncryptionAlgorithm != "aes-cbc" {
+			t.Errorf("the set carries ealg %q, want the selected aes-cbc", m.EncryptionAlgorithm)
+		}
+	}
+	// The security associations of that transform went into the kernel,
+	// so the challenge went out: a transform the kernel cannot be given
+	// would have made the P-CSCF answer 500 instead.
+	var verify []sip.HeaderField
+	for _, v := range r.GetAll("Security-Server") {
+		verify = append(verify, sip.HeaderField{Name: "Security-Verify", Value: v})
+	}
+	if r, _ := h.register(true, "6629fae49393a05397450978507c4ef1", "600000", verify...); r.StatusCode != 200 {
+		t.Fatalf("the REGISTER over the encrypted associations got %d, want 200", r.StatusCode)
+	}
+}
+
+// TestESPWithoutConfidentialityPolicy: the P-CSCF that applies no
+// confidentiality offers null encryption alone and selects it, however
+// much the UE offers, so that the SIP inside its ESP stays readable (TS
+// 33.203 7.2).
+func TestESPWithoutConfidentialityPolicy(t *testing.T) {
+	h := newAKAHarnessOf(t, akaOptions{protectedPort: true, esp: true, uePortC: true})
+	h.securityClient = fmt.Sprintf("ipsec-3gpp;alg=hmac-sha2-256-128;ealg=aes-cbc;spi-c=1111;spi-s=2222;port-c=%d;port-s=%d, %s",
+		h.uePortC, h.ueKey().Port(), h.securityClient)
+	r, _ := h.register(false, "", "600000")
+	if r.StatusCode != 401 {
+		t.Fatalf("the first REGISTER got %d, want the challenge", r.StatusCode)
+	}
+	server, err := ims.IPsec3GPPMechanisms(r, "Security-Server")
+	if err != nil || len(server) != 1 || server[0].EncryptionAlgorithm != "null" {
+		t.Fatalf("Security-Server = %v (%v), want null encryption alone", r.GetAll("Security-Server"), err)
+	}
+	sas, ok, err := h.store.SecurityAssociations(context.Background(), h.ueKey())
+	if err != nil || !ok || sas.UEMechanism.EncryptionAlgorithm != "null" {
+		t.Errorf("the set carries %+v, %v, %v; want null encryption", sas.UEMechanism, ok, err)
+	}
+}
+
+// TestESPKeysForWireshark: a deployment that names a file gets the keys
+// of every set of security associations in it, as rows of Wireshark's
+// ESP SAs table, so that a reader of its capture can see what the ESP
+// carries (TS 33.203 6.2, 6.3). The rows follow the set into the
+// kernel, and the rows of a second set follow the first.
+func TestESPKeysForWireshark(t *testing.T) {
+	h := newESPHarness(t)
+	path := filepath.Join(t.TempDir(), "esp_sa")
+	h.p.cfg.ESP.SAFile = ipsec.NewSAFile(path, quiet())
+	ctx := context.Background()
+	keyed := func(spiUC, spiPC uint32) SecurityAssociations {
+		sas := h.associations(spiUC, spiPC)
+		if !decodeKey(sas.IK[:], testIK) || !decodeKey(sas.CK[:], testCK) {
+			t.Fatalf("the keys of the test are not IK and CK: %q, %q", testIK, testCK)
+		}
+		return sas
+	}
+	if err := h.p.putSecurityAssociations(ctx, keyed(1111, 2222)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.p.putSecurityAssociations(ctx, keyed(3333, 4444)); err != nil {
+		t.Fatal(err)
+	}
+	text, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the file of the ESP SAs table was not written: %v", err)
+	}
+	rows := strings.Split(strings.TrimSuffix(string(text), "\n"), "\n")
+	if len(rows) != 8 {
+		t.Fatalf("the file holds %d rows, want the four of each set:\n%s", len(rows), text)
+	}
+	// The rows of the second set follow the first's: spi_uc of 3333 is
+	// in the later rows alone.
+	const spiUCOfTheSecondSet = `"0xd05"`
+	if !slices.ContainsFunc(rows[4:], func(r string) bool { return strings.Contains(r, spiUCOfTheSecondSet) }) ||
+		slices.ContainsFunc(rows[:4], func(r string) bool { return strings.Contains(r, spiUCOfTheSecondSet) }) {
+		t.Errorf("the rows are\n%s\nwant those of the second set last", strings.Join(rows, "\n"))
+	}
+	// Each row carries IK_ESP, which is not IK (TS 33.203 Annex I).
+	for i, row := range rows {
+		if strings.Contains(row, testIK) || strings.Contains(row, testCK) {
+			t.Errorf("row %d carries IK or CK itself: %s", i, row)
+		}
+		if !strings.Contains(row, "HMAC-SHA-256-128 [RFC4868]") || !strings.Contains(row, `"NULL",""`) {
+			t.Errorf("row %d is %s, want the algorithms of the agreement", i, row)
+		}
+	}
+}
+
+// TestESPKeysOfASetTheKernelRefused: the rows follow the set into the
+// kernel, so a kernel that refuses it leaves the file without rows for
+// associations that carry nothing. The registration fails instead (TS
+// 33.203 7.2).
+func TestESPKeysOfASetTheKernelRefused(t *testing.T) {
+	h := newESPHarness(t)
+	path := filepath.Join(t.TempDir(), "esp_sa")
+	h.p.cfg.ESP.SAFile = ipsec.NewSAFile(path, quiet())
+	h.p.cfg.ESP.Kernel.Run = func(context.Context, []ipsec.Command) error {
+		return errors.New("Requested type not found")
+	}
+	if err := h.p.putSecurityAssociations(context.Background(), h.associations(1111, 2222)); err == nil {
+		t.Fatal("the P-CSCF kept a set the kernel refused")
+	}
+	if text, err := os.ReadFile(path); !os.IsNotExist(err) {
+		t.Errorf("the file holds %q (%v), want no row", text, err)
+	}
+}
+
+// TestESPWithoutAFileForWireshark: a deployment that names no file
+// writes none, and its registrations go through as they did.
+func TestESPWithoutAFileForWireshark(t *testing.T) {
+	h := newESPHarness(t)
+	if h.p.cfg.ESP.SAFile != nil {
+		t.Fatal("the harness names a file, so this test checks nothing")
+	}
+	if err := h.p.putSecurityAssociations(context.Background(), h.associations(1111, 2222)); err != nil {
+		t.Fatal(err)
+	}
+	if run := h.only(t); len(run) == 0 {
+		t.Error("the kernel ran nothing")
 	}
 }

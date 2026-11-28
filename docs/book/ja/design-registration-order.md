@@ -5,7 +5,7 @@ S-CSCF に届く REGISTER は、どれも同じ形のメッセージです。そ
 答えを先にまとめます。
 
 - 順序は、同じ Call-ID の中の CSeq だけで比べます。比べるのは、保存した Contact と同じ Contact の登録を変える要求だけです。別の Call-ID、別の Contact、トランザクションの層が受け止める再送は、この比較の外にあります。
-- 期限は、記録が残っているかどうかではなく、記録に書いた時刻で決めます。認証の答えを受け付ける期限（reg-await-auth）と、その記録を保存先に残す期限は、別の時刻です。期限を処理する仕組みが遅れても、要求を処理する側が時刻を自分で確かめるので、遅れた答えは受け付けられません。
+- 期限は、記録が残っているかどうかではなく、記録に書いた時刻で決めます。認証の答えを受け付ける期限（reg-await-auth）と、その記録を保存先に残す期限は、別の時刻です。期限を処理する仕組みが遅れても、要求を処理する側が時刻を自分で確かめるので、遅れた答えは受け付けられず、登録の期限が切れたあとの REGISTER は登録先を見つけません。
 - 読む、比べる、HSS に知らせる、書く、を 1 人の利用者について 1 つの手順にするのは、利用者ごとのロックです。このロックは、持ち主がリースの時間の中で仕事を終えるかぎりで効きます。リースを過ぎて動き出した持ち主の書き込みを止める仕組み（フェンシング）はありません。
 
 この章は [REGISTER が 2 回送られる理由](registration-two-registers.md)、[遅れて届いた登録の解除が、新しい登録を消さない理由](registration-stale-deregistration.md)、[登録の更新、解除、購読、網からの取り消し](registration-lifecycle.md) を前提にします。必要なところは、この章の中で言い直します。
@@ -198,7 +198,26 @@ func (s *SCSCF) endRegAwaitAuth(ctx context.Context, ch Challenge) error {
 
 `internal/scscf/challenge_deadline_test.go` の `TestRegistrationRejectsExpiredChallengeBeforeSweep` が、この場合を確かめています。試験は reg-await-auth を 200 ミリ秒にし、見回りを 1 時間に 1 回にします。これで、見回りが記録を終わらせることはありません。`Expires` を過ぎてから正しい答えを送ると、結果は 401 で、新しい nonce と `stale=true` が入り、登録は作られません。そのあとで古い nonce の期限の処理を呼んでも、新しい問いはそのまま残ります。新しい問いに答えると 200 OK になり、HSS が受けた SAR は AUTHENTICATION_TIMEOUT と `REGISTRATION` の 2 つだけです。`TestIMSAKARejectsExpiredChallengeBeforeSweep` は、IMS-AKA の保護された答えも 200 にならないことを確かめます。`internal/kvstore/scscfstore` の `TestAChallengePastItsExpiresIsNotAnswered` は、Valkey に置く Store の実装でも同じ結果になることを確かめます。
 
-**登録の期限も同じ考え方。** 登録の `Expires` を過ぎた登録も、見回りが終わらせるまでは保存先に残ります。それでも、着信の宛先を探すときは、時刻で判断します。
+**登録の期限も同じ考え方。** 登録の `Expires` を過ぎた登録も、見回りが終わらせるまでは保存先に残ります。期限を処理する台が、誰に知らせるかと、HSS が利用者をどの名前で持っているかを、その記録から読むためです。それでも、REGISTER を処理するときと、着信の宛先を探すときは、時刻で判断します。登録の手順は、1 つの関数を通して登録を読みます。
+
+[internal/scscf/scscf.go](../../../internal/scscf/scscf.go)
+
+```go
+func (s *SCSCF) registration(ctx context.Context, privateID string) (Registration, bool, error) {
+	reg, ok, err := s.store.Registration(ctx, privateID)
+	return reg, ok && !reg.expired(time.Now()), err
+}
+```
+
+`register`、`accept`、`deregister` と、IMS-AKA の `reregister` は、この関数で利用者の登録を読みます。`Expires` を過ぎた記録も返します。このあとの Cx の要求が、記録にある Server-Name を使い続けるからです。ただし、その記録はもう登録先として数えません。そのため、期限が切れたあと、どの台もまだその期限を処理していないうちに REGISTER が来ると、S-CSCF は利用者に登録が無いものとして扱います。
+
+- 登録の期間を求める REGISTER は、登録を最初からやり直します。Call-ID と CSeq を、期限の切れた登録先のものと比べません。SAR には RE_REGISTRATION ではなく `REGISTRATION` が入り、できた登録先の contact の id も新しいものになります。HSS は、利用者をまだ登録済みとして持っていてもいなくても、`REGISTRATION` の SAR を受け付けます。
+- `expires=0` の REGISTER には、消す contact がありません。認証の前に 481 を返します（TS 24.229 5.4.1.4.1）。
+- IMS-AKA の保護された REGISTER は、登録があるあいだは新しい問いが要りませんが、ここでは 500 を受けます（TS 24.229 5.4.1.2.3A）。UE はそこで最初の登録をやり直します。
+
+`internal/scscf/registration_deadline_test.go` の試験は、登録先を 1 秒にし、見回りを 1 時間に 1 回にして、`Expires` を過ぎた記録が残るようにします。`TestRegisterAfterTheBindingExpiredStartsAfresh` では、新しい Call-ID の REGISTER も、期限の切れた登録先と同じ Call-ID で CSeq が大きくない REGISTER も、200 OK を受けます。HSS が受ける SAR は `REGISTRATION` の 2 つで、contact の id は新しくなります。`TestDeregisterAfterTheBindingExpiredGets481` は 481 と、そのとき HSS に Cx の要求が出ないことを確かめます。`TestProtectedRegisterAfterTheBindingExpiredIsRefused` は 500 を確かめます。どちらでも、期限の切れた記録は見回りのために残ります。
+
+着信の宛先を探すときも、時刻で判断します。
 
 [internal/kvstore/scscfstore/scscfstore.go](../../../internal/kvstore/scscfstore/scscfstore.go)
 
@@ -219,7 +238,7 @@ func (s *Store) RegistrationOf(ctx context.Context, publicID string) (scscf.Regi
 
 公開の識別子から登録を引く `RegistrationOf` は、保存先の時計で `Expires` を過ぎた登録を、無いものとして返します。`internal/scscf/session_test.go` の `TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact` は、見回りを 1 時間に 1 回にして、期限を過ぎたがまだ残っている登録の利用者に着信を送ります。結果は 480 で、要求は期限の切れた Contact へ届きません。
 
-登録の期限を処理する `registrationExpired` は、ロックを取ったあとで登録を読み直し、時刻をもう一度確かめます。
+登録の期限を処理する `registrationExpired` は、ロックを取ったあとで登録を読み直し、時刻をもう一度確かめます。`registration` を通さず、保存先から直接読みます。期限の切れた記録が要るのは、この処理だからです。
 
 [internal/scscf/scscf.go](../../../internal/scscf/scscf.go)
 
@@ -235,9 +254,9 @@ func (s *Store) RegistrationOf(ctx context.Context, publicID string) (scscf.Regi
 	}
 ```
 
-期限を借りてからロックを取るまでのあいだに、UE が登録を更新しているかもしれません。そのときは `Expires` が先に延びているので、何もしません。`internal/kvstore/scscfstore` の `TestARegistrationRefreshedBeforeItsExpiryIsHandled` は、期限を借りた台がロックを待っているあいだに、登録を 1 時間先まで延ばします。ロックを渡すと、SAR も NOTIFY も出ず、登録は延びたまま残ります。延ばさなければ、同じ時間のうちに SAR が出ます。
+期限を借りてからロックを取るまでのあいだに、UE が登録を更新しているかもしれません。そのときは `Expires` が先に延びているので、何もしません。`internal/kvstore/scscfstore` の `TestARegistrationRefreshedBeforeItsExpiryIsHandled` は、期限を借りた台がロックを待っているあいだに、登録を 1 時間先まで延ばします。ロックを渡すと、SAR も NOTIFY も出ず、登録は延びたまま残ります。延ばさなければ、同じ時間のうちに SAR が出ます。期限が切れたあとの REGISTER で作り直した登録も、`Expires` が先にあります。`internal/scscf/registration_deadline_test.go` の `TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration` は、期限を借りてから利用者を登録し直し、そのあとで借りた期限を処理します。新しい登録は残り、HSS に TIMEOUT_DEREGISTRATION の SAR は届きません。
 
-つまり、受け付けるか、宛先にするかは、記録に書いた時刻を、使う側がそのたびに確かめて決めます。見回りが受け持つのは、終わったことを HSS と購読者に伝えることと、記録を片付けることです。見回りが遅れても、正しくない答えが正しくなることはありません。遅れるのは、伝えることと片付けることだけです。
+つまり、答えを受け付けるか、REGISTER が登録先を見つけるか、宛先にするかは、記録に書いた時刻を、使う側がそのたびに確かめて決めます。見回りが受け持つのは、終わったことを HSS と購読者に伝えることと、記録を片付けることです。見回りが遅れても、正しくない答えが正しくなることはありません。遅れるのは、伝えることと片付けることだけです。
 
 ## 再認証が時間切れになったときの登録
 
@@ -376,6 +395,7 @@ func (l *Locker) release(key, version string) {
 - `internal/scscf/challenge_deadline_test.go` の `TestRegistrationRejectsExpiredChallengeBeforeSweep`、`TestExpiredChallengeKeepsTheRegistration`、`TestIMSAKARejectsExpiredChallengeBeforeSweep`。期限を過ぎた答えを受け付けないこと、登録を残すこと、HSS に時間切れを 1 回だけ伝えること。
 - `internal/kvstore/scscfstore` の `TestAChallengePastItsExpiresIsNotAnswered` と `TestARegistrationRefreshedBeforeItsExpiryIsHandled`。Valkey に置く Store の実装でも、期限を過ぎた答えを受け付けないこと。期限を借りた台が、更新された登録を終わらせないこと。
 - `internal/scscf/session_test.go` の `TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact`。期限を過ぎた登録の Contact に着信を送らないこと。
+- `internal/scscf/registration_deadline_test.go` の `TestRegisterAfterTheBindingExpiredStartsAfresh`、`TestDeregisterAfterTheBindingExpiredGets481`、`TestProtectedRegisterAfterTheBindingExpiredIsRefused`、`TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration`。登録の期限が切れたあとの REGISTER が登録先を見つけず、新しい登録を作るか、481 か 500 を受けること。そのあとで処理する期限が、新しい登録を残すこと。
 - `internal/scscf/scscf_test.go` の `TestRegAwaitAuthExpiry`、`TestFailedReauthenticationKeepsTheRegistrationExpiry`、`TestUsersDoNotWaitForEachOther`。答えの来ない問いに AUTHENTICATION_TIMEOUT の SAR が出ること。誤った答えのあとも登録が期限まで残ること。利用者どうしが待たないこと。
 - `internal/scscf/instances_test.go` の `TestAnotherInstanceNamesTheAssignedSCSCF`。別の台が期限を処理したあと、HSS が S-CSCF の名前を持たないこと。
 - `internal/scscf/storefailure_test.go` の `TestRegisterWhenTheLockFails`。ロックを取れない REGISTER が 500 を受けること。

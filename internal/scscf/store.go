@@ -24,15 +24,21 @@ type Challenge struct {
 	CallID string
 	Realm  string
 	Nonce  string
-	// Algorithm is the one of the WWW-Authenticate: MD5 for SIP Digest,
-	// AKAv1-MD5 for IMS AKA.
-	Algorithm string
-	HA1       string // from the MAA, for SIP Digest
-	// RAND and XRES come from the authentication vector of IMS AKA. RAND
-	// is kept for a re-synchronisation (TS 24.229 5.4.1.2.1A), XRES to
-	// check the response (5.4.1.2.2 step 4).
+	// Algorithms are the ones of the WWW-Authenticate header fields that
+	// the 401 carried, the most preferred first (TS 24.229 5.4.1.2.1A,
+	// 5.4.1.2.1B): MD5 for SIP Digest, and for IMS AKA the AKA versions
+	// of imsAKAAlgorithms. The UE answers with one of them.
+	Algorithms []string
+	HA1        string // from the MAA, for SIP Digest
+	// RAND, XRES, IK and CK come from the authentication vector of IMS
+	// AKA. RAND is kept for a re-synchronisation (TS 24.229 5.4.1.2.1A),
+	// and the rest to compute the password of the response the challenge
+	// expects (5.4.1.2.2 step 4): XRES alone for AKAv1-MD5, all three
+	// for AKAv2-SHA-256.
 	RAND aka.RAND
 	XRES []byte
+	IK   aka.IK
+	CK   aka.CK
 	// HSSHost is the Origin-Host of the MAA, the Destination-Host of the
 	// SAR that follows (TS 29.228 6.1.2).
 	HSSHost string
@@ -51,13 +57,37 @@ type Challenge struct {
 	KeepUntil time.Time
 }
 
-// digestHA1 is H(A1) of the response that the challenge expects: the one
-// of the MAA for SIP Digest, and for IMS AKA the one with XRES as the
-// password (RFC 3310 3.3). It is empty for a registration without a
-// challenge.
-func (c Challenge) digestHA1() string {
-	if c.Algorithm == sip.AlgorithmAKAv1MD5 {
-		return sip.HA1(c.PrivateIdentity, c.Realm, aka.DigestPassword(c.XRES))
+// offers reports whether the 401 offered algorithm, so that a response
+// is checked against the algorithm the UE chose and no other (TS 24.229
+// 5.4.1.2.2 step 3, 5.4.1.2.2A step 3). Credentials without an
+// algorithm parameter mean MD5 (RFC 3310 3.1).
+func (c Challenge) offers(algorithm string) bool {
+	if algorithm == "" {
+		algorithm = "MD5"
+	}
+	return slices.ContainsFunc(c.Algorithms, func(a string) bool { return strings.EqualFold(a, algorithm) })
+}
+
+// imsAKA reports whether the challenge is one of IMS AKA rather than of
+// SIP Digest: it offers an AKA version (TS 33.203 6.1.1).
+func (c Challenge) imsAKA() bool {
+	return c.offers(sip.AlgorithmAKAv2SHA256) || c.offers(sip.AlgorithmAKAv1MD5)
+}
+
+// digestHA1 is H(A1) of the response that the challenge expects for
+// algorithm: the one of the MAA for SIP Digest, and for IMS AKA the one
+// of the password that the AKA version derives from the vector, XRES for
+// AKAv1-MD5 (RFC 3310 3.3) and XRES with IK and CK for AKAv2-SHA-256
+// (RFC 4169 2.1). It is empty for an algorithm that the challenge did
+// not offer, and so for a registration without a challenge.
+func (c Challenge) digestHA1(algorithm string) string {
+	switch {
+	case !c.offers(algorithm):
+		return ""
+	case strings.EqualFold(algorithm, sip.AlgorithmAKAv1MD5):
+		return sip.HA1(algorithm, c.PrivateIdentity, c.Realm, aka.DigestPassword(c.XRES))
+	case strings.EqualFold(algorithm, sip.AlgorithmAKAv2SHA256):
+		return sip.HA1(algorithm, c.PrivateIdentity, c.Realm, aka.AKAv2DigestPassword(c.XRES, c.IK, c.CK))
 	}
 	return c.HA1
 }
@@ -144,6 +174,14 @@ func (r Registration) DefaultIdentity() string { return r.NonBarredIdentities()[
 func (r Registration) sameBinding(other Registration) bool {
 	return r.ContactID == other.ContactID && r.CallID == other.CallID && r.CSeq == other.CSeq
 }
+
+// expired reports whether the binding is no longer one at now: a
+// registration is soft state that runs out unless a REGISTER refreshes
+// it (RFC 3261 10.2.2). The Store hands out a registration past its
+// Expires, so that the instance which handles its expiry finds whom to
+// tell (Store.Registration); everything else goes by the binding, which
+// is gone by then (SCSCF.registration).
+func (r Registration) expired(now time.Time) bool { return !now.Before(r.Expires) }
 
 func barred(barredIDs []string, id string) bool {
 	return slices.ContainsFunc(barredIDs, func(b string) bool { return ims.SamePublicIdentity(b, id) })

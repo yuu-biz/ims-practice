@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -77,6 +78,20 @@ type PCSCF struct {
 	// 7.1). Zero leaves ESP off, and with it the protected ports carry
 	// the signalling unprotected.
 	ProtectedClientPort uint16
+	// Confidentiality is the policy of TS 33.203 5.1.3 item 2: with it
+	// the P-CSCF offers an encryption algorithm and selects it for
+	// every UE that offers one too, so that ESP encrypts the
+	// signalling. Without it the P-CSCF applies no confidentiality and
+	// the SIP inside ESP stays readable in a capture. It needs
+	// ProtectedClientPort, since only a P-CSCF that sets ESP up
+	// encrypts anything.
+	Confidentiality bool
+	// WiresharkSAFile, when set, is a file the P-CSCF appends the keys
+	// of every set of security associations to, as rows of the ESP SAs
+	// table of Wireshark, so that a reader of the capture beside it can
+	// see what the ESP carries. The keys are in the clear, so only a
+	// deployment of test subscribers names such a file.
+	WiresharkSAFile string
 }
 
 type HostAccess struct {
@@ -393,6 +408,8 @@ type rawPCSCF struct {
 		ProtectedServerPort uint16 `yaml:"protected_server_port"`
 		ESP                 *struct {
 			ProtectedClientPort uint16 `yaml:"protected_client_port"`
+			Confidentiality     bool   `yaml:"confidentiality"`
+			WiresharkSAFile     string `yaml:"wireshark_sa_file"`
 		} `yaml:"esp"`
 	} `yaml:"sec_agree"`
 }
@@ -576,6 +593,13 @@ func (raw *rawPCSCF) validate() (PCSCF, error) {
 				return PCSCF{}, fmt.Errorf("sec_agree.esp: sip.listen must name the address of this P-CSCF, not %s", c.SIP.Listen.Addr())
 			}
 			c.ProtectedClientPort = port
+			c.Confidentiality = esp.Confidentiality
+			if file := esp.WiresharkSAFile; file != "" {
+				if !filepath.IsAbs(file) {
+					return PCSCF{}, fmt.Errorf("sec_agree.esp.wireshark_sa_file: %q must be an absolute path", file)
+				}
+				c.WiresharkSAFile = file
+			}
 		}
 	}
 	return c, nil

@@ -5,7 +5,7 @@ Every REGISTER that reaches the S-CSCF has the same form. Still, an initial regi
 The answer first:
 
 - Order is compared by the CSeq within one Call-ID only, and only for a request that changes the registration of the stored Contact. Another Call-ID, another Contact and a retransmission that the transaction layer absorbs are outside the comparison.
-- An expiry is decided by the time written in the record, not by whether the record is still there. The time until which an answer to a challenge is accepted (reg-await-auth) and the time until which the record stays in the store are two different times. When the handling of expiries runs late, the code that handles the request checks the time itself, so a late answer is not accepted.
+- An expiry is decided by the time written in the record, not by whether the record is still there. The time until which an answer to a challenge is accepted (reg-await-auth) and the time until which the record stays in the store are two different times. When the handling of expiries runs late, the code that handles the request checks the time itself, so a late answer is not accepted, and a REGISTER after the expiry of a registration finds no binding.
 - What makes reading, comparing, telling the HSS and writing one step for one user is the lock per user. The lock holds as long as its holder finishes within the lease. Nothing stops the writes of a holder that goes on after its lease (there is no fencing).
 
 This chapter builds on [Why a UE sends REGISTER twice](registration-two-registers.md), [Why a late deregistration does not remove a newer registration](registration-stale-deregistration.md) and [Refresh, deregistration, subscription and removal by the network](registration-lifecycle.md). It restates what it needs from them.
@@ -198,7 +198,26 @@ func (s *SCSCF) endRegAwaitAuth(ctx context.Context, ch Challenge) error {
 
 `TestRegistrationRejectsExpiredChallengeBeforeSweep` in `internal/scscf/challenge_deadline_test.go` checks this case. The test sets reg-await-auth to 200 milliseconds and the sweep to once an hour, so that the sweep never ends the record. A correct answer sent after `Expires` gets a 401 with a new nonce and `stale=true`, and no registration is made. Calling the expiry of the old nonce after that leaves the new challenge in place. The answer to the new challenge gets 200 OK, and the HSS has received two SARs only: AUTHENTICATION_TIMEOUT and `REGISTRATION`. `TestIMSAKARejectsExpiredChallengeBeforeSweep` checks that a protected answer with IMS AKA does not get 200 either. `TestAChallengePastItsExpiresIsNotAnswered` in `internal/kvstore/scscfstore` checks the same result with the Store on Valkey.
 
-**The expiry of a registration follows the same idea.** A registration past its `Expires` also stays in the store until the sweep ends it. Still, looking up where to send a call goes by the time.
+**The expiry of a registration follows the same idea.** A registration past its `Expires` also stays in the store until the sweep ends it: the instance that handles the expiry reads from it whom to tell, and the name under which the HSS holds the user. Still, the REGISTER code and the lookup of where to send a call go by the time. The registration procedures read the registration through one function.
+
+[internal/scscf/scscf.go](../../../internal/scscf/scscf.go)
+
+```go
+func (s *SCSCF) registration(ctx context.Context, privateID string) (Registration, bool, error) {
+	reg, ok, err := s.store.Registration(ctx, privateID)
+	return reg, ok && !reg.expired(time.Now()), err
+}
+```
+
+`register`, `accept`, `deregister` and, for IMS AKA, `reregister` read the registration of the user this way. The record comes back even past its `Expires`, because the Cx requests that follow keep naming the Server-Name it holds, but it no longer counts as a binding. So a REGISTER that comes after the expiry, before any instance has handled it, is handled as if the user had no registration.
+
+- A REGISTER that asks for an interval starts a registration afresh. Its Call-ID and CSeq are not compared with those of the expired binding, its SAR carries `REGISTRATION` and not RE_REGISTRATION, and the binding it makes has a contact id of its own. The HSS takes a SAR of `REGISTRATION` whether or not it still holds the user as registered.
+- A REGISTER with `expires=0` has no contact to remove, and gets 481 before any authentication (TS 24.229 5.4.1.4.1).
+- A protected REGISTER with IMS AKA, which needs no new challenge while the registration stands, gets 500 (TS 24.229 5.4.1.2.3A). The UE then makes its initial registration again.
+
+The tests in `internal/scscf/registration_deadline_test.go` give a binding of one second and set the sweep to once an hour, so that the record stays past its `Expires`. In `TestRegisterAfterTheBindingExpiredStartsAfresh`, a REGISTER with a new Call-ID, and one with the Call-ID of the expired binding and no higher CSeq, each get 200 OK; the HSS receives two SARs of `REGISTRATION`, and the contact has a new id. `TestDeregisterAfterTheBindingExpiredGets481` checks the 481, with no further Cx request to the HSS, and `TestProtectedRegisterAfterTheBindingExpiredIsRefused` the 500. In both, the expired record stays for the sweep.
+
+Looking up where to send a call goes by the time as well.
 
 [internal/kvstore/scscfstore/scscfstore.go](../../../internal/kvstore/scscfstore/scscfstore.go)
 
@@ -219,7 +238,7 @@ func (s *Store) RegistrationOf(ctx context.Context, publicID string) (scscf.Regi
 
 `RegistrationOf`, which finds the registration of a public identity, returns none for a registration whose `Expires` has passed by the clock of the store. `TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact` in `internal/scscf/session_test.go` sets the sweep to once an hour and sends a call to a user whose registration has expired but is still stored. The call gets 480 and does not go to the expired Contact.
 
-`registrationExpired`, which handles the expiry of a registration, reads the registration again under the lock and checks the time once more.
+`registrationExpired`, which handles the expiry of a registration, reads the registration again under the lock and checks the time once more. It reads the store itself, not through `registration`, because it is the one that needs the expired record.
 
 [internal/scscf/scscf.go](../../../internal/scscf/scscf.go)
 
@@ -235,9 +254,9 @@ func (s *Store) RegistrationOf(ctx context.Context, publicID string) (scscf.Regi
 	}
 ```
 
-Between the claim of the expiry and the lock, the UE may have refreshed the registration. `Expires` has then moved on, and nothing happens. `TestARegistrationRefreshedBeforeItsExpiryIsHandled` in `internal/kvstore/scscfstore` extends the registration by an hour while the instance that claimed the expiry waits for the lock. Once the lock is free, no SAR and no NOTIFY go out, and the registration stays extended. Without the refresh, a SAR goes out within the same time.
+Between the claim of the expiry and the lock, the UE may have refreshed the registration. `Expires` has then moved on, and nothing happens. `TestARegistrationRefreshedBeforeItsExpiryIsHandled` in `internal/kvstore/scscfstore` extends the registration by an hour while the instance that claimed the expiry waits for the lock. Once the lock is free, no SAR and no NOTIFY go out, and the registration stays extended. Without the refresh, a SAR goes out within the same time. A new registration that a REGISTER made after the expiry has a later `Expires` too. `TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration` in `internal/scscf/registration_deadline_test.go` claims the expiry, registers the user again, and then handles the expiry it claimed: the new registration stays, and the HSS gets no SAR of TIMEOUT_DEREGISTRATION.
 
-So whether an answer is accepted, and whether a contact is a destination, is decided each time by the code that uses the record, from the time written in it. The sweep is there to tell the HSS and the subscribers that something has ended, and to clean up. A late sweep never makes a wrong answer right; what it delays is the telling and the clean-up.
+So whether an answer is accepted, whether a REGISTER finds a binding, and whether a contact is a destination, is decided each time by the code that uses the record, from the time written in it. The sweep is there to tell the HSS and the subscribers that something has ended, and to clean up. A late sweep never makes a wrong answer right; what it delays is the telling and the clean-up.
 
 ## The registration when a re-authentication runs out
 
@@ -376,6 +395,7 @@ The account of this chapter was checked against the code and the tests below. Ea
 - `TestRegistrationRejectsExpiredChallengeBeforeSweep`, `TestExpiredChallengeKeepsTheRegistration` and `TestIMSAKARejectsExpiredChallengeBeforeSweep` in `internal/scscf/challenge_deadline_test.go`: an answer after the expiry is not accepted, the registration stays, and the HSS hears of the timeout once.
 - `TestAChallengePastItsExpiresIsNotAnswered` and `TestARegistrationRefreshedBeforeItsExpiryIsHandled` in `internal/kvstore/scscfstore`: with the Store on Valkey too, an answer after the expiry is not accepted; an instance that claimed an expiry does not end a registration that was refreshed.
 - `TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact` in `internal/scscf/session_test.go`: a call does not go to the Contact of an expired registration.
+- `TestRegisterAfterTheBindingExpiredStartsAfresh`, `TestDeregisterAfterTheBindingExpiredGets481`, `TestProtectedRegisterAfterTheBindingExpiredIsRefused` and `TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration` in `internal/scscf/registration_deadline_test.go`: a REGISTER after the expiry of a registration finds no binding, so it makes a new registration, or gets 481 or 500; the expiry handled afterwards leaves the new registration alone.
 - `TestRegAwaitAuthExpiry`, `TestFailedReauthenticationKeepsTheRegistrationExpiry` and `TestUsersDoNotWaitForEachOther` in `internal/scscf/scscf_test.go`: a challenge with no answer leads to a SAR of AUTHENTICATION_TIMEOUT; after a wrong answer the registration stays until it expires; users do not wait for each other.
 - `TestAnotherInstanceNamesTheAssignedSCSCF` in `internal/scscf/instances_test.go`: after another instance handles the expiry, the HSS holds no S-CSCF name.
 - `TestRegisterWhenTheLockFails` in `internal/scscf/storefailure_test.go`: a REGISTER whose user cannot be locked gets 500.

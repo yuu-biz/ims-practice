@@ -1,0 +1,87 @@
+# The P-CSCF that protects the signalling of IMS AKA with IPsec ESP and
+# encrypts it. It is deploy/esp/pcscf.yaml with the confidentiality
+# policy of TS 33.203 5.1.3 and a file of the keys for Wireshark, which
+# deploy/esp/encryption.yaml mounts in that file's place.
+# P-CSCF. The first contact point of the UE. It finds the I-CSCF of the
+# home network through DNS (RFC 3263) and adds Path, so that requests
+# to the UE come back through it.
+node: pcscf
+roles: [pcscf]
+home_domain: ims.mnc001.mcc001.3gppnetwork.org
+pcscf:
+  sip:
+    # The security associations are bound to the P-CSCF's own address
+    # (TS 33.203 7.1), so this names it rather than every address. The
+    # port that compose.yaml publishes reaches it all the same, through
+    # Docker's NAT.
+    listen: 172.28.0.40:5060
+    host: pcscf.ims.mnc001.mcc001.3gppnetwork.org
+  # The P-CSCF is in the home network, so its network name is the home
+  # domain (TS 24.229 5.2.2.1).
+  visited_network_id: ims.mnc001.mcc001.3gppnetwork.org
+  # RTP goes through a media relay in the IMS-AGW role. The P-CSCF
+  # picks one of the list for each call by a hash of its Call-ID, and
+  # takes the next one when that one gives no context. This network has
+  # one.
+  media_relays:
+    - http://agw.ims.mnc001.mcc001.3gppnetwork.org:8080
+  # A softphone on the host comes through Docker's NAT from the bridge
+  # gateway, and reaches the relay's ports where compose.yaml publishes
+  # them.
+  host_access:
+    gateway: 172.28.0.1
+    address: 127.0.0.1
+  # IMS AKA: a UE that registers with Security-Client sends
+  # everything after the challenge to this protected server port (TS
+  # 33.203 7.1).
+  sec_agree:
+    protected_server_port: 5064
+    # IPsec ESP protects those messages, with the integrity algorithm
+    # both ends agree on and the encryption algorithm that the
+    # confidentiality policy of this P-CSCF asks for. The P-CSCF sends
+    # its requests to such a UE from this protected client port, to
+    # which one of the two pairs of security associations is bound.
+    esp:
+      protected_client_port: 5065
+      # TS 33.203 5.1.3 item 2 leaves the confidentiality of the
+      # signalling to the P-CSCF. This one applies it wherever the UE
+      # offers an encryption algorithm, so the SIP between the
+      # protected ports is encrypted and a capture of it shows no SIP
+      # until Wireshark is given the keys.
+      confidentiality: true
+      # Which is what this file is for: the P-CSCF appends every set of
+      # security associations to it as rows of the ESP SAs table of
+      # Wireshark, in the directory the captures are written to. The
+      # keys of this deployment's test subscribers are in it in the
+      # clear; a network of real subscribers writes no such file.
+      wireshark_sa_file: /captures/esp_sa
+# Rx to the PCRF stub in the epc node. The PCRF knows only
+# the UEs that attached to the EPC stub; for any other UE, such as a
+# softphone on the host, it answers IP-CAN_SESSION_NOT_AVAILABLE, and the
+# P-CSCF serves that UE without policy control.
+diameter:
+  origin_host: pcscf.ims.mnc001.mcc001.3gppnetwork.org
+  origin_realm: ims.mnc001.mcc001.3gppnetwork.org
+  peers:
+    - address: pcrf.ims.mnc001.mcc001.3gppnetwork.org:3868
+      origin_host: pcrf.ims.mnc001.mcc001.3gppnetwork.org
+      kind: pcrf
+  # The RFC defaults, written out where an operator can change them:
+  # Tw is the watchdog timer (RFC 3539 3.4.1 [1]), and Tc the time
+  # between attempts to connect again (RFC 6733 2.1 and 12).
+  timers:
+    tw: 30s
+    tc: 30s
+# Copies of every SIP and Diameter message for the Lab.
+# The address is fixed so that the node starts even when the Lab
+# is down; the Lab is not on the call path.
+hep:
+  collector: 172.28.0.60:9060
+# The maintenance listener: the metrics of the P-CSCF at /metrics for
+# Prometheus to scrape, and the maintenance API under /maintenance/v1/,
+# through which an operator takes the P-CSCF out of service. No
+# specification gives a port for it; 8085 is this project's choice. The
+# API asks for no password, so the port is not published outside the
+# network of the IMS nodes.
+maintenance:
+  listen: 0.0.0.0:8085

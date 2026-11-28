@@ -298,7 +298,7 @@ DE_REGISTRATION（1）の UAR です（TS 29.228 6.1.1）。HSS は担当の S-C
 	}
 ```
 
-登録が無い利用者の解除には、認証の前に 481 で答えます。登録があり、`integrity-protected` が `ip-assoc-yes` なら、問い直さずに `deregister` へ進みます（TS 24.229 5.4.1.4.1）。IP の対応付けは、この UE が P-CSCF を通って正しく登録したことを示しているからです。`ip-assoc-yes` が無い解除の要求は、この分かれ道を抜け、普通の REGISTER と同じく 401 で問い直されます。
+登録が無い利用者の解除には、認証の前に 481 で答えます。期限の過ぎた登録も、S-CSCF がその期限をまだ処理していなくても、ここでは無いものとして数えます。登録があり、`integrity-protected` が `ip-assoc-yes` なら、問い直さずに `deregister` へ進みます（TS 24.229 5.4.1.4.1）。IP の対応付けは、この UE が P-CSCF を通って正しく登録したことを示しているからです。`ip-assoc-yes` が無い解除の要求は、この分かれ道を抜け、普通の REGISTER と同じく 401 で問い直されます。
 
 `deregister` は、Contact が保存した登録先と同じかと、順序が古くないかを確かめたあと、HSS に Server-Assignment-Type が USER_DEREGISTRATION（5）の SAR を送ります。SAA が成功を返したあとの処理が次の数行です。
 
@@ -357,7 +357,7 @@ UE が期限までに再登録しないと、登録の期限が切れます。S-
 	s.serverAssignment(ctx, privateID, reg.PublicIdentities[0], reg.HSSHost, reg.ServerName, cx.TimeoutDeregistration)
 ```
 
-この処理は、利用者のロックを取ったあとで登録を読み直します。期限が来たと分かったあとで、ほかの台が再登録を受け付けているかもしれないからです。期限がまだ先なら、何もしません。期限が過ぎていれば、登録を保存先から消し、`expired` の最後の NOTIFY を送り、HSS に TIMEOUT_DEREGISTRATION（4）の SAR を送ります（TS 24.229 5.4.2.1.2、TS 29.228 6.1.2）。登録を探すのが 1 秒ごとなので、この 2 つのメッセージは期限そのものより 1 秒ほど遅れることがあります。そのあいだに利用者あての要求が来ても、S-CSCF は期限の過ぎた登録先へは送りません。
+この処理は、利用者のロックを取ったあとで登録を読み直します。期限が来たと分かったあとで、ほかの台が再登録か、期限が切れたあとの新しい登録を受け付けているかもしれないからです。期限がまだ先なら、何もしません。期限が過ぎていれば、登録を保存先から消し、`expired` の最後の NOTIFY を送り、HSS に TIMEOUT_DEREGISTRATION（4）の SAR を送ります（TS 24.229 5.4.2.1.2、TS 29.228 6.1.2）。登録を探すのが 1 秒ごとなので、この 2 つのメッセージは期限そのものより 1 秒ほど遅れることがあります。そのあいだに利用者あての要求が来ても、S-CSCF は期限の過ぎた登録先へは送りません。そのあいだに REGISTER が来ても、登録先は見つかりません。S-CSCF はその REGISTER を最初の登録として扱うので、SAR には RE_REGISTRATION ではなく `REGISTRATION` が入り、新しい登録を知らせる NOTIFY の contact の id も新しくなります。IMS-AKA の保護された REGISTER は、登録があるあいだは新しい問いが要りませんが、ここでは 500 を受けます（TS 24.229 5.4.1.2.3A）。UE はそこで最初の登録をやり直します。そうして登録し直したあとで期限を処理すると、読み直した登録の期限は先にあるので、期限切れの NOTIFY も SAR も送られません。
 
 コメントの `SIMPLIFIED:` は、消すことと知らせることの順についての簡略化です。この実装は、先に消してから NOTIFY と SAR を送ります。消したあとで台が止まると、どちらも送られず、購読者は期限切れを知らず、HSS は次の SAR まで利用者を登録済みとして扱います。逆の順にすると、消すのに失敗するたびに期限切れをもう一度処理し、NOTIFY と SAR を重ねて送ります。この実装は、重ねて送るほうを避けています。
 
@@ -483,6 +483,7 @@ UE は自分を登録するので、REGISTER の From と To は同じ識別子�
 - 同じファイルの `TestRegEventSubscriptionsThatAreRefused`。登録の無い利用者の購読が 480、利用者でも Path の P-CSCF でもない購読者と、別の P-CSCF が 403、reginfo を受け付けない購読が 406 で断られ、利用者自身の購読は受け付けられることを確かめています。
 - 同じファイルの `TestRegEventReportsAnExpiredContact`、`internal/scscf/scscf_test.go` の `TestRegistrationExpires`。期限が切れると `expired` の NOTIFY が届くこと、HSS に届く SAR が `REGISTRATION` と TIMEOUT_DEREGISTRATION であることを確かめています。
 - `internal/ue/regevent_test.go` の `TestRegEventReportsTheExpiryThroughTheWholeIMS`。IMS 全体を 1 つのプロセスで動かし、期限切れの NOTIFY が UE と P-CSCF に届き、P-CSCF が IP の対応付けを終えることを確かめています。
+- `internal/scscf/registration_deadline_test.go` の `TestRegisterAfterTheBindingExpiredStartsAfresh`、`TestDeregisterAfterTheBindingExpiredGets481`、`TestProtectedRegisterAfterTheBindingExpiredIsRefused`、`TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration`。見回りを 1 時間に 1 回にして、期限が切れたあとの REGISTER が `REGISTRATION` の SAR と新しい id の contact で 200 OK を受けること、解除が 481 を受けること、IMS-AKA の保護された REGISTER が 500 を受けることを確かめています。新しい登録のあとで処理した期限は、その登録を残し、SAR を送りません。
 - `internal/pcscf/regevent_test.go` の `TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation`。P-CSCF の SUBSCRIBE のヘッダ、再登録で購読し直さないこと、最後の NOTIFY のあと対応付けをしばらく残して UE あての要求を通し、UE からの要求は捨てることを確かめています。同じファイルの `TestRemovedByTheNetwork` は、上に引いた関数の場合分けの試験です。
 - `internal/scscf/services_test.go` の `TestThirdPartyRegister`。第三者 REGISTER の To、Contact、Expires、本文の MSISDN と、解除での Expires 0 の第三者 REGISTER を確かめています。
 - `internal/ipsmgw/regevent_test.go` の `TestThirdPartyRegisterSubscribesToTheRegistrationState`。IP-SM-GW の SUBSCRIBE のヘッダ、最初の NOTIFY のあとの PUR、同じ状態の NOTIFY では PUR を送らないこと、最後の NOTIFY で登録を取り消す PUR を送ることを確かめています。同じファイルの `TestContactWithoutTheFeatureTag` は、`+g.3gpp.smsip` の無い登録先では PUR を送らないことの試験です。

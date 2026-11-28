@@ -8,17 +8,17 @@
 - EPC と PCRF はスタブにし、役割 `epc` に置きます。
 - UE と EPC スタブのあいだは TS 24.301 の ESM のメッセージに合わせた HTTP の API にします。
 - UE の IP アドレスは加入者ごとの静的なアドレスにします。
-- IMS-AKA は既定では sec-agree と保護ポートの手順だけを行い、ESP をかけません。ESP（暗号化は null）は上書きの構成で有効にします。
-- AKA の版は AKAv1-MD5（RFC 3310）だけにします。
+- IMS-AKA は既定では sec-agree と保護ポートの手順だけを行い、ESP をかけません。ESP（暗号化は null）は上書きの構成で有効にし、秘匿までかける構成はその上に重ねる別の上書きにします。
+- AKA の版は AKAv2-SHA-256（RFC 4169）と AKAv1-MD5（RFC 3310）の両方にします。
 - P-CSCF と PCRF のあいだは Diameter の Rx（TS 29.214）です。
 
 | 主題 | 作り |
 | --- | --- |
 | UE と EPC スタブの境界 | UE の側に `AccessNetwork` のインタフェースを置き、EPC スタブへの HTTP のクライアントで実装します。メッセージの名前と項目は TS 24.301 の ESM のメッセージに合わせ、本文は JSON にします。bearer の活性化や解放のような網からの通知は、Server-Sent Events で送ります。NAS と S1 を省いたことを `SIMPLIFIED:` に書きます。SMS を NAS で届けるときは、同じインタフェースの後ろに NAS の実装を置きます。スタブを、インタフェースの境界で本格的な実装に差し替えられるようにするためです。 |
 | UE の IP アドレス | 加入者ごとの静的なアドレス（TS 23.401 5.3.1.1）にし、今の 1 つのブリッジ（ims0）に置きます。TUN は使いません。TUN はコンテナに NET_ADMIN が要るので、Open5GS と UERANSIM の構成で扱います。1 つのブリッジのままなら、キャプチャ（[environment-capture.md](environment-capture.md)）を変えずに済み、ホスト固有のネットワーク設定にも依りません。GTP-U と SGi を省いたことを `SIMPLIFIED:` に書きます。 |
-| IPsec | ESP は上書きの構成（`deploy/esp/`）で有効にし、既定は無効のままにします。暗号化は null にし、完全性の保護だけをかけます。TS 33.203 6.3 は完全性の保護をどの場合にも求め、秘匿は P-CSCF の方針が求めるときだけです（6.2）。`ealg=null` は sec-agree が運ぶ値の 1 つなので（Annex H）、実際の網にある組み合わせです。カーネルへの設定は `internal/ipsec` が `ip xfrm` のコマンドで行います。学習者が同じコマンドを手で打って `ip xfrm state` で結果を見られるようにするためで、netlink のライブラリを足さずに済みます。P-CSCF と UE のコンテナには NET_ADMIN が要ります。既定にしない理由は下の「ESP を既定にしない理由」にあります。 |
+| IPsec | ESP は上書きの構成（`deploy/esp/`）で有効にし、既定は無効のままにします。暗号化は null にし、完全性の保護だけをかけます。TS 33.203 6.3 は完全性の保護をどの場合にも求め、秘匿は P-CSCF の方針が求めるときだけです（6.2）。`ealg=null` は sec-agree が運ぶ値の 1 つなので（Annex H）、実際の網にある組み合わせです。カーネルへの設定は `internal/ipsec` が `ip xfrm` のコマンドで行います。学習者が同じコマンドを手で打って `ip xfrm state` で結果を見られるようにするためで、netlink のライブラリを足さずに済みます。P-CSCF と UE のコンテナには NET_ADMIN が要ります。既定にしない理由は下の「ESP を既定にしない理由」に、秘匿までかける構成は「秘匿までかける構成」にあります。 |
 | 平文の AKA | 既定では sec-agree（Security-Client、Security-Server、Security-Verify）と保護ポートの手順はそのまま行い、ESP だけを省きます。学習者がキャプチャで sec-agree の手順を見られるようにするためです。sec-agree を行って ESP だけを省く形は標準に無いので、`SIMPLIFIED:` に理由を書きます。IPsec を使わない AKA は、標準では TLS の上の AKAv2-SHA-256 だけです（TS 24.229 4.2B.1）。ESP を有効にすると、暗号化が null なのでキャプチャの中身は読めたまま、組み合わせは標準どおりになります。 |
-| AKA の版 | AKAv1-MD5（RFC 3310）だけにします。独立した試験相手の SIPp（[ue-simulator.md](ue-simulator.md)）が AKAv2 に対応していないので、同じ AKAv1-MD5 で比べるためです。TS 33.203 6.1.1 は、S-CSCF が AKAv2-SHA-256 と AKAv1-MD5 の両方を示し、UE が AKAv2-SHA-256 に対応することを求めています。AKAv2 を省いたことを `SIMPLIFIED:` に書きます。 |
+| AKA の版 | S-CSCF は AKAv2-SHA-256（RFC 4169）と AKAv1-MD5（RFC 3310）の両方を、AKAv2-SHA-256 を先にして示し、UE が選んだ版で response を確かめます。UE シミュレータは AKAv2-SHA-256 で答えます。TS 33.203 6.1.1 が求める形です。ただし TS 24.229 5.4.1.2.1A の項目 1 c は、401 の algorithm を「Authorization で受け取った値」にすると書いています。そこで、algorithm を指定してきた REGISTER にはその 1 つだけを返し、指定が無いとき（TS 24.229 5.1.1.2.2 の項目 a が UE に求める形）に両方を示します。独立した試験相手の SIPp（[ue-simulator.md](ue-simulator.md)）は AKAv2 に対応しないので、最初の REGISTER で AKAv1-MD5 を指定し、AKAv1-MD5 だけの challenge を受け取ります。2 つの条項が食い違っているので、どちらの条項にも従える形を選びました。 |
 | PCRF スタブ | 役割 `epc` の中に置きます。PGW のスタブとのあいだの Gx はプロセスの中の関数の呼び出しにし、`SIMPLIFIED:` に書きます。P-CSCF とのあいだの Rx は Diameter（TS 29.214）です。 |
 | EPC を通らない UE | ホストのソフトフォンのように EPC を通らない UE では、PCRF が IP-CAN_SESSION_NOT_AVAILABLE を返します。そのとき P-CSCF は、その UE の呼で Rx を使わずに進めます。 |
 | P-CSCF のダイアログ | P-CSCF は、自分で BYE を作るのに要るダイアログの情報（相手の Contact、To と From、CSeq、Route）を `Store` の後ろに置きます。bearer を失ったときに、網の側から呼を切るためです（TS 24.229 5.2.8.1.2）。どの台でもこの情報を読めるように、`Store` の後ろに置きます（[state-redundancy.md](state-redundancy.md)）。 |
@@ -52,6 +52,23 @@ ESP（暗号化は null）を上書きの構成で有効にする形を試しま
 
 手順書（`docs/guide/{en,ja}/volte.md`）は、有効にする手順、キャプチャの読み方、ESP が動く環境を、学習者向けに書きます。
 
+## 秘匿までかける構成
+
+ESP に秘匿までかける構成を、`deploy/esp/esp.yaml` の上に重ねる 1 つのファイル（`deploy/esp/encryption.yaml`）にしました。既定と、暗号化を null にした構成は、今までのままです。
+
+| 確かめたこと | 結果 |
+| --- | --- |
+| 秘匿をかけるかを誰が決めるか | P-CSCF です。TS 33.203 5.1.3 の項目 2 が、IMS 固有の暗号化を使うかを P-CSCF が決めるものとし、項目 1 は UE に、暗号化アルゴリズムを必ず提示するよう求めています。7.2 では、P-CSCF が自分の一覧のうち UE も対応している最初の組み合わせを選び、UE が秘匿のアルゴリズムを示さなかったときは、方針に従って null を選ぶか手順を中断します。秘匿をかけない設定の P-CSCF は、Security-Server に暗号化アルゴリズムを入れません（7.2）。6.2 は、P-CSCF の運用方針が求めるときに ESP が秘匿をかけるものとしています。そこで、方針を P-CSCF の設定（`sec_agree.esp.confidentiality`）に置きました。UE の設定は増やしていません。ESP をかける UE は aes-cbc も提示し、ESP をかけない UE は提示しません。何を提示しても暗号化しないためです。 |
+| `ealg` に使える値 | V20.0.0 の Annex H では `aes-cbc`、`aes-gcm`、`aes-gcm-us`、`null` です。`des-ede3-cbc` は削除されています。`aes-gcm` と `aes-gcm-us` は RFC 4106 の AES-GCM で、完全性チェック値は 16 オクテット、salt の作り方が違います。この 2 つは `alg=null` とだけ組み合わせます。Annex H は `hmac-sha-1-96` と `aes-cbc` を、Annex I は `aes-cbc` と `aes-gcm` を推奨していないと書いています。つまり標準が推奨するのは `alg=aes-gmac-us` か `alg=hmac-sha2-256-128`、`ealg` は `aes-gcm-us` か `null` です。 |
+| アルゴリズムの決め方の委譲先 | TS 33.203 7.1 は、暗号化アルゴリズムをどう決めるかを TS 33.210 5.3.3 に委ね、Annex H で示せるものだけを対象にします。5.3.3 は RFC 8221 の適合条件に従うよう求め、RFC 8221 の 5 章では鍵の長さが 128 ビットの AES-CBC が MUST です。さらに RFC 8221 の 3 章は、鍵交換のプロトコルを使わずに手で鍵を決める使い方で、AES-GCM を含むカウンタモードのアルゴリズムを使ってはならないとし、その使い方に向く MUST の暗号化アルゴリズムは AES-CBC だけだと書いています。IMS-AKA のアソシエーションは手で鍵を決めるものです（Annex H の "semi-manually keyed IPsec"）。つまり Annex H と Annex I の「推奨しない」と、7.1 が委ねた先の要求は、`aes-cbc` について逆を向いています。`aes-gcm-us` が SA ごとに salt を変えるのは、この危険への 3GPP の答えだと読めます。 |
+| 選んだ `ealg` | `aes-cbc` にしました。推奨されていない値であることは手順書にも書いています。理由は 4 つです。上の行の委譲先で MUST であり、手で鍵を決める使い方に残された 1 つであること、今の完全性のアルゴリズム（HMAC-SHA2-256-128）をそのまま横に残せること、鍵が CK そのもので導出が要らないこと（Annex I）、Wireshark の ESP の設定に `AES-CBC [RFC3602]` があり、復号の手順を学習者に見せられることです。AES-GCM にすると、完全性のアルゴリズムを `null` に変え、salt を FC = 0x59 の鍵導出関数で作り、`aes-gcm-us` では SA ごとに 2 ビットを XOR する処理も要ります。Wireshark の ESP の設定にある AES-GCM の項目は、完全性チェック値の長さごとに分かれていて、版によって名前が変わる恐れもあります。推奨される組み合わせを選ぶなら、この構成とは別に足すことになります。 |
+| 鍵の導出 | Annex I は、AES-CBC（RFC 3602、鍵の長さは 128 ビット）のとき CK_ESP = CK_IM とします。CK が 16 バイトなので、広げる処理はありません。IK_ESP は今までどおり、HMAC-SHA2-256-128 のための TS 33.220 Annex B.2.0 の鍵導出関数で作ります。6.2 と 6.3 は、CK_ESP と IK_ESP が 2 組 4 本のアソシエーションで同じだとしています。 |
+| カーネルへの入れ方 | state の `enc` に `cbc(aes)` と CK_ESP を渡します。暗号化が null のときは、同じ引数が `ecb(cipher_null)` と空の鍵でした。ほかは変わりません。CK_ESP は 32 桁の 16 進数なので、ログの鍵を隠す処理（`redact`）がそのまま当たります。 |
+| 学習者への鍵の渡し方 | P-CSCF が、作ったアソシエーションを Wireshark の ESP SAs の表の行としてファイルに書き足します（`sec_agree.esp.wireshark_sa_file`）。書き出す先はキャプチャの置き場で、ファイルを指定した構成だけが書きます。試験用の加入者の鍵だけが入ります。ほかに 3 つの案を考えました。ログに鍵を出す案は、鍵をログから隠す今の作りと逆になるのでやめました。1 行にワイルドカードを使って全部の SA をまとめる案は、Wireshark がアドレスと SPI の合う最初の行だけを使うので、加入者が 2 人以上だと 2 人目に違う鍵を渡してしまいます。キャプチャの中の 401（S-CSCF から P-CSCF へ）にある `ik` と `ck` から学習者自身が鍵を導く案は、鍵導出関数を手で回す道具が要ります。この案は手順書で、鍵の出どころの説明として残しました。 |
+| Wireshark の表の形 | `"IPv4","<src>","<dst>","0x<spi>","AES-CBC [RFC3602]","0x<CK_ESP>","HMAC-SHA-256-128 [RFC4868]","0x<IK_ESP>"` です。項目は、プロトコル、2 つのアドレス、SPI、暗号化アルゴリズムとその鍵、完全性のアルゴリズムとその鍵の順です。Wireshark 4.6.9 の `packet-ipsec.c` には、このあとに SN の長さと ESN の上位ビットの 2 項目もありますが、既定値（`32-bit` と `0`）があるので省けます。アルゴリズムの名前と、最初に合った行だけを使うことも、同じ `packet-ipsec.c`（`esp_encryption_type_vals`、`esp_authentication_type_vals`、`get_esp_sa`）で確かめました。 |
+| Go の試験（この環境） | 通ります。transform の引き当て、CK_ESP、ESP SAs の表の行、鍵のファイル、Security-Client と Security-Server の提示と選択を `internal/ipsec`、`internal/ims`、`internal/pcscf`、`internal/ue`、`internal/config` の試験で確かめます。 |
+| カーネルと Wireshark での動作（この環境） | 確かめられません。Docker が無いので、`cbc(aes)` の state をカーネルに入れることも、tshark に復号させることもできていません。CI の `e2e-esp-encryption` のジョブが確かめます。 |
+
 ## カーネルで分かったこと
 
 CI の実行と、xfrm を持たないカーネルでの `ip` の試しで分かったことです。コマンドの形は、ここに書いた形に直しました。
@@ -77,4 +94,8 @@ CI の実行と、xfrm を持たないカーネルでの `ip` の試しで分か
 
 ## 採らなかった案
 
-調査は、S-CSCF が AKAv2-SHA-256 と AKAv1-MD5 の両方を出し、UE シミュレータは AKAv2 を選ぶ案を勧めていました。上の「AKA の版」の理由で、AKAv1-MD5 だけにしました。
+401 で常に AKAv2-SHA-256 と AKAv1-MD5 の両方を出す案は採りませんでした。TS 24.229 5.4.1.2.1A の項目 1 c に反し、AKAv1-MD5 しか話さない SIPp が、自分の読めない challenge を先に受け取ることになるためです。SIPp が WWW-Authenticate を 2 つ受けたときにどう振る舞うかは、確かめていません。
+
+RFC 4169 の 4.1 章は両方の版を出すことを避けるよう勧めています。弱い版を選ばせる攻撃を受けるためです。algorithm を指定してきた REGISTER にその 1 つだけを返す形は、この勧めにも沿います。
+
+IPsec の SA の鍵は AKAv2 でも IK と CK のままにします。TS 33.203 は 6.1.1 で IK と CK を P-CSCF に渡し、6.2 と 6.3 で、その鍵を伸ばして ESP の鍵（CK_ESP、IK_ESP）を作ります（伸ばし方は Annex I）。RFC 4169 の 2.2 章は AKAv2 では IK と CK をそのまま別の用途に使わず、IK' と CK' を作るよう求めていますが、TS 33.203 には IK' と CK' の記述がありません。3GPP の仕様に従います。

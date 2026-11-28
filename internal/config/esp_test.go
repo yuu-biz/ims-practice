@@ -17,6 +17,7 @@ pcscf:
   sip:
     listen: 172.28.0.40:5060
     host: pcscf.ims.mnc001.mcc001.3gppnetwork.org
+  visited_network_id: ims.mnc001.mcc001.3gppnetwork.org
   sec_agree:
     protected_server_port: 5064
     esp:
@@ -40,6 +41,89 @@ func TestESPDeployment(t *testing.T) {
 	}
 	if addr := c.SIP.Listen.Addr(); !addr.IsValid() || addr.IsUnspecified() {
 		t.Errorf("sip.listen is on %s, want the P-CSCF's own address", addr)
+	}
+}
+
+// TestESPEncryptionDeployment: the P-CSCF of deploy/esp with
+// deploy/esp/encryption.yaml on top applies confidentiality and names
+// the file of the keys, in the directory of the captures.
+func TestESPEncryptionDeployment(t *testing.T) {
+	cfg, err := Load("../../deploy/esp/pcscf-encryption.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.PCSCF
+	if c == nil {
+		t.Fatal("deploy/esp/pcscf-encryption.yaml has no pcscf role")
+	}
+	if !c.Confidentiality {
+		t.Error("the P-CSCF of the deployment with encryption applies no confidentiality")
+	}
+	if c.WiresharkSAFile != "/captures/esp_sa" {
+		t.Errorf("it writes the keys to %q, want /captures/esp_sa", c.WiresharkSAFile)
+	}
+	// Everything else is the deployment with ESP, whose ports and
+	// address the security associations need.
+	esp, err := Load("../../deploy/esp/pcscf.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ProtectedServerPort != esp.PCSCF.ProtectedServerPort || c.ProtectedClientPort != esp.PCSCF.ProtectedClientPort ||
+		c.SIP.Listen != esp.PCSCF.SIP.Listen || c.VisitedNetworkID != esp.PCSCF.VisitedNetworkID {
+		t.Errorf("it differs from the P-CSCF of deploy/esp in more than the policy:\n%+v\n%+v", *c, *esp.PCSCF)
+	}
+}
+
+// TestESPConfidentiality: the P-CSCF decides whether the signalling is
+// encrypted (TS 33.203 5.1.3 item 2), and the esp section is where its
+// policy is set. Without it the P-CSCF applies no confidentiality,
+// which is what deploy/esp does, so that the SIP inside ESP stays
+// readable in a capture.
+func TestESPConfidentiality(t *testing.T) {
+	cfg, err := Parse(strings.NewReader(pcscfWithESP))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PCSCF.Confidentiality {
+		t.Error("a P-CSCF whose esp section says nothing of confidentiality applies it")
+	}
+	cfg, err = Parse(strings.NewReader(pcscfWithESP + "      confidentiality: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PCSCF.Confidentiality {
+		t.Error("a P-CSCF with confidentiality: true applies none")
+	}
+	// The policy needs ESP: only a P-CSCF that sets security
+	// associations up encrypts anything, and the protected client port
+	// is what gives it one.
+	without := strings.ReplaceAll(pcscfWithESP, "      protected_client_port: 5065\n", "")
+	if _, err := Parse(strings.NewReader(without + "      confidentiality: true\n")); err == nil {
+		t.Error("confidentiality without a protected client port was accepted")
+	}
+}
+
+// TestESPWiresharkSAFile: the keys of the security associations go to
+// the file the esp section names, for a reader of the capture. The path
+// is the one inside the container, so a relative path, which would
+// depend on where the node was started, is refused.
+func TestESPWiresharkSAFile(t *testing.T) {
+	cfg, err := Parse(strings.NewReader(pcscfWithESP))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PCSCF.WiresharkSAFile != "" {
+		t.Errorf("a P-CSCF whose esp section names no file writes %q", cfg.PCSCF.WiresharkSAFile)
+	}
+	cfg, err = Parse(strings.NewReader(pcscfWithESP + "      wireshark_sa_file: /captures/esp_sa\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PCSCF.WiresharkSAFile != "/captures/esp_sa" {
+		t.Errorf("the file is %q, want /captures/esp_sa", cfg.PCSCF.WiresharkSAFile)
+	}
+	if _, err := Parse(strings.NewReader(pcscfWithESP + "      wireshark_sa_file: esp_sa\n")); err == nil {
+		t.Error("a relative path was accepted")
 	}
 }
 

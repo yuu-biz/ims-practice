@@ -27,7 +27,7 @@ func TestAChallengePastItsExpiresIsNotAnswered(t *testing.T) {
 	now := time.Now()
 	must(t, store.PutChallenge(ctx, scscf.Challenge{
 		PrivateIdentity: impi, PublicIdentity: impu, CallID: callID, Realm: realm, Nonce: "n1",
-		Algorithm: "MD5", HA1: sip.HA1(impi, realm, password),
+		Algorithms: []string{"MD5"}, HA1: sip.HA1("MD5", impi, realm, password),
 		Expires: now.Add(-time.Second), KeepUntil: now.Add(time.Minute),
 	}))
 	if _, ok, err := store.Challenge(ctx, impi); err != nil || !ok {
@@ -37,7 +37,7 @@ func TestAChallengePastItsExpiresIsNotAnswered(t *testing.T) {
 	c := sip.Credentials{Username: impi, Realm: realm, Nonce: "n1", URI: "sip:" + domain,
 		Algorithm: "MD5", CNonce: "0a4f113b", QOP: "auth", NC: "00000001"}
 	var err error
-	if c.Response, err = sip.DigestResponse(sip.HA1(impi, realm, password), sip.REGISTER, c); err != nil {
+	if c.Response, err = sip.DigestResponse(sip.HA1(c.Algorithm, impi, realm, password), sip.REGISTER, c); err != nil {
 		t.Fatal(err)
 	}
 	c.AuthParams.Set("integrity-protected", `"ip-assoc-pending"`)

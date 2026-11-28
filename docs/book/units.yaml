@@ -74,8 +74,10 @@ units:
       - internal/scscf/scscf.go:accept
       - internal/scscf/scscf.go:deregister
       - internal/scscf/scscf.go:register
+      - internal/scscf/scscf.go:registration
     tests:
       - internal/scscf/scscf_test.go:TestRegisterOutOfOrderLeavesTheBindingAlone
+      - internal/scscf/registration_deadline_test.go:TestRegisterAfterTheBindingExpiredStartsAfresh
       - internal/sip/stack_test.go:TestServerTransactionAbsorbsRetransmissions
     standards:
       - RFC 3261 10.3 steps 6 and 7, 17.1.2, 17.2
@@ -157,6 +159,8 @@ units:
       - internal/scscf/scscf.go:register
       - internal/scscf/scscf.go:deregister
       - internal/scscf/scscf.go:registrationExpired
+      - internal/scscf/scscf.go:registration
+      - internal/scscf/aka.go:reregister
       - internal/scscf/scscf.go:deregistrationEvents
       - internal/scscf/scscf.go:registrationTermination
       - internal/ue/phone.go:Serve
@@ -171,8 +175,12 @@ units:
       - internal/scscf/regevent_test.go:TestRegistrationTerminationReasons
       - internal/ue/regevent_test.go:TestRegEventReportsTheExpiryThroughTheWholeIMS
       - internal/ue/regevent_test.go:TestRemovedSubscriptionIsDeregisteredThroughTheWholeIMS
+      - internal/scscf/registration_deadline_test.go:TestRegisterAfterTheBindingExpiredStartsAfresh
+      - internal/scscf/registration_deadline_test.go:TestDeregisterAfterTheBindingExpiredGets481
+      - internal/scscf/registration_deadline_test.go:TestProtectedRegisterAfterTheBindingExpiredIsRefused
+      - internal/scscf/registration_deadline_test.go:TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration
     standards:
-      - TS 24.229 V18.11.0 5.1.1.6.1, 5.1.1.7, 5.2.2.3, 5.3.1.3, 5.4.1.2.3B, 5.4.1.4.1, 5.4.1.5, 5.4.2.1.2
+      - TS 24.229 V18.11.0 5.1.1.6.1, 5.1.1.7, 5.2.2.3, 5.3.1.3, 5.4.1.2.3A, 5.4.1.2.3B, 5.4.1.4.1, 5.4.1.5, 5.4.2.1.2
       - TS 29.228 V18.0.0 6.1.1, 6.1.1.1, 6.1.2, 6.1.2.1, 6.1.3, A.4.4.2
       - TS 23.228 5.3.1
     evidence: [code, test]
@@ -407,6 +415,7 @@ units:
       - internal/scscf/scscf.go:outOfOrder
       - internal/scscf/scscf.go:accept
       - internal/scscf/scscf.go:deregister
+      - internal/scscf/scscf.go:registration
       - internal/scscf/aka.go:reregister
       - internal/kvstore/scscfstore/scscfstore.go:RegistrationOf
       - internal/kvstore/kvlock/kvlock.go:Lock
@@ -421,6 +430,10 @@ units:
       - internal/kvstore/scscfstore/challenge_deadline_test.go:TestAChallengePastItsExpiresIsNotAnswered
       - internal/kvstore/scscfstore/instances_test.go:TestARegistrationRefreshedBeforeItsExpiryIsHandled
       - internal/scscf/session_test.go:TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact
+      - internal/scscf/registration_deadline_test.go:TestRegisterAfterTheBindingExpiredStartsAfresh
+      - internal/scscf/registration_deadline_test.go:TestDeregisterAfterTheBindingExpiredGets481
+      - internal/scscf/registration_deadline_test.go:TestProtectedRegisterAfterTheBindingExpiredIsRefused
+      - internal/scscf/registration_deadline_test.go:TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration
       - internal/scscf/scscf_test.go:TestRegAwaitAuthExpiry
       - internal/scscf/scscf_test.go:TestFailedReauthenticationKeepsTheRegistrationExpiry
       - internal/scscf/scscf_test.go:TestUsersDoNotWaitForEachOther
@@ -431,7 +444,7 @@ units:
       - internal/kvstore/kvlock/kvlock_test.go:TestStoppedHolder
     standards:
       - RFC 3261 10.3 (the paragraph before the steps, steps 6 and 7), 17.2.2
-      - TS 24.229 V18.11.0 3.1, 5.2.2.2, 5.4.1.2.1, 5.4.1.2.2, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3B, Table 7.8.1
+      - TS 24.229 V18.11.0 3.1, 5.2.2.2, 5.4.1.2.1, 5.4.1.2.2, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3A, 5.4.1.2.3B, 5.4.1.4.1, Table 7.8.1
       - TS 29.228 V18.0.0 6.1.2.1
     evidence: [code, test, illustration]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
@@ -499,6 +512,7 @@ units:
       - internal/pcscf/session.go:goBack
       - internal/pcscf/session.go:notRelayed
       - internal/pcscf/session.go:mediaGone
+      - internal/pcscf/setup.go:authorize
       - internal/agw/api.go:ErrRejected
       - internal/ims/route.go:Finish
       - internal/ibcf/call.go:Unanswered
@@ -511,6 +525,9 @@ units:
       - internal/pcscf/rollback_test.go:TestRejectedOfferGoesBackToTheLastOfferAndAnswer
       - internal/pcscf/rollback_test.go:TestRejectedOfferEndsTheCallWhenTheRelayDoesNotGoBack
       - internal/pcscf/rollback_test.go:TestRejectedOfferAfterAPreviewPutsBothSidesBack
+      - internal/pcscf/renegotiate_test.go:TestRejectedOfferAfterAPreviewKeepsTheAuthorisedMedia
+      - internal/pcscf/renegotiate_test.go:TestAnswerAfterAPreviewIsAuthorisedOnce
+      - internal/pcscf/renegotiate_test.go:TestRejectedOfferAfterAReliableAnswerKeepsTheNewMedia
       - internal/pcscf/refusedoffer_test.go:TestRefusedOfferWithinTheDialogIsRejected
       - internal/pcscf/refusedoffer_test.go:TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt
       - internal/pcscf/refusedanswer_test.go:TestRefusedAnswerWithinTheDialogReleasesTheCall
@@ -528,7 +545,7 @@ units:
       - RFC 3311 5.3
       - RFC 6141 3.3, 3.4
       - TS 24.229 V18.11.0 5.2.8.1.2, 5.10.2.4, 5.10.3.4, 6.1.4.2, 6.7.2.1
-      - TS 29.214 4.4.2
+      - TS 29.214 V20.0.0 4.4.2, A.1
     evidence: [code, test, illustration]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
   - id: design-maintenance

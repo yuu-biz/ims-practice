@@ -46,15 +46,19 @@ type ESP struct {
 	Kernel *ipsec.Kernel
 }
 
-// SIMPLIFIED: TS 33.203 7.1 and TS 24.229 5.1.1.5.1. IPsec ESP is an
-// option, and it is off unless AKA.ESP is set. Then the UE agrees on
-// security associations with the P-CSCF, derives IK and CK, and sends
-// every protected message from its protected server port to the
-// P-CSCF's; its protected client port is agreed but never bound. With
-// AKA.ESP it binds that port, sends its requests from it and puts the
-// four security associations of the agreement into the kernel
-// (internal/ipsec). internal/pcscf/secagree.go gives the reasons and
-// what is left out either way.
+// SIMPLIFIED: TS 33.203 5.1.3, 7.1 and TS 24.229 5.1.1.5.1. IPsec ESP
+// is an option, and it is off unless AKA.ESP is set. Then the UE agrees
+// on security associations with the P-CSCF, derives IK and CK, and
+// sends every protected message from its protected server port to the
+// P-CSCF's; its protected client port is agreed but never bound, and
+// its Security-Client offers no encryption algorithm, where TS 33.203
+// 5.1.3 item 1 has the UE always offer the ones it supports. With
+// AKA.ESP it binds that port, sends its requests from it, offers the
+// encryption algorithm as well and puts the four security associations
+// of the agreement into the kernel (internal/ipsec). A UE that sets no
+// ESP up encrypts nothing whatever it offered.
+// internal/pcscf/secagree.go gives the reasons and what is left out
+// either way.
 
 // securityAssociations is the UE's side of the agreement with the
 // P-CSCF: an entry of its SA table (TS 33.203 7.1 rule 5).
@@ -81,10 +85,28 @@ type securityAssociations struct {
 }
 
 // akaAnswer is the last Authorization that answered a challenge, with
-// the RES it was computed with.
+// the password it was computed with. The rspauth of the 200 is computed
+// with the same one (RFC 3310 3.5).
 type akaAnswer struct {
-	creds sip.Credentials
-	res   []byte
+	creds    sip.Credentials
+	password string
+}
+
+// akaAlgorithms are the algorithms of IMS AKA that the UE answers,
+// AKAv2-SHA-256 first (TS 33.203 6.1.1). The UE takes the topmost
+// challenge of a 401 whose algorithm is one of them (TS 24.229
+// 5.1.1.5.1), so the order of the 401 decides and this list only says
+// what the UE understands.
+var akaAlgorithms = []string{sip.AlgorithmAKAv2SHA256, sip.AlgorithmAKAv1MD5}
+
+// akaPassword is the Digest password of the AKA version that algorithm
+// names: RES for AKAv1-MD5 (RFC 3310 3.3), and RES with IK and CK for
+// AKAv2-SHA-256 (RFC 4169 2.1).
+func akaPassword(algorithm string, res aka.Response) string {
+	if strings.EqualFold(algorithm, sip.AlgorithmAKAv2SHA256) {
+		return aka.AKAv2DigestPassword(res.RES, res.IK, res.CK)
+	}
+	return aka.DigestPassword(res.RES)
 }
 
 // maxChallenges bounds the 401s that one Register answers. After a
@@ -191,8 +213,9 @@ func (u *UE) setSecurityAssociations(sa *securityAssociations) {
 // and unprotected otherwise.
 func (u *UE) sendAKA(ctx context.Context, expires time.Duration) (*sip.Message, error) {
 	over := u.securityAssociations()
-	creds := sip.Credentials{Username: u.cfg.PrivateIdentity, Realm: u.cfg.HomeDomain, URI: "sip:" + u.cfg.HomeDomain,
-		Algorithm: sip.AlgorithmAKAv1MD5}
+	// 5.1.1.2.2 item a names no algorithm, so the S-CSCF offers every
+	// algorithm it has and the UE chooses from them (TS 33.203 6.1.1).
+	creds := sip.Credentials{Username: u.cfg.PrivateIdentity, Realm: u.cfg.HomeDomain, URI: "sip:" + u.cfg.HomeDomain}
 	if over != nil && u.answer != nil {
 		// 5.1.1.4.2 item a and 5.1.1.6.2: the last nonce and response.
 		creds = u.answer.creds
@@ -244,9 +267,11 @@ func (u *UE) sendAKA(ctx context.Context, expires time.Duration) (*sip.Message, 
 			if err := u.setUpESP(sentOver, over); err != nil {
 				return nil, err
 			}
-			u.answer = &akaAnswer{creds: u.answerCredentials(ch, result.RES), res: result.RES}
+			password := akaPassword(ch.Algorithm, result)
+			u.answer = &akaAnswer{creds: u.answerCredentials(ch, password), password: password}
 			creds = u.answer.creds
-			u.log.Info("challenged", "realm", ch.Realm, "nonce", ch.Nonce, "alg", offer.Algorithm, "pcscf", sentOver.pcscf.String())
+			u.log.Info("challenged", "realm", ch.Realm, "nonce", ch.Nonce, "algorithm", ch.Algorithm,
+				"alg", offer.Algorithm, "pcscf", sentOver.pcscf.String())
 		}
 		resp, err = u.sendOver(ctx, expires, sentOver, client, creds)
 		if err != nil {
@@ -350,23 +375,35 @@ func (u *UE) newSecurityClient(old *securityAssociations) []ims.IPsec3GPP {
 		portC = esp.ProtectedClientPort
 	}
 	var client []ims.IPsec3GPP
-	for _, t := range ims.SupportedTransforms {
+	for _, t := range ims.SupportedTransforms(u.confidentiality()) {
 		client = append(client, ims.IPsec3GPP{Transform: t, SPIC: spiC, SPIS: spiS, PortC: portC, PortS: portS})
 	}
 	return client
 }
 
+// confidentiality says whether the UE offers an encryption algorithm.
+// TS 33.203 5.1.3 item 1 has it always offer one, and it does wherever
+// it sets ESP up; a UE that sets none up encrypts nothing whatever it
+// offered, so it offers null encryption alone.
+func (u *UE) confidentiality() ims.Confidentiality {
+	if u.esp() == nil {
+		return ims.WithoutConfidentiality
+	}
+	return ims.WithConfidentiality
+}
+
 // readChallenge reads a 401 as TS 24.229 5.1.1.5.1 asks: the topmost
-// challenge with AKAv1-MD5, and a Security-Server with parameters for
-// the associations. It returns the challenge, the Security-Server to
-// mirror and the mechanism that the UE takes from it (TS 33.203 7.2).
+// challenge whose algorithm the UE supports, and a Security-Server with
+// parameters for the associations. It returns the challenge, the
+// Security-Server to mirror and the mechanism that the UE takes from it
+// (TS 33.203 7.2).
 func readChallenge(resp *sip.Message, client []ims.IPsec3GPP) (sip.Challenge, []string, ims.IPsec3GPP, ims.IPsec3GPP, error) {
 	i := slices.IndexFunc(resp.GetAll("WWW-Authenticate"), func(v string) bool {
 		ch, err := sip.ParseChallenge(v)
-		return err == nil && strings.EqualFold(ch.Algorithm, sip.AlgorithmAKAv1MD5)
+		return err == nil && slices.ContainsFunc(akaAlgorithms, func(a string) bool { return strings.EqualFold(ch.Algorithm, a) })
 	})
 	if i < 0 {
-		return sip.Challenge{}, nil, ims.IPsec3GPP{}, ims.IPsec3GPP{}, errors.New("401 without an AKAv1-MD5 challenge")
+		return sip.Challenge{}, nil, ims.IPsec3GPP{}, ims.IPsec3GPP{}, errors.New("401 without a challenge of an AKA version the UE supports")
 	}
 	ch, _ := sip.ParseChallenge(resp.GetAll("WWW-Authenticate")[i])
 	// Item 3. The UE gives up rather than send a REGISTER with a new
@@ -383,11 +420,11 @@ func readChallenge(resp *sip.Message, client []ims.IPsec3GPP) (sip.Challenge, []
 	return ch, resp.GetAll("Security-Server"), offer, mine, nil
 }
 
-// answerCredentials answer ch with RES as the password (RFC 3310 3.3),
-// with the fields of TS 24.229 5.1.1.5.1 item 4.
-func (u *UE) answerCredentials(ch sip.Challenge, res []byte) sip.Credentials {
+// answerCredentials answer ch with the password of its algorithm
+// (akaPassword), with the fields of TS 24.229 5.1.1.5.1 item 4.
+func (u *UE) answerCredentials(ch sip.Challenge, password string) sip.Credentials {
 	c := u.challengeCredentials(ch)
-	c.Response, _ = sip.DigestResponse(sip.HA1(u.cfg.PrivateIdentity, ch.Realm, aka.DigestPassword(res)), sip.REGISTER, c)
+	c.Response, _ = sip.DigestResponse(sip.HA1(ch.Algorithm, u.cfg.PrivateIdentity, ch.Realm, password), sip.REGISTER, c)
 	return c
 }
 
@@ -401,7 +438,7 @@ func (u *UE) failureCredentials(ch sip.Challenge, auts *aka.AUTS) sip.Credential
 	}
 	c := u.challengeCredentials(ch)
 	c.SetAUTS(aka.EncodeAUTS(*auts))
-	c.Response, _ = sip.DigestResponse(sip.HA1(u.cfg.PrivateIdentity, ch.Realm, ""), sip.REGISTER, c)
+	c.Response, _ = sip.DigestResponse(sip.HA1(ch.Algorithm, u.cfg.PrivateIdentity, ch.Realm, ""), sip.REGISTER, c)
 	return c
 }
 

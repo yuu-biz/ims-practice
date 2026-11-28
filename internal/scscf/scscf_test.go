@@ -343,7 +343,7 @@ func answer(t *testing.T, resp *sip.Message, pass, integrity string) (string, si
 	}
 	c := sip.Credentials{Username: impi, Realm: ch.Realm, Nonce: ch.Nonce, URI: "sip:" + domain,
 		Algorithm: "MD5", CNonce: "0a4f113b", QOP: "auth", NC: "00000001"}
-	c.Response, err = sip.DigestResponse(sip.HA1(impi, ch.Realm, pass), sip.REGISTER, c)
+	c.Response, err = sip.DigestResponse(sip.HA1(c.Algorithm, impi, ch.Realm, pass), sip.REGISTER, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ func TestRegistrationWithSIPDigest(t *testing.T) {
 	if got := r.Get("Contact"); !strings.HasSuffix(got, ";expires=3600") {
 		t.Errorf("Contact = %q, want expires=3600", got)
 	}
-	rspauth, _ := sip.DigestResponse(sip.HA1(impi, domain, password), "", creds)
+	rspauth, _ := sip.DigestResponse(sip.HA1(creds.Algorithm, impi, domain, password), "", creds)
 	if got := r.Get("Authentication-Info"); !strings.Contains(got, `rspauth="`+rspauth+`"`) {
 		t.Errorf("Authentication-Info = %q, want rspauth %s", got, rspauth)
 	}
@@ -695,7 +695,7 @@ func TestAnotherSCSCFTookTheUserOver(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		creds := akaAnswer(ch, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes)
+		creds := akaAnswer(ch, akaPassword(ch, res), sip.IntegrityProtectedYes)
 		if r := h.register(callID, 2, 600000, creds.String()); r.StatusCode != 200 {
 			t.Fatalf("registration got %d, want 200", r.StatusCode)
 		}

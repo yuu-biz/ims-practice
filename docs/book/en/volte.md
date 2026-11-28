@@ -71,7 +71,7 @@ In the code of the S-CSCF, this fork is these lines.
 	}
 ```
 
-`integrity` is the value of `integrity-protected` that the P-CSCF wrote into Authorization. `no` means the first registration of IMS AKA, `yes` a REGISTER that came protected (TS 24.229 5.4.1.1). Anything else goes on to the handling of SIP Digest further down. For a registration with SIP Digest, the S-CSCF left the scheme `Unknown` for the HSS to choose. For IMS AKA, `challengeAKA`, which `registerAKA` calls, asks in the MAR for one item of the scheme `Digest-AKAv1-MD5` (TS 29.229 6.3.9).
+`integrity` is the value of `integrity-protected` that the P-CSCF wrote into Authorization. `no` means the first registration of IMS AKA, `yes` a REGISTER that came protected (TS 24.229 5.4.1.1). Anything else goes on to the handling of SIP Digest further down. For a registration with SIP Digest, the S-CSCF left the scheme `Unknown` for the HSS to choose. For IMS AKA, `challengeAKA`, which `registerAKA` calls, asks in the MAR for one item of the scheme `Digest-AKAv1-MD5` (TS 29.229 6.3.9). That name covers both versions of Digest AKA. The HSS builds the same vector for either version; the version only decides how the Digest password is made from the vector.
 
 ![The S-CSCF sends a MAR, the HSS computes an authentication vector and returns RAND and AUTN, XRES, CK and IK in the MAA](figures/09-volte.challenge.maa.svg)
 
@@ -96,16 +96,22 @@ func NewAuthenticationVector(secret Secret, rand RAND, sqn SQN, amf AMF) Authent
 
 f1 to f5 are the functions of MILENAGE. f1 makes the MAC that authenticates the network, f2 the XRES that the phone's answer should match, f3 and f4 the keys CK and IK of the associations, and f5 the key AK that hides the SQN. AUTN is SQN ⊕ AK (6 octets), the AMF (2 octets) and the MAC (8 octets) in a row. A USIM with the same K and OPc can redo the same computation once it has RAND and AUTN.
 
-The S-CSCF puts RAND and AUTN side by side in base64 as the nonce of the 401 (RFC 3310 3.2). It stores RAND and XRES with the challenge, to check the answer. It hands CK and IK to the P-CSCF in the parameters `ik` and `ck` (TS 24.229 5.4.1.2.1A).
+The S-CSCF puts RAND and AUTN side by side in base64 as the nonce of the 401 (RFC 3310 3.2). It hands CK and IK to the P-CSCF in the parameters `ik` and `ck` (TS 24.229 5.4.1.2.1A). With the challenge it stores RAND, XRES, IK and CK: RAND to hand back to the HSS for a re-synchronisation, the other three to check the answer. The 401 has one WWW-Authenticate for each algorithm it offers.
 
 [internal/scscf/aka.go](../../../internal/scscf/aka.go)
 
 ```go
-	challenge := sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: ch.Algorithm, QOP: []string{"auth"}}
-	// 5.4.1.2.1A item 1 c: IK and CK for the P-CSCF (7.2A.1).
-	challenge.SetKeys(hex.EncodeToString(av.IK[:]), hex.EncodeToString(av.CK[:]))
-	s.respond(st, 401, func(r *sip.Message) { r.Add("WWW-Authenticate", challenge.String()) })
+	s.respond(st, 401, func(r *sip.Message) {
+		for _, algorithm := range ch.Algorithms {
+			challenge := sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: algorithm, QOP: []string{"auth"}}
+			// 5.4.1.2.1A item 1 c: IK and CK for the P-CSCF (7.2A.1).
+			challenge.SetKeys(hex.EncodeToString(av.IK[:]), hex.EncodeToString(av.CK[:]))
+			r.Add("WWW-Authenticate", challenge.String())
+		}
+	})
 ```
+
+`ch.Algorithms` is the list that the same function chose with `akaAlgorithms`, the most preferred first. A REGISTER whose Authorization names no algorithm is offered two: `AKAv2-SHA-256` first, then `AKAv1-MD5`, which is kept for backward compatibility (TS 33.203 6.1.1). A REGISTER that names one of them is offered that one alone (TS 24.229 5.4.1.2.1A). The VoLTE phones of this setup name no algorithm in their first REGISTER, so their 401 has two WWW-Authenticate. Both stand for the one authentication vector, so they carry the same nonce and the same `ik` and `ck`.
 
 `ch.Nonce` is the value the same function made with `aka.Nonce(av.RAND, av.AUTN)`. Decoded from base64, the nonce is the same 32 octets as the SIP-Authenticate of the MAA. The first 16 octets are RAND and the rest AUTN, whose octets 7 and 8 are the AMF. For the subscribers of this setup the AMF is `0000`.
 
@@ -174,9 +180,29 @@ func (u *USIM) Authenticate(rand RAND, autn AUTN) (Response, error) {
 
 The input is the RAND and AUTN taken out of the nonce. The function recovers the SQN that AK hides, computes the MAC again with its own K, and compares it with the MAC of the AUTN. If they match, the network knows the same K. If not, it fails with `ErrMACFailure` and the phone makes no answer. It then checks that the SQN is fresh (TS 33.102 C.2), and returns `SynchronisationFailure` if not. That failure carries an AUTS, which the phone puts into its next REGISTER. The S-CSCF hands the RAND it stored and the AUTS to the HSS in a MAR, and challenges again with a vector for which the HSS has set SQN_HE right. Only a challenge that passes both checks moves the USIM's SQN forward and gives RES, CK and IK.
 
-The Digest response of the second REGISTER is computed with RES as the password (RFC 3310 3.3). It goes from the phone's protected server port 5062 to the P-CSCF's protected server port 5064. The phone puts its Security-Client in again and copies the Security-Server it got into `Security-Verify`, so that the P-CSCF can check that nobody on the way removed a stronger offer (RFC 3329).
+The phone takes the topmost algorithm of the 401 that it supports, here `AKAv2-SHA-256`, and names it in its Authorization (TS 24.229 5.1.1.5.1). The Digest password of that version is made from an HMAC-SHA-256 keyed with RES, IK and CK, and the Digest is computed with SHA-256 too (RFC 4169 2.1). So the response shows that the phone holds the session keys and not RES alone. With `AKAv1-MD5` the password is RES itself and the Digest is MD5 (RFC 3310 3.3). The second REGISTER goes from the phone's protected server port 5062 to the P-CSCF's protected server port 5064. The phone puts its Security-Client in again and copies the Security-Server it got into `Security-Verify`, so that the P-CSCF can check that nobody on the way removed a stronger offer (RFC 3329).
 
-The P-CSCF checks that the REGISTER came to the protected port, that the associations have the same private identity, and that Security-Verify and Security-Client are those it remembered, and forwards it with `integrity-protected="yes"` (TS 24.229 5.2.2.2). If one of them differs, it refuses with 403 or 494. The S-CSCF computes the same Digest with the XRES it stored and compares; if they match, it tells the HSS of the registration with a SAR (TS 24.229 5.4.1.2.2).
+The P-CSCF checks that the REGISTER came to the protected port, that the associations have the same private identity, and that Security-Verify and Security-Client are those it remembered, and forwards it with `integrity-protected="yes"` (TS 24.229 5.2.2.2). If one of them differs, it refuses with 403 or 494.
+
+The S-CSCF checks that the algorithm the phone named is one the 401 offered, and then makes the H(A1) of that algorithm from the challenge it stored.
+
+[internal/scscf/store.go](../../../internal/scscf/store.go)
+
+```go
+func (c Challenge) digestHA1(algorithm string) string {
+	switch {
+	case !c.offers(algorithm):
+		return ""
+	case strings.EqualFold(algorithm, sip.AlgorithmAKAv1MD5):
+		return sip.HA1(algorithm, c.PrivateIdentity, c.Realm, aka.DigestPassword(c.XRES))
+	case strings.EqualFold(algorithm, sip.AlgorithmAKAv2SHA256):
+		return sip.HA1(algorithm, c.PrivateIdentity, c.Realm, aka.AKAv2DigestPassword(c.XRES, c.IK, c.CK))
+	}
+	return c.HA1
+}
+```
+
+The password is made as the phone makes it, with XRES in place of RES: XRES alone for `AKAv1-MD5`, XRES, IK and CK for `AKAv2-SHA-256`. An algorithm the 401 did not offer has no H(A1), so its response is refused with 403. The last line, `c.HA1`, is for a challenge of SIP Digest, whose H(A1) the HSS hands over. The S-CSCF computes the Digest with this H(A1) and compares it with the phone's response; if they match, it tells the HSS of the registration with a SAR (TS 24.229 5.4.1.2.2).
 
 ![The 200 OK goes back from port 5064 of the P-CSCF to port 5062 of the phone, and the associations are established](figures/09-volte.answer.ok.svg)
 
@@ -187,6 +213,8 @@ The 200 OK comes back over the associations, and the P-CSCF turns the temporary 
 The standard protects the messages after the 401 with IPsec ESP, with keys derived from IK and CK (TS 33.203 7.1). By default this setup agrees on the associations, keeps them, and uses the protected ports, but puts no ESP on the signalling, so that the SIP of a registered VoLTE phone reads in the captures too. IMS AKA without protection is not in the standard: it is a simplification of this implementation. So, by default, the protected client ports (`port-c`) are agreed on but never used, and the P-CSCF takes a message as protected because it came to the protected server port.
 
 The setup in `deploy/esp` puts ESP between the UE and the P-CSCF. It protects the integrity with the algorithm the two ends agreed on, and encrypts with null (`ealg=null`). TS 33.203 6.3 asks for the integrity protection of ESP in every case, and confidentiality only when the P-CSCF's policy asks for it (6.2), so this is a form a real network can run. As the encryption is null, the SIP in the captures reads in this setup too. How to read it, and how the associations in the kernel look, is in ["The same agreement with ESP"](../../guide/en/volte.md#the-same-agreement-with-esp) of the guide.
+
+With `deploy/esp/encryption.yaml` on top of it, the P-CSCF's policy asks for confidentiality, and ESP encrypts too, with AES-CBC. The P-CSCF offers `ealg=aes-cbc` before `ealg=null`, and selects AES-CBC for a phone that offers aes-cbc too (TS 33.203 7.2). The phones' settings do not change: a phone that sets up ESP offers the encryption algorithms it supports from the start. In the capture, the only things left readable between a phone and the P-CSCF are the first REGISTER and its 401. The keys are not in the capture, so Wireshark decrypts with the keys that the P-CSCF writes to a file. How is in ["The signalling encrypted"](../../guide/en/volte.md#the-signalling-encrypted) of the guide.
 
 ## The identities of a phone without an ISIM
 
@@ -349,7 +377,7 @@ The main simplifications that touch this chapter. Each of them has a `SIMPLIFIED
 | --- | --- | --- |
 | EPC stub | No NAS encoding, S1-AP, radio, GTP-U, Gx or authentication of the attach. A bearer is a record, and no QoS is enforced | What is read is the procedure, not the encoding. The PCRF and the PDN GW are in one node |
 | PCRF | Audio only, with QCI 1. No DRA | A call of this network has one audio stream |
-| P-CSCF and UE | No ESP by default (the setup in `deploy/esp` has it). The S-CSCF speaks AKAv1-MD5 only | So that the captures read. SIPp, the independent test peer, speaks AKAv1-MD5 only |
+| P-CSCF and UE | No ESP by default (the setup in `deploy/esp` has it) | So that the captures read |
 | UE | Uses only the first P-CSCF of the list in the PCO | In every setup the stub gives one address |
 | P-CSCF | Releases at once when a bearer is lost, and sends a BYE to the served phone too | A call has one audio stream. Without the BYE the phone would stay in the call |
 | UE and AMR | The CMR and the mode-set are not followed | The UE cannot encode |
@@ -362,8 +390,12 @@ The explanation in this chapter was checked against the following code and tests
 - `TestNetworkEndsTheCallWhenItTakesTheBearer` in `internal/ue/volte_epc_test.go`. When the stub releases the caller's voice bearer, the PCRF tells the P-CSCF, and the P-CSCF ends the call with a BYE to each side.
 - `TestIMSAKAThroughTheWholeIMS` in `internal/ue/aka_ims_test.go`. Through every node, a phone whose USIM is ahead of the HSS registers after one re-synchronisation, then calls and sends a short message, all over the protected server port.
 - `TestRegistrationWithIMSAKA`, `TestIMSAKAResynchronisation` and `TestIMSAKANetworkAuthenticationFailure` in `internal/scscf/aka_test.go`. The S-CSCF challenges with RAND and AUTN and with IK and CK for the P-CSCF and checks the answer against XRES; it challenges again with the AUTS; and it answers 403 to a phone that could not authenticate the network.
+- `TestIMSAKAOfferedAlgorithms` and `TestIMSAKAAcceptsTheAlgorithmTheUEChose` in `internal/scscf/aka_test.go`. The 401 to a REGISTER that names no algorithm offers two challenges, `AKAv2-SHA-256` then `AKAv1-MD5`, with the same nonce and with `ik` and `ck`; a REGISTER that names an algorithm is offered that one alone; and the answer of either version that the phone chose is accepted.
+- `TestIMSAKAAnswersWithAKAv2` in `internal/ue/aka_ims_test.go`. The first REGISTER has no algorithm, and the phone chooses `AKAv2-SHA-256` and answers with a SHA-256 response of 64 hex digits.
 - `TestIMSAKASecurityAgreement` in `internal/pcscf/secagree_test.go`. The Security-Client stays at the P-CSCF, the 401 loses `ik` and `ck` and gains Security-Server, and the answer that comes protected goes on with `integrity-protected="yes"`.
 - `TestUSIMAcceptsTheNetworksVector` and `TestResynchronisation` in `internal/aka/aka_test.go`. The USIM accepts the network's vector and gives the same RES and keys, and an SQN out of step is set right with the AUTS.
+- `TestAKAv2DigestPasswordFromTestSet1` in `internal/aka/digest_test.go`. The password of AKAv2-SHA-256 is made from the RES, IK and CK of a vector of the TS 35.208 test data as RFC 4169 2.1 says.
+- `TestESPConfidentialityPolicy` and `TestESPKeysForWireshark` in `internal/pcscf/esp_test.go`. A P-CSCF whose policy asks for confidentiality offers `ealg=aes-cbc` before `ealg=null` and selects AES-CBC, and writes the keys of each set of associations to the configured file, as rows of Wireshark's ESP SAs table.
 - `TestUEWithoutIPCANSessionRegistersWithoutPolicyControl` and `TestTerminatingCallHasItsMediaAuthorised` in `internal/pcscf/policy_test.go`. A phone the PCRF does not know registers all the same, and the callee's P-CSCF asks for the media of a call with the answer.
 - `TestAttachGivesTheAddressAndTheP_CSCFs` and `TestTheMediaOfACallGetAVoiceBearer` in `internal/epc/epc_test.go`. ATTACH ACCEPT gives the default bearer with QCI 5, the static address and the P-CSCF address, and the AAR of a call makes a voice bearer with QCI 1.
 - `TestVoLTEFlow` in `internal/precondition/precondition_test.go`. The precondition lines of the four SDPs of the table above.

@@ -408,7 +408,7 @@ func (p *phone) register(expires int) {
 		}
 		creds.Realm, creds.Nonce, creds.Opaque = ch.Realm, ch.Nonce, ch.Opaque
 		creds.Algorithm, creds.QOP, creds.CNonce, creds.NC = "MD5", "auth", rand.Text()[:16], "00000001"
-		creds.Response, _ = sip.DigestResponse(sip.HA1(p.impi, ch.Realm, p.password), sip.REGISTER, creds)
+		creds.Response, _ = sip.DigestResponse(sip.HA1(creds.Algorithm, p.impi, ch.Realm, p.password), sip.REGISTER, creds)
 		resp = p.sendRegister(expires, creds.String())
 	}
 	if resp.StatusCode != 200 {

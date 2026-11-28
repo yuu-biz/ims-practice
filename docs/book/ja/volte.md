@@ -71,7 +71,7 @@ S-CSCF のコードでは、この分かれ道が次の数行です。
 	}
 ```
 
-`integrity` は、P-CSCF が Authorization に書いた `integrity-protected` の値です。`no` なら IMS-AKA の最初の登録、`yes` なら保護された経路を通った REGISTER です（TS 24.229 5.4.1.1）。どちらでもなければ、この先の SIP Digest の処理に進みます。SIP Digest の登録では、S-CSCF は方式を `Unknown` にして HSS に選ばせていました。IMS-AKA では、`registerAKA` の先の `challengeAKA` が MAR で方式 `Digest-AKAv1-MD5` の項目を 1 つ求めます（TS 29.229 6.3.9）。
+`integrity` は、P-CSCF が Authorization に書いた `integrity-protected` の値です。`no` なら IMS-AKA の最初の登録、`yes` なら保護された経路を通った REGISTER です（TS 24.229 5.4.1.1）。どちらでもなければ、この先の SIP Digest の処理に進みます。SIP Digest の登録では、S-CSCF は方式を `Unknown` にして HSS に選ばせていました。IMS-AKA では、`registerAKA` の先の `challengeAKA` が MAR で方式 `Digest-AKAv1-MD5` の項目を 1 つ求めます（TS 29.229 6.3.9）。この方式名は Digest AKA のどちらの版も指します。HSS が作るベクトルはどちらの版でも同じで、版で変わるのは、そのベクトルから Digest のパスワードを作る手順だけです。
 
 ![S-CSCF が MAR を送り、HSS が認証ベクトルを計算して、MAA で RAND と AUTN、XRES、CK、IK を返す](figures/09-volte.challenge.maa.svg)
 
@@ -96,16 +96,22 @@ func NewAuthenticationVector(secret Secret, rand RAND, sqn SQN, amf AMF) Authent
 
 f1 から f5 が MILENAGE の関数です。f1 が網を認証するための MAC、f2 が端末の答えの期待値 XRES、f3 と f4 がアソシエーションの鍵 CK と IK、f5 が SQN を隠す鍵 AK を作ります。AUTN は SQN ⊕ AK（6 オクテット）、AMF（2 オクテット）、MAC（8 オクテット）を並べたものです。同じ K と OPc を持つ USIM は、RAND と AUTN を受け取れば、同じ計算をやり直せます。
 
-S-CSCF は RAND と AUTN を並べて base64 にし、401 の nonce にします（RFC 3310 3.2）。RAND と XRES は、答えを確かめるためにチャレンジと一緒に保存します。CK と IK は、`ik` と `ck` のパラメータに入れて P-CSCF に渡します（TS 24.229 5.4.1.2.1A）。
+S-CSCF は RAND と AUTN を並べて base64 にし、401 の nonce にします（RFC 3310 3.2）。CK と IK は、`ik` と `ck` のパラメータに入れて P-CSCF に渡します（TS 24.229 5.4.1.2.1A）。チャレンジと一緒に保存するのは RAND、XRES、IK、CK です。RAND は再同期のときに HSS へ戻すため、残りの 3 つは答えを確かめるためです。401 には、示す algorithm ごとに WWW-Authenticate を 1 つ入れます。
 
 [internal/scscf/aka.go](../../../internal/scscf/aka.go)
 
 ```go
-	challenge := sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: ch.Algorithm, QOP: []string{"auth"}}
-	// 5.4.1.2.1A item 1 c: IK and CK for the P-CSCF (7.2A.1).
-	challenge.SetKeys(hex.EncodeToString(av.IK[:]), hex.EncodeToString(av.CK[:]))
-	s.respond(st, 401, func(r *sip.Message) { r.Add("WWW-Authenticate", challenge.String()) })
+	s.respond(st, 401, func(r *sip.Message) {
+		for _, algorithm := range ch.Algorithms {
+			challenge := sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: algorithm, QOP: []string{"auth"}}
+			// 5.4.1.2.1A item 1 c: IK and CK for the P-CSCF (7.2A.1).
+			challenge.SetKeys(hex.EncodeToString(av.IK[:]), hex.EncodeToString(av.CK[:]))
+			r.Add("WWW-Authenticate", challenge.String())
+		}
+	})
 ```
+
+`ch.Algorithms` は、同じ関数が `akaAlgorithms` で決めた一覧で、優先する順に並びます。Authorization に algorithm を書かない REGISTER には、先に `AKAv2-SHA-256`、次に後方互換のために残されている `AKAv1-MD5` の 2 つを示します（TS 33.203 6.1.1）。どちらかの algorithm を書いてきた REGISTER には、その 1 つだけを返します（TS 24.229 5.4.1.2.1A）。この構成の VoLTE の端末は最初の REGISTER に algorithm を書かないので、401 には WWW-Authenticate が 2 つ入ります。どちらも 1 つの認証ベクトルを指すので、nonce も `ik` と `ck` も同じです。
 
 `ch.Nonce` は、同じ関数が `aka.Nonce(av.RAND, av.AUTN)` で作った値です。nonce を base64 で戻すと、MAA の SIP-Authenticate と同じ 32 オクテットになります。最初の 16 オクテットが RAND、残りが AUTN で、AUTN の 7 と 8 オクテット目が AMF です。この構成の加入者では AMF は `0000` です。
 
@@ -174,9 +180,29 @@ func (u *USIM) Authenticate(rand RAND, autn AUTN) (Response, error) {
 
 入力は nonce から取り出した RAND と AUTN です。関数は、AK で隠された SQN を戻し、自分の K で MAC を計算し直して、AUTN の MAC と比べます。一致すれば、網が同じ K を知っていると分かります。一致しなければ `ErrMACFailure` で、端末は答えを作りません。次に SQN が新しいかを確かめ（TS 33.102 C.2）、古ければ `SynchronisationFailure` を返します。この失敗には AUTS が付き、端末はそれを次の REGISTER に入れます。S-CSCF は保存していた RAND と AUTS を MAR で HSS に渡し、HSS が SQN_HE を合わせ直したベクトルで問い直します。両方の確認を通ったときだけ、USIM は自分の SQN を進め、RES、CK、IK を返します。
 
-2 回目の REGISTER の Digest の response は、RES をパスワードにして計算します（RFC 3310 3.3）。送り先は、端末の保護サーバーポート 5062 番から P-CSCF の保護サーバーポート 5064 番に変わります。端末は Security-Client をもう一度入れ、受け取った Security-Server を `Security-Verify` に写します。途中の誰かが強い方式の申し出を消していないかを、P-CSCF が確かめられるようにするためです（RFC 3329）。
+端末は、自分が対応する algorithm のうち 401 で最初に並んでいるもの、ここでは `AKAv2-SHA-256` を選び、Authorization に書きます（TS 24.229 5.1.1.5.1）。この版の Digest のパスワードは、RES、IK、CK を鍵にした HMAC-SHA-256 から作り、Digest も SHA-256 で計算します（RFC 4169 2.1）。そのため response は、端末が RES だけでなくセッションの鍵も持っていることを示します。`AKAv1-MD5` なら、パスワードは RES そのもので、Digest は MD5 です（RFC 3310 3.3）。2 回目の REGISTER の送り先は、端末の保護サーバーポート 5062 番から P-CSCF の保護サーバーポート 5064 番に変わります。端末は Security-Client をもう一度入れ、受け取った Security-Server を `Security-Verify` に写します。途中の誰かが強い方式の申し出を消していないかを、P-CSCF が確かめられるようにするためです（RFC 3329）。
 
-P-CSCF は、REGISTER が保護ポートに届いたこと、アソシエーションの私的な識別子が同じこと、Security-Verify と Security-Client が自分の覚えたものと同じことを確かめ、`integrity-protected="yes"` を付けて転送します（TS 24.229 5.2.2.2）。どれかが違えば 403 か 494 で断ります。S-CSCF は保存していた XRES で同じ Digest を計算して比べ、一致すれば SAR で HSS に登録を知らせます（TS 24.229 5.4.1.2.2）。
+P-CSCF は、REGISTER が保護ポートに届いたこと、アソシエーションの私的な識別子が同じこと、Security-Verify と Security-Client が自分の覚えたものと同じことを確かめ、`integrity-protected="yes"` を付けて転送します（TS 24.229 5.2.2.2）。どれかが違えば 403 か 494 で断ります。
+
+S-CSCF は、端末が書いた algorithm が 401 で示したものかを確かめてから、その algorithm の H(A1) を、保存していたチャレンジから作ります。
+
+[internal/scscf/store.go](../../../internal/scscf/store.go)
+
+```go
+func (c Challenge) digestHA1(algorithm string) string {
+	switch {
+	case !c.offers(algorithm):
+		return ""
+	case strings.EqualFold(algorithm, sip.AlgorithmAKAv1MD5):
+		return sip.HA1(algorithm, c.PrivateIdentity, c.Realm, aka.DigestPassword(c.XRES))
+	case strings.EqualFold(algorithm, sip.AlgorithmAKAv2SHA256):
+		return sip.HA1(algorithm, c.PrivateIdentity, c.Realm, aka.AKAv2DigestPassword(c.XRES, c.IK, c.CK))
+	}
+	return c.HA1
+}
+```
+
+パスワードの作り方は端末と同じで、RES の代わりに XRES を使います。`AKAv1-MD5` なら XRES だけを、`AKAv2-SHA-256` なら XRES、IK、CK を使います。401 で示していない algorithm には H(A1) が無いので、その response は 403 で断ります。最後の `c.HA1` は、HSS が H(A1) を渡す SIP Digest のチャレンジのものです。S-CSCF はこの H(A1) で Digest を計算して端末の response と比べ、一致すれば SAR で HSS に登録を知らせます（TS 24.229 5.4.1.2.2）。
 
 ![200 OK が P-CSCF の 5064 番から端末の 5062 番へ戻り、アソシエーションが確立する](figures/09-volte.answer.ok.svg)
 
@@ -187,6 +213,8 @@ P-CSCF は、REGISTER が保護ポートに届いたこと、アソシエーシ�
 標準では、401 のあとのメッセージを IPsec の ESP で保護します。鍵は IK と CK から導きます（TS 33.203 7.1）。この構成は既定では、アソシエーションを取り決めて保存し、保護ポートも使いますが、ESP はかけません。キャプチャで登録した VoLTE の端末の SIP も読めるようにするためです。保護しない IMS-AKA は標準に無い、この実装の簡略化です。そのため、既定の構成では保護クライアントポート（`port-c`）を取り決めるだけで使わず、P-CSCF は保護サーバーポートに届いたことで保護されたものとみなします。
 
 `deploy/esp` の構成では、UE と P-CSCF のあいだに ESP をかけます。完全性は取り決めたアルゴリズムで保護し、暗号化は null（`ealg=null`）にします。ESP の完全性の保護は TS 33.203 6.3 がどの場合にも求め、秘匿は P-CSCF の方針が求めるときだけかけるものなので（6.2）、これは実際の網にもありうる形です。暗号化が null なので、この構成でもキャプチャの SIP は読めます。読み方と、カーネルに入るアソシエーションの見え方は、手順書の [ESP をかけた sec-agree](../../guide/ja/volte.md#esp-をかけた-sec-agree) にあります。
+
+その上に `deploy/esp/encryption.yaml` を重ねると、P-CSCF の方針が秘匿を求めるようになり、ESP は AES-CBC で暗号化もします。P-CSCF は `ealg=aes-cbc` を `ealg=null` より先に示し、aes-cbc も示した端末には AES-CBC を選びます（TS 33.203 7.2）。端末の設定は変わりません。ESP をかける端末は、自分が対応する暗号化アルゴリズムをはじめから示しているためです。キャプチャでは、端末と P-CSCF のあいだで読めるものが、最初の REGISTER とその 401 だけになります。鍵はキャプチャに入っていないので、P-CSCF がファイルに書き出す鍵を Wireshark に渡して復号します。手順は手順書の [秘匿までかけた ESP](../../guide/ja/volte.md#秘匿までかけた-esp) にあります。
 
 ## ISIM の無い端末の識別子
 
@@ -349,7 +377,7 @@ BYE の材料は、P-CSCF が `Store` に保存したダイアログの Contact�
 | --- | --- | --- |
 | EPC スタブ | NAS の符号化、S1-AP、無線、GTP-U、Gx、attach の認証が無い。bearer は記録だけで、QoS を強制しない | 読むのは手順で、符号化ではないため。PCRF と PDN GW は 1 つのノードの中にいる |
 | PCRF | 許可するのは音声だけで、QCI 1。DRA を使わない | この網の通話は音声のストリームが 1 本だけ |
-| P-CSCF と UE | 既定では ESP をかけない（`deploy/esp` の構成ではかける）。S-CSCF は AKAv1-MD5 だけ | キャプチャを読めるようにするため。独立した試験相手の SIPp が AKAv1-MD5 しか話さない |
+| P-CSCF と UE | 既定では ESP をかけない（`deploy/esp` の構成ではかける） | キャプチャを読めるようにするため |
 | UE | PCO の P-CSCF の一覧の先頭だけを使う | どの構成でもスタブが渡すアドレスは 1 つ |
 | P-CSCF | bearer を失うとすぐに解放し、サービスを受ける端末にも BYE を送る | 通話ごとに音声の流れは 1 つ。BYE が無いと端末が通話に残る |
 | UE と AMR | CMR と mode-set に従わない | UE は符号化できない |
@@ -362,8 +390,12 @@ BYE の材料は、P-CSCF が `Store` に保存したダイアログの Contact�
 - `internal/ue/volte_epc_test.go` の `TestNetworkEndsTheCallWhenItTakesTheBearer`。スタブが発信側の音声の bearer を解放すると、PCRF が P-CSCF に知らせ、P-CSCF が両側に BYE を送って通話を終えることを確かめています。
 - `internal/ue/aka_ims_test.go` の `TestIMSAKAThroughTheWholeIMS`。すべてのノードを通して、USIM が HSS より先に進んだ端末が 1 回の再同期のあとで登録し、保護サーバーポートを通して通話とショートメッセージを送ることを確かめています。
 - `internal/scscf/aka_test.go` の `TestRegistrationWithIMSAKA`、`TestIMSAKAResynchronisation`、`TestIMSAKANetworkAuthenticationFailure`。S-CSCF が RAND と AUTN の問いと P-CSCF 向けの IK と CK を出し、XRES で答えを確かめること、AUTS で問い直すこと、網を認証できなかった端末に 403 を返すことを確かめています。
+- `internal/scscf/aka_test.go` の `TestIMSAKAOfferedAlgorithms` と `TestIMSAKAAcceptsTheAlgorithmTheUEChose`。algorithm を書かない REGISTER への 401 が `AKAv2-SHA-256`、`AKAv1-MD5` の順に、同じ nonce と `ik`、`ck` を持つ問いを 2 つ出すこと、algorithm を書いた REGISTER にはその 1 つだけを出すこと、端末が選んだどちらの版の答えも受け入れることを確かめています。
+- `internal/ue/aka_ims_test.go` の `TestIMSAKAAnswersWithAKAv2`。最初の REGISTER に algorithm が無く、端末が `AKAv2-SHA-256` を選んで、SHA-256 の 64 桁の response で答えることを確かめています。
 - `internal/pcscf/secagree_test.go` の `TestIMSAKASecurityAgreement`。Security-Client が P-CSCF にとどまり、401 から `ik` と `ck` が消えて Security-Server が足され、保護されて届いた答えに `integrity-protected="yes"` が付くことを確かめています。
 - `internal/aka/aka_test.go` の `TestUSIMAcceptsTheNetworksVector` と `TestResynchronisation`。USIM が網のベクトルを受け入れて同じ RES と鍵を出すこと、SQN が合わないときに AUTS で同期し直せることを確かめています。
+- `internal/aka/digest_test.go` の `TestAKAv2DigestPasswordFromTestSet1`。AKAv2-SHA-256 のパスワードが、TS 35.208 の試験データのベクトルの RES、IK、CK から RFC 4169 2.1 のとおりに作られることを確かめています。
+- `internal/pcscf/esp_test.go` の `TestESPConfidentialityPolicy` と `TestESPKeysForWireshark`。秘匿を求める方針の P-CSCF が `ealg=aes-cbc` を `ealg=null` より先に示して AES-CBC を選ぶこと、設定したファイルに、アソシエーションごとの鍵を Wireshark の ESP の SA の表の行で書くことを確かめています。
 - `internal/pcscf/policy_test.go` の `TestUEWithoutIPCANSessionRegistersWithoutPolicyControl` と `TestTerminatingCallHasItsMediaAuthorised`。PCRF が知らない端末も登録でき、着信側の P-CSCF が answer で通話のメディアの許可を求めることを確かめています。
 - `internal/epc/epc_test.go` の `TestAttachGivesTheAddressAndTheP_CSCFs` と `TestTheMediaOfACallGetAVoiceBearer`。ATTACH ACCEPT が QCI 5 の default bearer、静的なアドレス、P-CSCF のアドレスを渡すこと、通話の AAR で QCI 1 の音声の bearer ができることを確かめています。
 - `internal/precondition/precondition_test.go` の `TestVoLTEFlow`。上の表の 4 つの SDP のプリコンディションの行を確かめています。

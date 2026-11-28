@@ -40,7 +40,7 @@ Between the first REGISTER and the 401, the phone and the P-CSCF agree on securi
 
 ![The second REGISTER goes from port 5062, the phone's protected server port, to port 5064, the protected server port of the P-CSCF](figures/09-volte.answer.respond.svg)
 
-The standard protects this path with IPsec ESP. By default this setup agrees on the associations and uses the protected ports, but puts no ESP on them, so that the SIP of a VoLTE phone reads in the captures too. Another setup (`deploy/esp`) puts ESP with null encryption on them, which protects the integrity and leaves the content readable.
+The standard protects this path with IPsec ESP. By default this setup agrees on the associations and uses the protected ports, but puts no ESP on them, so that the SIP of a VoLTE phone reads in the captures too. Another setup (`deploy/esp`) puts ESP with null encryption on them, which protects the integrity and leaves the content readable. With `deploy/esp/encryption.yaml` on top of it, the P-CSCF's policy adds AES-CBC encryption, and reading the captures then takes the keys that the P-CSCF writes out.
 
 ### The voice bearer and Rx
 

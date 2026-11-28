@@ -183,6 +183,20 @@ def section(text, anchor):
     return "\n".join(lines[start:]) if start is not None else None
 
 
+def code_spans(text):
+    """The code spans of a cell, as Markdown reads them: a run of
+    backticks opens a span that the same run closes, so that ``a `b` c``
+    quotes a word that has backticks in it. One space on each side of
+    such a span is not part of it."""
+    out = []
+    for m in re.finditer(r"(`+)(.+?)(?<!`)\1(?!`)", text):
+        word = m.group(2)
+        if len(m.group(1)) > 1 and word.startswith(" ") and word.endswith(" ") and word.strip():
+            word = word[1:-1]
+        out.append(word)
+    return out
+
+
 def read_record(text):
     """Reads the record: its baseline, and its rows by deck, each row a
     dict with heading, treatment, places, words and why."""
@@ -210,7 +224,7 @@ def read_record(text):
             "why": why,
             "treatment": treatment,
             "places": re.findall(r"`([^`]+)`", places),
-            "words": [w.replace("\\|", "|") for w in re.findall(r"`([^`]+)`", words)],
+            "words": [w.replace("\\|", "|") for w in code_spans(words)],
         }
         if treatment not in TREATMENTS:
             problems.append(f"{RECORD}:{number}: 扱い is one of {'、'.join(sorted(TREATMENTS))}, not {treatment!r}")

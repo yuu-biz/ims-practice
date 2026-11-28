@@ -113,6 +113,20 @@ class TheRecordIsChecked(unittest.TestCase):
         self.assertTrue(any("had no slide 'Nothing'" in p for p in found), found)
 
 
+class TheWordsOfARow(unittest.TestCase):
+    # A word with backticks in it is quoted with a longer run of them.
+    def test_a_word_with_backticks(self):
+        self.assertEqual(c.code_spans("`a`、``the `b` c``、`d`"), ["a", "the `b` c", "d"])
+
+    # A dropped table cell with code in it is named that way.
+    def test_a_dropped_cell_with_code(self):
+        old = OLD.replace("| Why twice | `nonce` |", "| Why twice | the `nonce` |")
+        rows = MOVED.replace("| `nonce` |", "| |") + "\n| Review | the cell was wrong | 訂正 | | `` the `nonce` `` |"
+        _, by_deck, record_problems = c.read_record(RECORD.format(rows=rows))
+        found = record_problems + c.check({DECK: old}, {DECK: "---\ntitle: t\nfooter: f\nlang: ja\n---\n\n# Title\n"}, by_deck, FILES.get)
+        self.assertEqual(found, [])
+
+
 class TheYAMLOfAScene(unittest.TestCase):
     # A block fenced with tildes is code too.
     def test_a_tilde_fence(self):

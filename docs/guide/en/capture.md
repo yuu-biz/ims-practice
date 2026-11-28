@@ -131,6 +131,8 @@ The signalling between a VoLTE UE and the P-CSCF can be protected with IPsec ESP
 
 In **Edit > Preferences > Protocols > ESP**, tick **Attempt to detect/decode NULL encrypted ESP payloads**. Wireshark then works out where the payload ends by trying the lengths of the integrity check value that the algorithms use, 12, 16, 24 and 32 octets, and dissects what it finds inside. The VoLTE guide gives the other way, an **ESP SAs** row that names the integrity algorithm instead of leaving Wireshark to work the length out, and the options that read the protected ports as SIP over TCP.
 
+The same deployment can encrypt the signalling as well, which [The signalling encrypted](volte.md#the-signalling-encrypted) turns on. Neither way of reading it shows anything then, whatever length it takes the integrity check value to be: under it the payload is ciphertext. The P-CSCF of that deployment writes the keys to a file beside the captures, and that section says how to hand them to Wireshark.
+
 ## Copies for the Lab (HEP)
 
 A node can also send a copy of every SIP and Diameter message it sends or receives to the Lab, which listens on UDP port 9060. The copies use HEP version 3 (Homer Encapsulation Protocol). A node sends them when its configuration has a `hep` section, for example `hep: {collector: lab:9060}`. The UE simulator sends them when it gets `-hep lab:9060`. Without either, nothing is sent.

@@ -114,16 +114,16 @@ K and OPc are those of MILENAGE test set 1. OPc is derived from the operator's O
 ### The ladder
 
 ```text
-#698  volte10:5060 -> P-CSCF:5060  REGISTER   Security-Client, Require: sec-agree, Authorization with an empty response
+#698  volte10:5060 -> P-CSCF:5060  REGISTER   Security-Client, Require: sec-agree, Authorization with no algorithm and an empty response
 #709  P-CSCF -> I-CSCF             REGISTER   Authorization: ... integrity-protected="no"
 #712  I-CSCF -> HSS                UAR / UAA
 #721  I-CSCF -> S-CSCF             REGISTER
 #724  S-CSCF -> HSS                MAR        SIP-Auth-Data-Item: SIP-Authentication-Scheme Digest-AKAv1-MD5
 #726  HSS -> S-CSCF                MAA 2001   SIP-Authenticate (RAND, AUTN), SIP-Authorization (XRES), Confidentiality-Key, Integrity-Key
-#727  S-CSCF -> I-CSCF             401        WWW-Authenticate: nonce, algorithm=AKAv1-MD5, ik, ck
+#727  S-CSCF -> I-CSCF             401        two WWW-Authenticate: the nonce, algorithm=AKAv2-SHA-256 then AKAv1-MD5, ik, ck
 #734  I-CSCF -> P-CSCF             401
 #737  P-CSCF:5060 -> volte10:5060  401        ik and ck taken out, Security-Server added
-#740  volte10:5062 -> P-CSCF:5064  REGISTER   Security-Client, Security-Verify, Authorization with the response from RES
+#740  volte10:5062 -> P-CSCF:5064  REGISTER   Security-Client, Security-Verify, Authorization with algorithm=AKAv2-SHA-256 and its response
 #749  P-CSCF -> I-CSCF             REGISTER   Authorization: ... integrity-protected="yes"
 #752  I-CSCF -> HSS                UAR / UAA
 #760  I-CSCF -> S-CSCF             REGISTER
@@ -135,16 +135,16 @@ K and OPc are those of MILENAGE test set 1. OPc is derived from the operator's O
 #793  PCRF -> P-CSCF               AAA 2001
 ```
 
-1. **REGISTER without protection (#698).** The UE sends its first REGISTER from port 5060 to the P-CSCF's port 5060, the only REGISTER that goes there (TS 24.229 5.1.1.2.2). It has `Require: sec-agree` and `Proxy-Require: sec-agree` and offers its security associations in `Security-Client: ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=52975;port-s=5062` (RFC 3329 2.3.1, TS 33.203 Annex H). Its Authorization has the private identity as username, `algorithm=AKAv1-MD5`, and an empty nonce and response.
+1. **REGISTER without protection (#698).** The UE sends its first REGISTER from port 5060 to the P-CSCF's port 5060, the only REGISTER that goes there (TS 24.229 5.1.1.2.2). It has `Require: sec-agree` and `Proxy-Require: sec-agree` and offers its security associations in `Security-Client: ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=52975;port-s=5062` (RFC 3329 2.3.1, TS 33.203 Annex H). Its Authorization has the private identity as username and an empty nonce and response, and names no algorithm: the challenge offers the algorithms and the UE chooses.
 2. **The P-CSCF keeps the Security-Client (#709).** It sees Security-Client with sec-agree and chooses IMS AKA (TS 24.229 5.2.2.1). It takes Security-Client out, keeps it, and marks the Authorization `integrity-protected="no"`: nothing has protected this REGISTER (5.2.2.2).
-3. **The S-CSCF asks for a vector (#724).** `integrity-protected="no"` means a first registration with IMS AKA (5.4.1.1). The MAR asks for one item with the scheme `Digest-AKAv1-MD5` (TS 29.229 6.3.9).
+3. **The S-CSCF asks for a vector (#724).** `integrity-protected="no"` means a first registration with IMS AKA (5.4.1.1). The MAR asks for one item with the scheme `Digest-AKAv1-MD5` (TS 29.229 6.3.9). That name covers both versions of Digest AKA: the HSS builds the same vector either way, and the version only decides how the password is derived from it (6.3.9 NOTE 1).
 4. **The HSS makes the vector (#726).** It raises SQN_HE, draws RAND, and computes XRES, CK, IK and AUTN with MILENAGE (TS 33.102 6.3.2, TS 35.206). SIP-Authenticate is RAND followed by AUTN, 32 octets; SIP-Authorization is XRES; Confidentiality-Key and Integrity-Key are CK and IK (TS 29.228 6.3).
-5. **The 401 (#727).** The S-CSCF writes RAND and AUTN into the nonce, base64 encoded (RFC 3310 3.2), and IK and CK in the `ik` and `ck` parameters for the P-CSCF (TS 24.229 5.4.1.2.1A). It keeps RAND and XRES for the answer.
+5. **The 401 (#727).** The S-CSCF writes RAND and AUTN into the nonce, base64 encoded (RFC 3310 3.2), and IK and CK in the `ik` and `ck` parameters for the P-CSCF (TS 24.229 5.4.1.2.1A). There is one WWW-Authenticate per algorithm it offers, the most preferred first: `algorithm=AKAv2-SHA-256`, then `algorithm=AKAv1-MD5`, which the standard keeps for backward compatibility (TS 33.203 6.1.1). Both carry the same nonce, because both stand for the one authentication vector. A REGISTER whose Authorization names one of the two algorithms is answered with that one alone, which is how the independent user agent that speaks AKAv1-MD5 only registers (5.4.1.2.1A item 1 c). The S-CSCF keeps RAND, XRES, IK and CK for the answer.
 6. **The P-CSCF sets up temporary associations (#737).** It takes `ik` and `ck` out of the 401, so that the keys never travel to the UE, and offers its own associations in `Security-Server: ipsec-3gpp;q=0.1;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=50711;port-s=5064` (5.2.2.2, TS 33.203 7.2).
 7. **The UE checks the network (#740).** Its USIM computes the MAC of AUTN and compares it with the one in AUTN: a match shows that the network knows K. It checks that the SQN is fresh (TS 33.102 6.3.3, C.2), and computes RES, CK and IK.
-8. **REGISTER over the associations (#740).** The UE answers from its protected server port 5062 to the P-CSCF's protected server port 5064 (TS 33.203 7.1). It repeats its Security-Client and mirrors the Security-Server in `Security-Verify`, so that a man in the middle cannot have removed a stronger offer (RFC 3329). The response of the Digest is computed with RES as the password (RFC 3310 3.3).
+8. **REGISTER over the associations (#740).** The UE answers from its protected server port 5062 to the P-CSCF's protected server port 5064 (TS 33.203 7.1). It repeats its Security-Client and mirrors the Security-Server in `Security-Verify`, so that a man in the middle cannot have removed a stronger offer (RFC 3329). It takes the topmost challenge whose algorithm it supports, `AKAv2-SHA-256`, and names that algorithm in its Authorization (TS 24.229 5.1.1.5.1). The password of that version is the base64 of HMAC-SHA-256 over the string `http-digest-akav2-password`, keyed with `RES || IK || CK`, and the digest is SHA-256, so the response is 64 hex digits and proves that the UE holds the session keys and not RES alone (RFC 4169 2.1). With `AKAv1-MD5` the password is RES itself and the digest MD5 (RFC 3310 3.3).
 9. **The P-CSCF checks the agreement (#749).** The REGISTER came to the protected port from the UE's address and port, and Security-Verify matches what it sent. A REGISTER over 1300 bytes comes over TCP from another port, and the P-CSCF takes the UE's port from its Via instead. It marks the Authorization `integrity-protected="yes"`.
-10. **The S-CSCF checks RES (#760, #764).** It computes the Digest with XRES and compares (TS 24.229 5.4.1.2.2). They match, so it sends the SAR and registers the UE.
+10. **The S-CSCF checks RES (#760, #764).** It computes the Digest of the algorithm the UE named, with the password that version derives from XRES and the keys of the vector, and compares; a response for an algorithm the 401 did not offer is refused with 403 (TS 24.229 5.4.1.2.2, 5.4.1.2.3A). They match, so it sends the SAR and registers the UE.
 11. **The 200 OK (#783).** It goes back over the associations, which now become established; their lifetime follows the registration (5.2.2.2). From now on the UE sends every request to port 5064, with that port in the P-CSCF URI of its Route, and the P-CSCF sends to the UE at 5062; the Path that the P-CSCF added names its protected port.
 12. **The signalling path (#786).** Once the UE is registered, the P-CSCF asks the PCRF to tell it when the UE loses its signalling bearer (TS 29.214 A.4). It does so after the initial registration has succeeded, as the flow of TS 29.213 B.1 shows, so a UE that fails to authenticate opens no Rx session. The 200 OK and this AAR leave the P-CSCF in either order.
 
@@ -218,7 +218,7 @@ Only a message that comes to the protected server port counts as protected. A re
 
 ### The same agreement with ESP
 
-The same network can protect the signalling for real, with the integrity algorithm the two ends agreed on and null encryption. The encryption is what the capture needs: ESP integrity protection is what TS 33.203 6.3 asks for in every case, while confidentiality is applied only when the P-CSCF's policy requires it (6.2), and `ealg=null` is a value the security agreement carries (Annex H). So a network with null encryption is a network a real operator may run, and its SIP is still readable.
+The same network can protect the signalling for real, with the integrity algorithm the two ends agreed on and null encryption. The encryption is the P-CSCF's decision: ESP integrity protection is what TS 33.203 6.3 asks for in every case, while confidentiality is applied only when the local policy of the P-CSCF requires it (5.1.3 item 2, 6.2), and `ealg=null` is a value the security agreement carries (Annex H). So a network with null encryption is a network a real operator may run, and its SIP is still readable. [The signalling encrypted](#the-signalling-encrypted) below asks for confidentiality as well.
 
 Start it with the deployment that turns ESP on:
 
@@ -227,6 +227,8 @@ docker compose -f compose.yaml -f deploy/esp/esp.yaml --profile volte up -d --bu
 ```
 
 It gives the P-CSCF and the two VoLTE UEs the capability NET_ADMIN and a protected client port each: `sec_agree.esp.protected_client_port` for the P-CSCF, `-port-c` for a UE. Each end then binds that port, sends its requests from it, and puts the four security associations of every authenticated registration into the kernel, which protects the packets between the two ends' protected ports and discards what arrives there without ESP.
+
+A UE that sets ESP up offers the encryption algorithms it supports, as TS 33.203 5.1.3 item 1 asks of every UE: its `Security-Client` lists `ealg=aes-cbc` and `ealg=null`, with the same SPIs and protected ports in both mechanisms. The P-CSCF offers the ones its own policy allows, and both ends then take the first combination of the P-CSCF's list that the UE offers too (7.2). This deployment applies no confidentiality, so the `Security-Server` of its 401 names `ealg=null` alone, with `q=0.1`, and null encryption is what the two ends set up however much the UE offered.
 
 A container has no kernel of its own: it uses the kernel of the machine that runs the engine, so the security associations go into that kernel and need its XFRM, the part of a Linux kernel that holds them, with its support for ESP. Most Linux kernels have both. On Windows, Docker Desktop with its WSL2 backend runs the engine on a Linux kernel of its own, which has them too: a node loads what it needs through NET_ADMIN, with nothing to set up by hand. Where the kernel lacks them, a node cannot add its associations. The P-CSCF logs `the store failed` with the error of `ip xfrm` and answers the REGISTER 500, so the registration fails rather than falling back to unprotected signalling.
 
@@ -270,9 +272,69 @@ The same dialog has one setting that needs no row at all, **Attempt to detect/de
 
 Three things still differ from a real network with ESP on. The protected client ports are the one port of each end's configuration, the same for every UE and every authentication, where TS 33.203 7.4.0 has them change with each authenticated re-registration. The P-CSCF forwards to the core on the transport the request came in on, so the core sees requests from its protected server port, which no association protects; the P-CSCF's own requests to a UE leave its protected client port, and everything else the port it listens on. And the security associations live in the kernel of the one P-CSCF that set them up, while the SA table can be shared by several: a UE that registered through one of them and then sends to another is answered as though it had no associations, and registers again.
 
+### The signalling encrypted
+
+The confidentiality of the signalling is the P-CSCF's decision (TS 33.203 5.1.3 item 2), and one more file turns it on:
+
+```sh
+docker compose -f compose.yaml -f deploy/esp/esp.yaml \
+  -f deploy/esp/encryption.yaml --profile volte up -d --build
+```
+
+It changes two things of the deployment above, both at the P-CSCF. Its `sec_agree.esp` gains `confidentiality: true`, so it offers `ealg=aes-cbc` at `q=0.2` before `ealg=null` at `q=0.1` and selects AES-CBC for every UE that offers it too (7.2). And it gains `wireshark_sa_file: /captures/esp_sa`, the file of keys that the rest of this section is about, which is why the P-CSCF also mounts the directory of the captures. The UEs change nothing: a UE with a protected client port already offers the encryption algorithm it supports.
+
+AES-CBC with a 128-bit key is the encryption algorithm of RFC 3602, and its key is CK itself: Annex I expands nothing, because CK is already 128 bits long. The integrity algorithm and IK_ESP stay as they were, so each security association now carries two keys:
+
+```sh
+docker compose exec pcscf ip xfrm state
+```
+
+```sh
+ip xfrm state add src 172.28.0.120 dst 172.28.0.40 proto esp spi 0x3b9b0ea3 \
+  reqid 1000017571 mode transport replay-window 32 \
+  auth-trunc 'hmac(sha256)' 0x<IK_ESP> 128 enc 'cbc(aes)' 0x<CK_ESP>
+```
+
+Annex H offers two more encryption algorithms, `aes-gcm` and `aes-gcm-us`, which are AES-GCM of RFC 4106 with a 16-octet integrity check value and differ in how the salt of the cipher is derived. They do the integrity protection themselves, so they go with `alg=null` and no integrity algorithm of their own. Annex H and Annex I mark `aes-cbc` and `aes-gcm` as not recommended, which leaves AES-GCM with the unique salt as the one encryption algorithm the specification recommends there.
+
+The profiling that the same specification points at says something else. TS 33.203 7.1 leaves the profiling of the encryption algorithm to TS 33.210 5.3.3, which asks for the conformance requirements of RFC 8221, where AES-CBC with a 128-bit key is one of the algorithms an implementation has to provide. RFC 8221 3 also forbids the counter-mode algorithms, AES-GCM among them, where the keys are set by hand rather than by a key exchange protocol, because nothing then keeps a counter or a nonce from being used twice; it calls AES-CBC the only mandatory-to-implement encryption algorithm suitable for manual keying. The security associations of IMS AKA are keyed by hand, from the keys of the authentication (Annex H), and the unique salt of `aes-gcm-us` is how 3GPP answers that hazard: Annex I derives a salt of its own for each association.
+
+This project implements AES-CBC. It is mandatory to implement, it is the one RFC 8221 leaves for keys set by hand, it keeps the integrity algorithm of the deployment above beside it, and its key needs no derivation. The security agreement carries the value either way (Annex H), so a network with AES-CBC is a network an operator may run.
+
+In the capture there is now nothing readable between a registered VoLTE UE and the P-CSCF. The settings of the deployment above find no SIP any more: they still give the right length for the integrity check value, and what is under it is ciphertext. Only the first REGISTER, its 401 and the traffic between the other nodes are still plain, and the security agreement in those two shows what the two ends settled on, `ealg=aes-cbc` in `Security-Client` and in `Security-Server`.
+
+The keys are not in the capture. The 401 that carries `ik` and `ck` goes no further than the P-CSCF, which takes them out before the response reaches the UE, and Annex I expands IK_ESP from them with a key derivation function anyway. So the P-CSCF writes them down: with `wireshark_sa_file` set, it appends the four security associations of every authentication to that file, in the form of the rows of Wireshark's ESP SAs table, which is where a reader of the capture needs them.
+
+```sh
+cat captures/esp_sa
+```
+
+```text
+"IPv4","172.28.0.121","172.28.0.40","0x4ec1f1d4","AES-CBC [RFC3602]","0x<CK_ESP>","HMAC-SHA-256-128 [RFC4868]","0x<IK_ESP>"
+"IPv4","172.28.0.40","172.28.0.121","0x94c0a72e","AES-CBC [RFC3602]","0x<CK_ESP>","HMAC-SHA-256-128 [RFC4868]","0x<IK_ESP>"
+```
+
+Each row is one association: the two addresses, the SPI, the encryption algorithm with CK_ESP and the integrity algorithm with IK_ESP. The four associations of one authentication share both keys (TS 33.203 6.2, 6.3) and differ in their addresses and SPIs. Nothing is ever removed from the file: a capture outlives the associations it holds, and the rows of every registration it recorded have to stay.
+
+Those keys are the ones of this deployment's test subscribers, written in the clear so that a learner can read the capture. A network of real subscribers writes no such file: that is why the P-CSCF writes one only where the configuration names it, and why the file lives in the directory of the captures, which is as public as the captures themselves.
+
+In **Edit > Preferences > Protocols > ESP**, tick **Attempt to detect/decode encrypted ESP payloads**, open **ESP SAs** and add the rows of the file, one row per association. The columns are the fields of the file, in that order. On the command line each row is one `-o` option, so one option per line of the file brings the SIP of both UEs back, decrypted out of the ESP that carried it:
+
+```sh
+esp_sa=()
+while IFS= read -r row; do esp_sa+=(-o "uat:esp_sa:$row"); done <captures/esp_sa
+tshark -r captures/ims-*.pcap -o esp.enable_encryption_decode:TRUE "${esp_sa[@]}" \
+  -d tcp.port==5062,sip -d tcp.port==5064,sip \
+  -Y 'esp && sip'
+```
+
+The two `-d` options name the protected ports as SIP over TCP, as they do without encryption.
+
+Wireshark reads each packet with the first row whose addresses and SPI match it, so the rows of the two UEs do not get in each other's way, and a row of an earlier registration is simply never matched. A row with `*` in place of an address or an SPI would match any packet, which works for one UE and gives the wrong key to the second.
+
 ### SIPp
 
-SIPp registers with IMS AKA from `images/softphone/sipp/register-aka.xml`. It sends everything from one port, 5060, which is therefore its protected server port too. SIPp 3.7 takes its K and OP as the bytes of their text, so subscriber 11 has printable keys, `ims-practice-K01` and `ims-practice-OP1`; hss.yaml has them in hexadecimal, with the OPc that MILENAGE derives from that OP. SIPp computes the RES and the Digest itself, which checks the S-CSCF's computation against code written by others.
+SIPp registers with IMS AKA from `images/softphone/sipp/register-aka.xml`. It sends everything from one port, 5060, which is therefore its protected server port too. SIPp 3.7 takes its K and OP as the bytes of their text, so subscriber 11 has printable keys, `ims-practice-K01` and `ims-practice-OP1`; hss.yaml has them in hexadecimal, with the OPc that MILENAGE derives from that OP. SIPp computes the RES and the Digest itself, which checks the S-CSCF's computation against code written by others. It speaks AKAv1-MD5 and names it in its first REGISTER, so it is challenged with that algorithm alone, while volte10 and volte12 name none and answer with AKAv2-SHA-256.
 
 ## The identities of a phone without an ISIM
 
@@ -572,6 +634,8 @@ With preconditions, the offer and answer of the 183 only make the new parameters
 
 `scripts/e2e-esp.sh` runs a registration and a call with IPsec ESP on the signalling between the UEs and the P-CSCF, and checks the security associations in the kernel as well as the capture. [The same agreement with ESP](#the-same-agreement-with-esp) says how to start that deployment by hand and how to read what it captures.
 
+`scripts/e2e-esp-encryption.sh` runs the same scenario with the confidentiality policy of the P-CSCF on top. It checks that the associations carry AES-CBC, that the settings which read null encryption find no SIP in the capture, and that the keys the P-CSCF wrote decrypt the REGISTERs and the call. [The signalling encrypted](#the-signalling-encrypted) says how to start that deployment and how to read its capture.
+
 ### With the Lab
 
 ```sh
@@ -639,7 +703,7 @@ It shows the registrations, the calls, Rx, the MARs and the EPC stub's API. Wire
 | Filter | What it finds |
 | --- | --- |
 | `sip.Security-Client \|\| sip.Security-Server \|\| sip.Security-Verify` | The messages of the security agreement. |
-| `sip.WWW-Authenticate contains "AKAv1-MD5"` | The challenges of IMS AKA. `contains "ck="` finds those that the S-CSCF sends to the P-CSCF. |
+| `sip.WWW-Authenticate contains "AKAv2-SHA-256" \|\| sip.WWW-Authenticate contains "AKAv1-MD5"` | The challenges of IMS AKA. A 401 to a UE that named no algorithm carries one of each. `contains "ck="` finds those that the S-CSCF sends to the P-CSCF. |
 | `udp.port == 5064 \|\| tcp.port == 5064` | What goes over the P-CSCF's protected server port. |
 | `diameter.3GPP-SIP-Authentication-Scheme == "Digest-AKAv1-MD5"` | The MARs and MAAs of IMS AKA. |
 | `diameter.cmd.code in {265, 258, 274, 275}` | Rx: AAR and AAA, RAR and RAA, ASR and ASA, STR and STA. |
@@ -703,11 +767,10 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | P-CSCF, TS 24.229 5.2.8.1.2 | When a confirmed call loses its resources, the served UE is not left to notice the lost bearer itself, as the clause has it: the P-CSCF sends it a BYE too, in the name of the other party. | After the network released only the voice bearer the UE still has its signalling, and a UE that does not act on the loss of that bearer would, without a BYE, stay in a call that the network has ended. |
 | P-CSCF, TS 24.229 5.2.8.1.4, 5.2.8.3 | A dialog that ends without a BYE through the P-CSCF stays in the Store, and an answered one stays in `ims_answered_sessions`. | It would need an index of dialogs by user, or a session timer of the P-CSCF. |
 | P-CSCF, RFC 3264, RFC 3262 | An INVITE or re-INVITE without SDP gets no relay context and no authorisation. | The UE simulator always offers in the INVITE. |
-| P-CSCF and UE, TS 33.203 7.1, 7.2 | By default no IPsec ESP: the associations are agreed and kept, the protected server ports are used, the client ports are never bound. The deployment of `deploy/esp` sets ESP up and binds them, in the kernel of the one P-CSCF that set them up, which the SA table of a shared Store does not follow. | Captures stay readable either way. The standard has no IMS AKA without protection. A kernel holds the associations of its own host alone. |
+| P-CSCF and UE, TS 33.203 5.1.3, 7.1, 7.2 | By default no IPsec ESP: the associations are agreed and kept, the protected server ports are used, the client ports are never bound, and the UE offers no encryption algorithm, where 5.1.3 item 1 has it always offer them. The deployment of `deploy/esp` sets ESP up and binds them, in the kernel of the one P-CSCF that set them up, which the SA table of a shared Store does not follow. | Captures stay readable either way. The standard has no IMS AKA without protection. A UE that sets no ESP up encrypts nothing whatever it offered. A kernel holds the associations of its own host alone. |
 | P-CSCF and UE, TS 33.203 7.4.0 | With ESP, the protected client ports are the one port of each end’s configuration, for every UE and every authentication, where the standard has them change with each authenticated re-registration. | A port of its own for each set of associations would mean a socket for each. The associations of different UEs already differ by the UE’s address. |
 | UE, TS 33.203 7.4.1a | With ESP, after a re-registration that it started over the old associations fails, the UE does not keep the old associations, which 7.4.1a has it keep. They are already gone: the new associations were bound to the same ports and replaced them in the kernel when the UE answered the challenge. The UE forgets them too and registers again unprotected. | The protected client port is the one of the UE's configuration, as the row above says. 7.4.1a asks a UE that takes its associations for no longer active to register again unprotected. |
 | P-CSCF, TS 24.229 5.2.2.3 | A UE is known by the address and port its requests come from, and by the sent-by of its Via for a request over TCP, or for any request with ESP on. | Without ESP a TCP connection comes from a port of the moment, and nothing authenticates that sent-by. With ESP every request comes from the protected client port, which no entry holds, and the security associations authenticate the sender. |
-| S-CSCF, TS 33.203 6.1.1, TS 24.229 5.4.1.2.1A | AKAv1-MD5 only, no AKAv2-SHA-256. | SIPp speaks AKAv1-MD5 only. |
 | AKA, TS 33.102 C.2.2, C.3.4 | No limit L on how old an accepted SQN may be, and IND is not kept per domain. | Profile 2 suggests no L; IMS is one domain with one vector per MAR. |
 | UE, TS 24.301, TS 36.331 | The UE's packets go straight onto the Docker network. | No radio and no tunnel. |
 | UE, TS 24.229 7.2A.4.3 | The access type is always `3GPP-E-UTRAN-FDD`. | The stub says nothing of the duplex mode of its cell. |

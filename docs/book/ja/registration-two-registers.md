@@ -67,7 +67,7 @@ REGISTER を受け取った S-CSCF は、HSS に MAR（Multimedia-Auth-Request�
 ![HSS が MAR を受け取り、この S-CSCF を利用者の担当として記録し、認証中の印を付ける](figures/04-registration.challenge.assign.svg)
 
 - **HSS** は、MAR を送ってきた S-CSCF をこの利用者の担当として記録し、認証中の印を付けます。まだ登録が済んだわけではありません。
-- **S-CSCF** は、自分で作った nonce と、HSS から受け取った H(A1) を、待っている認証（チャレンジ）として保存します。認証を求めた REGISTER の Call-ID も一緒に保存します。そして、答えを待つタイマー reg-await-auth（TS 24.229 Table 7.8.1 で 4 分）を始めます。
+- **S-CSCF** は、自分で作った nonce と、HSS から受け取った H(A1) を、待っている認証（チャレンジ）として保存します。認証を求めた REGISTER の Call-ID と、401 で示す algorithm も一緒に保存します。そして、答えを待つタイマー reg-await-auth（TS 24.229 Table 7.8.1 で 4 分）を始めます。
 
 MAA に入っているのは、パスワードそのものではなく H(A1) です。H(A1) は、ユーザー名、レルム、パスワードから計算したハッシュです（RFC 7616 3.4.2）。S-CSCF はこれだけで UE の答えを確かめられます。ただし、H(A1) を知っていれば、同じレルムで正しい答えを作れます。パスワードではないとはいえ、認証に使う秘密の情報として扱います。
 
@@ -110,7 +110,11 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 	if req.Get("Call-ID") != ch.CallID || c.Realm != ch.Realm || c.CNonce == "" || c.NC == "" {
 		return wrong
 	}
-	want, err := sip.DigestResponse(ch.digestHA1(), sip.REGISTER, c)
+	// Step 3: the algorithm is one that the 401 offered.
+	if !ch.offers(c.Algorithm) {
+		return wrong
+	}
+	want, err := sip.DigestResponse(ch.digestHA1(c.Algorithm), sip.REGISTER, c)
 	if err != nil || subtle.ConstantTimeCompare([]byte(want), []byte(c.Response)) != 1 {
 		return wrong
 	}
@@ -122,11 +126,12 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 }
 ```
 
-入力は、届いた REGISTER `req`、その Authorization の値 `c`、保存していたチャレンジ `ch` です。関数は 3 つのことを順に確かめます。
+入力は、届いた REGISTER `req`、その Authorization の値 `c`、保存していたチャレンジ `ch` です。関数は 4 つのことを順に確かめます。
 
 1. Call-ID が、認証を求めた REGISTER と同じか。レルムが S-CSCF の出したものか。この 2 つが違えば、問いへの答えになっていません（TS 24.229 5.4.1.2.2A）。
-2. H(A1) から計算した答えが、UE の `response` と一致するか。一致しなければパスワードが違います。
-3. 答えが、いま待っている nonce への最初の答えか。パスワードは正しいのに nonce が古い場合は、誤りではなく「古い」として扱い、新しい nonce で問い直します（TS 24.229 5.4.1.2.3B）。
+2. UE が Authorization に書いた algorithm が、401 で示したものか。ここでは MD5 です。algorithm を書かない答えも MD5 とみなします（RFC 2617 3.2.1）。示していない algorithm の答えは、確かめるまでもなく誤りです。
+3. その algorithm の H(A1) から計算した答えが、UE の `response` と一致するか。一致しなければパスワードが違います。SIP Digest では、`ch.digestHA1` が返すのは HSS から受け取った H(A1) そのものです。同じ関数は、IMS-AKA では認証ベクトルから H(A1) を作ります（[VoLTE の登録と通話](volte.md)）。
+4. 答えが、いま待っている nonce への最初の答えか。パスワードは正しいのに nonce が古い場合は、誤りではなく「古い」として扱い、新しい nonce で問い直します（TS 24.229 5.4.1.2.3B）。
 
 `valid` なら、S-CSCF はチャレンジを消し、SAR（Server-Assignment-Request）を Server-Assignment-Type が `REGISTRATION`（1）で HSS に送ります。HSS は利用者がこの S-CSCF に登録されたと記録し、SAA の User-Data で利用者のプロファイルを返します。プロファイルには、一緒に登録される識別子と iFC が入っています。S-CSCF はそのあとで登録先を保存し、200 OK で答えます。
 
@@ -137,7 +142,7 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 | 時点 | HSS が記録していること | S-CSCF が保存していること | UE が知っていること |
 | --- | --- | --- | --- |
 | 1 回目の UAR と UAA | 加入者がいること。必要な能力 | まだ何も無い | REGISTER を送った |
-| MAR、MAA、401 | この S-CSCF が担当。認証中 | チャレンジ（nonce、H(A1)、Call-ID）と、答えの期限 | 401 で nonce を受け取った |
+| MAR、MAA、401 | この S-CSCF が担当。認証中 | チャレンジ（nonce、H(A1)、Call-ID、algorithm）と、答えの期限 | 401 で nonce を受け取った |
 | 答えが正しく、SAR と SAA が済んだ | この S-CSCF に登録済み。プロファイル | 登録先（Contact、Path、期限、識別子、iFC、Call-ID と CSeq） | まだ応答を待っている |
 | 200 OK が UE に届いた | 同じ | 同じ | 登録できた。rspauth で S-CSCF も H(A1) を知っていると確かめ、Service-Route と期限を受け取る |
 

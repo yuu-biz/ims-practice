@@ -359,6 +359,56 @@ func newAKAPhone(t *testing.T, n testNetwork) (p *phone, unprotected *wireLog) {
 	return servePhone(t, cfg, autoAnswer), unprotected
 }
 
+// TS 33.203 6.1.1 and TS 24.229 5.1.1.2.2, 5.1.1.5.1: the first
+// REGISTER names no algorithm, so the S-CSCF offers both AKAv2-SHA-256
+// and AKAv1-MD5 with AKAv2-SHA-256 first, and the UE answers the topmost
+// one it supports. Its response is computed with the password that
+// AKAv2 derives from RES, IK and CK, so only a UE that holds the
+// session keys can register.
+func TestIMSAKAAnswersWithAKAv2(t *testing.T) {
+	n, _ := akaIMS(t)
+	p, unprotected := newAKAPhone(t, n)
+	if !p.within(5*time.Second, func(s statusJSON) bool { return s.Registered }) {
+		t.Fatalf("not registered within 5 s; REGISTERs %v and %v", unprotected.registerLabels(), p.wire.registerLabels())
+	}
+
+	open := unprotected.registers()
+	if len(open) < 2 || open[0].label != "> REGISTER" || open[1].label != "< 401 REGISTER" {
+		t.Fatalf("the unprotected port carried %v, want a REGISTER and its 401", unprotected.registerLabels())
+	}
+	first, err := sip.ParseCredentials(open[0].message.Get("Authorization"))
+	if err != nil || first.Algorithm != "" {
+		t.Errorf("the first REGISTER has Authorization %q, want no algorithm", open[0].message.Get("Authorization"))
+	}
+	var offered []string
+	for _, v := range open[1].message.GetAll("WWW-Authenticate") {
+		ch, err := sip.ParseChallenge(v)
+		if err != nil {
+			t.Fatalf("WWW-Authenticate %q: %v", v, err)
+		}
+		offered = append(offered, ch.Algorithm)
+	}
+	if want := []string{"AKAv2-SHA-256", "AKAv1-MD5"}; !slices.Equal(offered, want) {
+		t.Errorf("the 401 offers %v, want %v", offered, want)
+	}
+
+	answers := p.wire.registers()
+	if len(answers) == 0 || answers[0].label != "> REGISTER" {
+		t.Fatalf("the protected port carried %v, want the answer to the challenge", p.wire.registerLabels())
+	}
+	answer, err := sip.ParseCredentials(answers[0].message.Get("Authorization"))
+	if err != nil || answer.Algorithm != "AKAv2-SHA-256" || answer.Response == "" {
+		t.Errorf("the answer has Authorization %q, want algorithm=AKAv2-SHA-256 with a response",
+			answers[0].message.Get("Authorization"))
+	}
+	// The AKAv2 password is base64, 44 characters for the 32 octets of
+	// HMAC-SHA-256, and the digest of SHA-256 is 64 hex digits where
+	// MD5 gives 32 (RFC 4169 2.1, RFC 7616 3.4.1).
+	if len(answer.Response) != 64 {
+		t.Errorf("the response is %d characters, want the 64 of a SHA-256 digest", len(answer.Response))
+	}
+}
+
 // TestServeWithIMSAKARegistersAgainUnprotectedWhenDeactivated is TS
 // 24.229 5.1.1.7 for a UE with IMS AKA. The NOTIFY that ends the
 // registration has the UE delete its security associations towards the

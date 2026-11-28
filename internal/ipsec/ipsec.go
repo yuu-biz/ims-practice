@@ -2,9 +2,9 @@
 // UE and the P-CSCF once IMS AKA has agreed on the security
 // associations (TS 33.203 6.2, 6.3, 7.1, 7.2).
 //
-// The clauses are those of TS 33.203 V20.0.0. HMAC-SHA2-256-128, the one
-// transform set up here, and the derivation of its key in Annex I are in
-// TS 33.203 from Release 19 (V19.0.0) on.
+// The clauses are those of TS 33.203 V20.0.0. HMAC-SHA2-256-128, the
+// integrity algorithm of the transforms set up here, and the derivation
+// of its key in Annex I are in TS 33.203 from Release 19 (V19.0.0) on.
 //
 // One authenticated registration agrees on two pairs of unidirectional
 // security associations, four in all: one pair between the UE's
@@ -108,21 +108,39 @@ type transform struct {
 	// ESP carries.
 	integrity  string
 	truncation int
-	// encryption is the kernel's name for the encryption algorithm.
-	// Null encryption is a cipher of its own there, with an empty key.
-	encryption string
+	// encryption is the kernel's name for the encryption algorithm, and
+	// confidentiality says whether it takes a key. Null encryption is a
+	// cipher of its own there, with an empty key.
+	encryption      string
+	confidentiality bool
+	// readBy are the names of the same two algorithms in the ESP
+	// settings of Wireshark, which a reader of a capture needs to see
+	// what the associations carry (WiresharkSAs).
+	readBy wireshark
+}
+
+// wireshark is how the ESP settings of Wireshark name the two
+// algorithms of a transform.
+type wireshark struct {
+	integrity, encryption string
 }
 
 // transforms are the transforms this package sets up, by the names that
-// Annex H gives their algorithms. There is one, the one that
-// ims.SupportedTransforms offers: HMAC-SHA2-256-128, which is
-// AUTH_HMAC_SHA2_256_128 of RFC 4868 with its 256-bit key and its
-// 128-bit integrity check value, and null encryption, which Annex H
-// allows and TS 33.203 7.2 has the P-CSCF choose when its policy asks
-// for no confidentiality.
+// Annex H gives their algorithms. Both have the integrity algorithm
+// HMAC-SHA2-256-128, which is AUTH_HMAC_SHA2_256_128 of RFC 4868 with
+// its 256-bit key and its 128-bit integrity check value, and they
+// differ in the encryption algorithm that ims.SupportedTransforms
+// offers for each confidentiality policy (TS 33.203 7.2): null
+// encryption where the P-CSCF applies no confidentiality, and AES-CBC
+// of RFC 3602 with its 128-bit key where it does.
 var transforms = map[ims.Transform]transform{
 	{Algorithm: "hmac-sha2-256-128", EncryptionAlgorithm: "null"}: {
 		integrity: "hmac(sha256)", truncation: 128, encryption: "ecb(cipher_null)",
+		readBy: wireshark{integrity: "HMAC-SHA-256-128 [RFC4868]", encryption: "NULL"},
+	},
+	{Algorithm: "hmac-sha2-256-128", EncryptionAlgorithm: "aes-cbc"}: {
+		integrity: "hmac(sha256)", truncation: 128, encryption: "cbc(aes)", confidentiality: true,
+		readBy: wireshark{integrity: "HMAC-SHA-256-128 [RFC4868]", encryption: "AES-CBC [RFC3602]"},
 	},
 }
 
@@ -174,6 +192,22 @@ func IKESP(t ims.Transform, ik aka.IK, ck aka.CK) ([]byte, error) {
 	mac := hmac.New(sha256.New, append(ck[:], ik[:]...))
 	mac.Write(s)
 	return mac.Sum(nil), nil
+}
+
+// CKESP is the encryption key of the ESP security associations, the same
+// for all four of them (TS 33.203 6.2). Annex I takes it from CK_IM
+// without expanding it: AES-CBC with a 128-bit key, which is the length
+// of CK_IM, has CK_ESP = CK_IM. A transform with null encryption has no
+// encryption key, and CKESP is then empty.
+func CKESP(t ims.Transform, ck aka.CK) ([]byte, error) {
+	k, err := lookup(t)
+	if err != nil {
+		return nil, err
+	}
+	if !k.confidentiality {
+		return nil, nil
+	}
+	return ck[:], nil
 }
 
 // Command is one "ip" command, its arguments without the program.
@@ -237,6 +271,10 @@ func (a Agreement) Setup(end End) ([]Command, error) {
 	if err != nil {
 		return nil, err
 	}
+	encryptionKey, err := CKESP(a.UEMechanism.Transform, a.CK)
+	if err != nil {
+		return nil, err
+	}
 	var out []Command
 	for _, sa := range a.SecurityAssociations() {
 		// A state of this SPI that an earlier set-up left behind would
@@ -247,11 +285,8 @@ func (a Agreement) Setup(end End) ([]Command, error) {
 			"src", sa.Source.Addr().String(), "dst", sa.Destination.Addr().String(),
 			"proto", "esp", "spi", spi(sa.SPI), "reqid", reqid(sa.SPI), "mode", "transport",
 			"replay-window", "32",
-			// The key of null encryption is empty, which iproute2 reads
-			// from an empty argument; "0x" alone it reads as the two
-			// characters.
-			"auth-trunc", k.integrity, "0x" + hex.EncodeToString(key), strconv.Itoa(k.truncation),
-			"enc", k.encryption, ""})
+			"auth-trunc", k.integrity, hexKey(key), strconv.Itoa(k.truncation),
+			"enc", k.encryption, hexKey(encryptionKey)})
 		out = append(out, sa.policies(end, "update")...)
 	}
 	return out, nil
@@ -319,6 +354,16 @@ func (sa SecurityAssociation) policies(end End, verb string) []Command {
 
 // prefix is the address as a selector of one host.
 func prefix(a netip.Addr) string { return a.String() + "/" + strconv.Itoa(a.BitLen()) }
+
+// hexKey is a key as iproute2 takes it. The empty key of null
+// encryption is an empty argument: "0x" alone iproute2 reads as the two
+// characters.
+func hexKey(key []byte) string {
+	if len(key) == 0 {
+		return ""
+	}
+	return "0x" + hex.EncodeToString(key)
+}
 
 func spi(v uint32) string   { return "0x" + strconv.FormatUint(uint64(v), 16) }
 func reqid(v uint32) string { return strconv.FormatUint(uint64(v), 10) }

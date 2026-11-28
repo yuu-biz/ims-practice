@@ -12,7 +12,7 @@ The example is the `deploy/compose` setup, where the P-CSCF is the IMS-ALG that 
 
 Offer and answer, re-INVITE, reliable provisional responses and PRACK are in [Transactions, dialogs and media negotiation in a call](call-signaling.md). The IBCF and the TrGW are in [Interconnection between networks](interconnect.md), and the store that the P-CSCF instances share is in [What several nodes and failures hand over](design-shared-state.md).
 
-The specifications this chapter cites are RFC 3261, RFC 3262, RFC 3264, RFC 3311, RFC 6141 and TS 24.229 V18.11.0. The ports A and B in the tables are made up for the explanation, not values of a capture.
+The specifications this chapter cites are RFC 3261, RFC 3262, RFC 3264, RFC 3311, RFC 6141, TS 24.229 V18.11.0 and TS 29.214 V20.0.0. The ports A and B in the tables are made up for the explanation, not values of a capture.
 
 ## Why the agreement and the setting of the relay do not settle together
 
@@ -63,16 +63,25 @@ At the P-CSCF the addresses of the last offer and answer are in the record of th
 
 The comment gives two reasons for keeping these values in the store. The operations that control the relay are only `Add`, `Modify` and `Subtract`, and none of them reads the current setting. And the next request of the same dialog may pass another P-CSCF instance. So that whichever instance handles the response can put the relay back, the target of the change back lives outside the instance.
 
-These values change only when an answer is done, right after the P-CSCF has put the SDP of a response through the relay.
+These values change only when an answer is done, right after the P-CSCF has put the SDP of a response through the relay. That is also the only time at which the PCRF hears of the changed media.
 
 [internal/pcscf/session.go](../../../internal/pcscf/session.go)
 
 ```go
 		taken = true
 		if resp.StatusCode < 200 && !resp.Requires(sip.Option100rel) {
+			// The SDP of a provisional response that is not reliable is no
+			// answer (RFC 3261 13.2.1). The relay sends where it says, so
+			// that early media of the session being renegotiated reaches the
+			// party that offered, and goBack takes that back when the request
+			// fails. Nothing else of the session follows it: the media that
+			// the dialog keeps and that the PCRF has authorised stay those of
+			// the last offer and answer that are done, which is what the
+			// session carries until this offer is answered.
 			previewed = sent
-		} else if !settled && d.Relay != nil {
-			settled = true
+			return
+		}
+		if !settled && d.Relay != nil {
 			_, _, err := p.store.UpdateDialog(context.Background(), d.Key, func(d *Dialog) {
 				if d.Relay != nil {
 					d.Relay = d.Relay.agreeing(facingSender(toUE), offered).agreeing(facingSender(!toUE), sent)
@@ -85,9 +94,28 @@ These values change only when an answer is done, right after the P-CSCF has put 
 				log.Warn("the dialog keeps the offer and answer before this one: the store failed", "error", err.Error())
 			}
 		}
+		settled = true
+		// A 2xx to a re-INVITE comes again until its ACK arrives.
+		if authorized || d.PolicySession == "" || p.policy == nil {
+			return
+		}
+		authorized = true
+		_, err = p.policy.AuthorizeMedia(context.Background(), policy.MediaRequest{
+			Session:   d.PolicySession,
+			UE:        ue,
+			SDP:       policy.OfferAnswer{Offer: offer, Answer: ueSide(received, resp.Body, !toUE), UEOffered: !toUE},
+			Subscribe: mediaEvents,
+		})
+		if err != nil {
+			log.Warn("the PCRF refused the changed media", "policy_session", string(d.PolicySession), "error", err.Error())
+			return
+		}
+		log.Info("changed media authorised", "policy_session", string(d.PolicySession))
 ```
 
-The inputs are the response to the request, `resp`, and `sent`, where the party that answers takes its media, as the relay was told. The SDP of a provisional response that is not reliable is no answer (RFC 3261 13.2.1); it only shows the answer early, so it goes into `previewed` and is not taken as done. For a 2xx or a reliable provisional response, the address of the offer, `offered`, and that of the party that answered, `sent`, are written to the store as the ones that are done. When that write fails, the response still goes on. A later offer that is turned down then puts the relay back where the offer and answer before this one said. That is one limit of this implementation.
+The inputs are the response to the request, `resp`, and `sent`, where the party that answers takes its media, as the relay was told. The SDP of a provisional response that is not reliable is no answer (RFC 3261 13.2.1); it only shows the answer early. The relay already sends where it says, so that early media of the session being renegotiated reach the party that offered, and the address goes into `previewed`, so that it can be taken back. Nothing else follows it: the function returns there, the addresses that are done stay those of the last offer and answer, and the PCRF hears nothing. For a 2xx or a reliable provisional response, the address of the offer, `offered`, and that of the party that answered, `sent`, are written to the store as the ones that are done, and `settled` becomes true. When that write fails, the response still goes on. A later offer that is turned down then puts the relay back where the offer and answer before this one said. That is one limit of this implementation.
+
+Only after that does the PCRF get the changed service information, in the policy session of the dialog (TS 29.214 A.1, 4.4.2). That information describes the media of a session whose offer and answer are done, and the network reserves the resources of the media it names. If the P-CSCF sent it for the SDP of a 183 that is not reliable, a request that then fails would leave the bearer reserved for the media of an offer that the session never took. `authorized` keeps the 2xx of a re-INVITE, which comes again until its ACK arrives, from sending the same information twice. The initial INVITE is different: it has no earlier media to keep, so there the P-CSCF does send the answer of a 183 that is not reliable to the PCRF, which gives the early media of the call a bearer ([Registration and calls over VoLTE](volte.md#the-aar-for-the-media-of-a-call)).
 
 ## What the standards fix, and what they leave open
 
@@ -140,9 +168,9 @@ A far end that turns the offer down with 488, and a UE that cancels so that the 
 	}
 ```
 
-It does nothing in three cases: the request ended with a 2xx; an answer was already done (`settled`); or the P-CSCF had already decided to release the call (`refused`). The second is the case of a reliable 183 to the re-INVITE that carried the answer: that offer and answer are done. RFC 6141 3.3 has a UAS that has carried out such a change return a 2xx, but the re-INVITE may still end with 488. Nothing goes back then either. What brings the two parties to one view is the next offer of the UAC (RFC 6141 3.4).
+It does nothing in three cases: the request ended with a 2xx; an answer was already done (`settled`); or the P-CSCF had already decided to release the call (`refused`). The second is the case of a reliable 183 to the re-INVITE that carried the answer: that offer and answer are done. RFC 6141 3.3 has a UAS that has carried out such a change return a 2xx, but the re-INVITE may still end with 488. Nothing goes back then either: each termination keeps sending where that offer and answer said, and the PCRF keeps the media of that answer. What brings the two parties to one view is the next offer of the UAC (RFC 6141 3.4).
 
-Otherwise the termination that faces the party that offered goes back from `offered`. The other termination, which the SDP of a provisional response that is not reliable may have moved, goes back from `previewed`. When either does not go back, `stuck` becomes true.
+Otherwise the termination that faces the party that offered goes back from `offered`. The other termination, which the SDP of a provisional response that is not reliable may have moved, goes back from `previewed`. The PCRF was told nothing of the offer or of that SDP, so nothing goes back there: what the P-CSCF last gave the PCRF is still the media of the last offer and answer that are done. When either termination does not go back, `stuck` becomes true.
 
 The change back is `goBack`.
 
@@ -283,19 +311,18 @@ There are several ways to handle the relay after an offer is turned down. None o
 
 **Keeping the new setting** is safe only in a few cases. When the offer did not change the address, there is nothing to undo, and `goBack` sends no `Modify`. A relay that sends to the source of the packets it gets (latching) depends less on the address in the SDP. But the core termination of this implementation does not latch: it sends to the address of the latest SDP. On that termination, which faces the network, putting the relay back is what keeps the audio right.
 
-A further way is to **change the relay only when the answer comes**. The relay is left alone on the offer, and both terminations change as the answer passes. Nothing has to go back after a rejection. RFC 3264 8.3.1 has the party that offered keep taking media at the old port until it has the answer and media arrive at the new one, so sending to the old address in the meantime also follows the rules. In exchange, the failures of the relay all fall on the moment the answer passes. Nobody can refuse an answer, so a relay that fails then leaves nothing but ending the call. When the relay moves on the offer, most of its failures cost only a 500 to the offer. This implementation does not do this for the relay, but it treats the PCRF in a similar way: the P-CSCF tells the PCRF of the changed media not on the offer, but when it puts the SDP of a response through the relay. So an offer that is turned down with no response carrying SDP leaves nothing to undo at the PCRF.
+A further way is to **change the relay only when the answer comes**. The relay is left alone on the offer, and both terminations change as the answer passes. Nothing has to go back after a rejection. RFC 3264 8.3.1 has the party that offered keep taking media at the old port until it has the answer and media arrive at the new one, so sending to the old address in the meantime also follows the rules. In exchange, the failures of the relay all fall on the moment the answer passes. Nobody can refuse an answer, so a relay that fails then leaves nothing but ending the call. When the relay moves on the offer, most of its failures cost only a 500 to the offer. This implementation does not do this for the relay, but it does for the PCRF: the P-CSCF tells the PCRF of the changed media neither on the offer nor on the SDP of a provisional response that is not reliable, but only when the answer comes in a 2xx or a reliable provisional response. So an offer that is turned down leaves nothing to undo at the PCRF, even after a 183 that showed its answer early. For the PCRF the trade differs from that of the relay. Moving the relay early lets the early media of the renegotiated session through and leaves most failures of the relay at the offer, while telling the PCRF early would reserve resources for media that nobody has agreed.
 
 The controller could also ask the relay for its setting before it decides, which would leave fewer cases unknown. But the control operations of this implementation have none that reads the setting of a termination, and the response would wait for the question as well.
 
 ## The choice of this implementation and its limits
 
-**The P-CSCF.** It moves the relay when the offer passes, and puts it back before a non-2xx response goes on. It keeps the addresses that are done with the record of the dialog, in the store that the instances share. When a re-INVITE passes the first instance and the next UPDATE the second, the second can put the relay back. The limits are these.
+**The P-CSCF.** It moves the relay when the offer passes, and puts it back before a non-2xx response goes on. It tells the PCRF of the changed media only once the answer is done, so a failed renegotiation leaves the PCRF with the media of the last offer and answer that are done. It keeps the addresses that are done with the record of the dialog, in the store that the instances share. When a re-INVITE passes the first instance and the next UPDATE the second, the second can put the relay back. The limits are these.
 
 - When the addresses that are done cannot be written to the store, a later offer that is turned down puts the relay back where the offer and answer before them said.
 - When the relay does not answer, the P-CSCF has no way to check the state of the relay. It ends the call.
 - The BYEs that end a call for a failure of the relay follow 5.2.8.1.2, but that clause does not name this trigger. It is the choice of this implementation. The Reason of the BYE is `SIP;cause=503;text="Service Unavailable"`.
 - When the PCRF refuses the changed media, the P-CSCF only logs it, and the call stays authorised as before (a `SIMPLIFIED:` in the code; TS 29.214 4.4.2).
-- The P-CSCF tells the PCRF of the media also when it puts the SDP of a provisional response that is not reliable through the relay. When the request then ends with a response other than 2xx, the relay goes back, but the media the PCRF was told of stay until the next offer and answer.
 
 **The IBCF.** The rules are those of the P-CSCF: it puts the TrGW back before a non-2xx response goes on, and releases the call when it cannot. What differs is where the addresses that are done are kept. The IBCF is a B2BUA, and the two dialogs of a call are in the process of the instance that took its INVITE. The requests within the call always come back to that instance, so its memory is enough for those addresses too. When the instance stops, the call stops with it, and as long as the store remains, the instance that starts again under the same name ends the call from its record there ([Interconnection between networks](interconnect.md) and [Taking a node out for maintenance, and losing it](design-maintenance.md)).
 
@@ -310,6 +337,9 @@ The explanation of this chapter was checked against the following code and tests
 - `TestRejectedOfferGoesBackToTheLastOfferAndAnswer` in the same file. The relay goes back to the offer and answer of the last re-INVITE that got a 2xx, not to those of the INVITE.
 - `TestRejectedOfferAfterAPreviewPutsBothSidesBack` in the same file. Both terminations go back, the one that a 183 that is not reliable moved included.
 - `TestRejectedOfferEndsTheCallWhenTheRelayDoesNotGoBack` in the same file. When the `Modify` back fails, each party gets a BYE after the 488 has gone on, and the PCRF session and the context are released.
+- `TestRejectedOfferAfterAPreviewKeepsTheAuthorisedMedia` in `internal/pcscf/renegotiate_test.go`. The far end shows its answer to a re-INVITE in a 183 that is not reliable and then answers 488. The PCRF still authorises the media of the INVITE, and the relay holds the one context of the call. The next offer, answered in a 200, has the PCRF authorise the media of that answer.
+- `TestAnswerAfterAPreviewIsAuthorisedOnce` in the same file. After a 183 that is not reliable, the far end answers in its 200. The PCRF gets nothing for the 183, and the media of the 200 once.
+- `TestRejectedOfferAfterAReliableAnswerKeepsTheNewMedia` in the same file. The far end answers a re-INVITE in a reliable 183, which the UE acknowledges with a PRACK, and then answers 488. The PCRF keeps the media of that answer, and each termination keeps sending where that offer and answer said.
 - `TestRefusedOfferWithinTheDialogIsRejected` in `internal/pcscf/refusedoffer_test.go`. When the relay refuses the `Modify`, the P-CSCF answers 500 and passes nothing on, the call stays up, and the next offer goes through.
 - `TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt` in the same file. When the relay does not answer in time (the test relay has carried the change out), or answers that it has lost the context, the request gets 500 and each party a BYE.
 - `TestRefusedAnswerWithinTheDialogReleasesTheCall` in `internal/pcscf/refusedanswer_test.go`. When the relay does not take the answer of a response, the BYEs come after the 200 has gone on (after the ACK for a re-INVITE).

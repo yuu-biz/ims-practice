@@ -14,7 +14,7 @@
 | 内容 | 移した知識と、そう扱った理由。訂正と削除では、その根拠 |
 | 扱い | 保持、再編集、統合、移動、課題から解説へ、訂正、削除 のどれか |
 | 行き先 | 移した先のファイルと見出しのアンカー、またはデッキのシーンの id。`docs/book/ja/x.md#見出し` のようにバッククォートで囲み、複数なら並べる |
-| 確かめる語 | 行き先のその節に残っているべき語。訂正と削除では、消してよい語 |
+| 確かめる語 | 行き先のその節に残っているべき語。訂正と削除では、消してよい語。語がバッククォートを含むときは、``` ``a `b` c`` ``` のように 2 つのバッククォートで囲む |
 
 検査は、行き先のファイルと見出しやシーンがあること、確かめる語がその節にあること、旧スライドのリンク、行の中のコード、コードの行、表のセルが、いまのデッキか行き先のファイルに残っていることを確かめます。表の行の意味が旧スライドと同じかは、行を書いた人が確かめます。
 
@@ -309,6 +309,8 @@
 | 振り返りの答え | 答えを、同じ節の文として置いた | 課題から解説へ | `docs/book/ja/volte.md#attach-で-p-cscf-のアドレスを受け取る`、`docs/book/ja/volte.md#p-cscf-が鍵を外して保護を申し出る`、`docs/book/ja/volte.md#端末が網を確かめて答える`、`docs/book/ja/volte.md#網が-bearer-を落とすと-p-cscf-が通話を終える`、`docs/book/ja/volte.md#信号の経路を見張る-rx-のセッション` | `L.2.2.1 の方法 II`、`自分の K と RAND から計算できる`、`SQN が新しいかを確かめ`、`ASR で Rx のセッションごと終えます`、`ポリシー制御なしで扱います` |
 | 次の回 | 2 つの境界と 5GC の 5QI の話は、アクセス網の境界のスライドと、本の 5GC の節に移した。網間接続の手順書へのリンクは作っていないもののスライドに残した | 移動 | `slides/decks/ja/09-volte.md#ue-とアクセス網の境界をコードで見る`、`slides/decks/ja/09-volte.md#作っていないもの`、`docs/book/ja/access-and-borders.md#5gc-の部品について`、`docs/guide/ja/volte.md#後片付け` | `5QI 5`、`PolicyControl`、`網間接続の手順書`、`--profile phones` |
 | 次の回 | 後片付けのコマンドは、手順書の「後片付け」のものに任せた。手順書のものは `phones` のプロファイルも止め、イメージは残す | 訂正 | `docs/guide/ja/volte.md#後片付け` | `docker compose --profile ue --profile volte down --rmi all -v --remove-orphans` |
+| ims-model | S-CSCF は AKAv2-SHA-256 と AKAv1-MD5 の 2 つで問い、UE は最初の REGISTER に algorithm を書かない。コードと手順書に合わせて値を直した | 訂正 | | `algorithm=AKAv1-MD5` |
+| IMS-AKA で網を確かめて答える（7〜12） | S-CSCF は、UE が書いた algorithm の Digest を、XRES、IK、CK から作るパスワードで計算する。XRES だけをパスワードにするのは AKAv1-MD5 の場合で、コードと手順書に合わせて直した | 訂正 | | `XRES で Digest を計算して比べる。一致したので登録する。` |
 
 ## en/09-volte.md
 
@@ -336,6 +338,9 @@
 | Looking back: answers | 答えを、同じ節の文として置いた | 課題から解説へ | `docs/book/en/volte.md#the-attach-gives-the-address-of-the-p-cscf`、`docs/book/en/volte.md#the-p-cscf-takes-the-keys-out-and-offers-protection`、`docs/book/en/volte.md#the-phone-checks-the-network-and-answers`、`docs/book/en/volte.md#when-the-network-takes-the-bearer-the-p-cscf-ends-the-call`、`docs/book/en/volte.md#the-rx-session-that-watches-the-signalling-path` | `method II of TS 24.229 L.2.2.1`、`from its own K and RAND`、`checks that the SQN is fresh`、`ends the whole Rx session with an ASR`、`without policy control` |
 | Next session | 2 つの境界と 5GC の 5QI の話は、アクセス網の境界のスライドと、本の 5GC の節に移した。網間接続の手順書へのリンクは作っていないもののスライドに残した | 移動 | `slides/decks/en/09-volte.md#the-boundary-between-the-ue-and-the-access-network-in-the-code`、`slides/decks/en/09-volte.md#what-is-not-built`、`docs/book/en/access-and-borders.md#about-the-parts-of-a-5gc`、`docs/guide/en/volte.md#clean-up` | `5QI 5`、`PolicyControl`、`the interconnect guide`、`--profile phones` |
 | Next session | 後片付けのコマンドは、手順書の「後片付け」のものに任せた。手順書のものは `phones` のプロファイルも止め、イメージは残す | 訂正 | `docs/guide/en/volte.md#clean-up` | `docker compose --profile ue --profile volte down --rmi all -v --remove-orphans` |
+| ims-model | S-CSCF は AKAv2-SHA-256 と AKAv1-MD5 の 2 つで問い、UE は最初の REGISTER に algorithm を書かない。コードと手順書に合わせて値を直した | 訂正 | | `algorithm=AKAv1-MD5` |
+| The first REGISTER of IMS AKA, and the 401 (1 to 6) | 方式名 `Digest-AKAv1-MD5` は AKA のどちらの版でも同じであることを、セルに足した | 訂正 | | ``Asks for one item of the scheme `Digest-AKAv1-MD5`.`` |
+| Checking the network and answering with IMS AKA (7 to 12) | UE は `algorithm=AKAv2-SHA-256` で答え、S-CSCF はその algorithm の Digest を、XRES、IK、CK から作るパスワードで計算する。コードと手順書に合わせて直した | 訂正 | | `Computes the Digest with XRES and compares. They match: registered.`、`` `Security-Verify` mirrors the Security-Server. The response from RES. `` |
 
 ## ja/10-interconnect.md
 

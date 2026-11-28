@@ -204,6 +204,22 @@ func (s *SCSCF) OnRequest(st *sip.ServerTransaction) {
 	s.register(st)
 }
 
+// registration reads the registration of a user and reports whether it
+// is still a binding: one past its Expires is no binding any more,
+// although no instance may have handled its expiry yet (ClaimDue), so
+// the registration procedures hold the user to be not registered. The
+// handler of the expiry reads the Store itself, which keeps such a
+// registration for it (registrationExpired).
+//
+// The registration is returned whether or not it is a binding, because
+// it holds the Server-Name under which the HSS has the user even after
+// it has expired, and the Cx requests that follow keep naming it
+// (assignedName).
+func (s *SCSCF) registration(ctx context.Context, privateID string) (Registration, bool, error) {
+	reg, ok, err := s.store.Registration(ctx, privateID)
+	return reg, ok && !reg.expired(time.Now()), err
+}
+
 // register is TS 24.229 5.4.1.2. The integrity-protected parameter that
 // the P-CSCF wrote tells IMS AKA from SIP Digest without TLS (5.4.1.1).
 //
@@ -257,7 +273,14 @@ func (s *SCSCF) register(st *sip.ServerTransaction) {
 	}
 	defer unlock()
 
-	current, registered, err := s.store.Registration(ctx, privateID)
+	// A REGISTER that comes after the binding expired, and before any
+	// instance has handled its expiry, finds no registration: TS 24.229
+	// 5.4.1.2.2A NOTE 13 counts as a previous registration only one that
+	// has neither been deregistered nor expired. So this REGISTER starts
+	// a registration afresh, and one that asks for no interval has no
+	// contact to remove (5.4.1.4.1 item 1). The expiry still ends the
+	// registration that is left behind (registrationExpired).
+	current, registered, err := s.registration(ctx, privateID)
 	if err != nil {
 		s.storeFailed(st, err, log)
 		return
@@ -394,7 +417,7 @@ func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID, server
 		CallID:          st.Request.Get("Call-ID"),
 		Realm:           d.DigestRealm,
 		Nonce:           rand.Text(),
-		Algorithm:       algorithm,
+		Algorithms:      []string{algorithm},
 		HA1:             d.DigestHA1,
 		HSSHost:         originHost(answer),
 		ServerName:      serverName,
@@ -444,7 +467,11 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 	if req.Get("Call-ID") != ch.CallID || c.Realm != ch.Realm || c.CNonce == "" || c.NC == "" {
 		return wrong
 	}
-	want, err := sip.DigestResponse(ch.digestHA1(), sip.REGISTER, c)
+	// Step 3: the algorithm is one that the 401 offered.
+	if !ch.offers(c.Algorithm) {
+		return wrong
+	}
+	want, err := sip.DigestResponse(ch.digestHA1(c.Algorithm), sip.REGISTER, c)
 	if err != nil || subtle.ConstantTimeCompare([]byte(want), []byte(c.Response)) != 1 {
 		return wrong
 	}
@@ -461,7 +488,7 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 func (s *SCSCF) accept(st *sip.ServerTransaction, c sip.Credentials, ch Challenge, expires time.Duration, log *slog.Logger) {
 	req := st.Request
 	ctx := context.Background()
-	old, registered, err := s.store.Registration(ctx, ch.PrivateIdentity)
+	old, registered, err := s.registration(ctx, ch.PrivateIdentity)
 	if err != nil {
 		s.storeFailed(st, err, log)
 		return
@@ -554,7 +581,7 @@ func (s *SCSCF) bindingResponse(reg Registration, expires time.Duration, c sip.C
 		// RFC 2617 3.2.3: rspauth proves that the S-CSCF knows H(A1) too;
 		// with IMS AKA, XRES is the password (RFC 3310 3.5). A REGISTER
 		// that answered no challenge gets none.
-		if ha1 := ch.digestHA1(); ha1 != "" {
+		if ha1 := ch.digestHA1(c.Algorithm); ha1 != "" {
 			rspauth, _ := sip.DigestResponse(ha1, "", c)
 			r.Add("Authentication-Info", fmt.Sprintf(`qop=auth, rspauth="%s", cnonce="%s", nc=%s`, rspauth, c.CNonce, c.NC))
 		}
@@ -616,7 +643,7 @@ func (s *SCSCF) refuseOutOfOrder(st *sip.ServerTransaction, reg Registration, lo
 // deregister is TS 24.229 5.4.1.4.1.
 func (s *SCSCF) deregister(st *sip.ServerTransaction, privateID string, wildcard bool, log *slog.Logger) {
 	ctx := context.Background()
-	reg, ok, err := s.store.Registration(ctx, privateID)
+	reg, ok, err := s.registration(ctx, privateID)
 	if err != nil {
 		s.storeFailed(st, err, log)
 		return

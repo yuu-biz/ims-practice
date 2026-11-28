@@ -23,7 +23,7 @@ import (
 func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID, serverName string, c sip.Credentials, protected bool, expires time.Duration,
 	ch Challenge, pending bool, log *slog.Logger) {
 	ctx := context.Background()
-	pending = pending && ch.Algorithm == sip.AlgorithmAKAv1MD5
+	pending = pending && ch.imsAKA()
 	if !protected {
 		// 5.4.1.2.1, last paragraph: an unprotected REGISTER that names the
 		// nonce of the pending challenge tells that the UE found the
@@ -31,7 +31,7 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID, serv
 		// even while a challenge is pending (5.4.1.2.3). The response of an
 		// unprotected REGISTER does not count (5.4.1.2.1).
 		if !pending || c.Nonce != ch.Nonce {
-			s.challengeAKA(st, privateID, publicID, serverName, nil, false, log)
+			s.challengeAKA(st, privateID, publicID, serverName, c.Algorithm, nil, false, log)
 			return
 		}
 		if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
@@ -39,7 +39,7 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID, serv
 			return
 		}
 		if auts, ok := c.AUTS(); ok {
-			s.resynchronise(st, ch, auts, log)
+			s.resynchronise(st, ch, c.Algorithm, auts, log)
 			return
 		}
 		// TS 33.203 6.1.2.2: without auts, the UE could not authenticate
@@ -55,7 +55,7 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID, serv
 	// step 3 what Authorization holds and step 4 the response, which
 	// check does.
 	verdict := wrong
-	if strings.EqualFold(c.Algorithm, sip.AlgorithmAKAv1MD5) && c.Response != "" {
+	if c.Response != "" {
 		verdict = s.check(st.Request, c, ch)
 	}
 	switch verdict {
@@ -68,7 +68,7 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID, serv
 		log.Info("stale nonce")
 		// The reg-await-auth of the challenge stands until the new
 		// challenge, once stored, takes its place.
-		s.challengeAKA(st, privateID, publicID, serverName, nil, true, log)
+		s.challengeAKA(st, privateID, publicID, serverName, c.Algorithm, nil, true, log)
 	default:
 		if err := s.store.DeleteChallenge(ctx, privateID); err != nil {
 			s.storeFailed(st, err, log)
@@ -83,14 +83,15 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID, serv
 // authenticate again; it does not, because the REGISTER came over the
 // security associations of the last authentication (TS 33.203 7.4.0).
 func (s *SCSCF) reregister(st *sip.ServerTransaction, privateID, publicID string, c sip.Credentials, expires time.Duration, log *slog.Logger) {
-	reg, ok, err := s.store.Registration(context.Background(), privateID)
+	reg, ok, err := s.registration(context.Background(), privateID)
 	if err != nil {
 		s.storeFailed(st, err, log)
 		return
 	}
 	if !ok {
 		// 5.4.1.2.3A: protected, but nobody registered by that name, and
-		// this S-CSCF has no restoration procedures.
+		// this S-CSCF has no restoration procedures. A binding past its
+		// Expires is nobody registered either (SCSCF.registration).
 		log.Info("protected REGISTER of a user not registered here")
 		s.respond(st, 500, nil)
 		return
@@ -111,16 +112,37 @@ func (s *SCSCF) reregister(st *sip.ServerTransaction, privateID, publicID string
 	s.accept(st, c, Challenge{PrivateIdentity: privateID, PublicIdentity: publicID, HSSHost: reg.HSSHost, ServerName: reg.ServerName}, expires, log)
 }
 
+// imsAKAAlgorithms are the algorithms of IMS AKA, the preferred one
+// first (TS 33.203 6.1.1). AKAv1-MD5 is there for backward
+// compatibility: its response proves only that the sender holds RES,
+// where the response of AKAv2-SHA-256 proves that it holds IK and CK as
+// well (RFC 4169 1).
+var imsAKAAlgorithms = []string{sip.AlgorithmAKAv2SHA256, sip.AlgorithmAKAv1MD5}
+
+// akaAlgorithms are the algorithms that a 401 offers, where named is the
+// algorithm that the Authorization of the challenged REGISTER names, if
+// any. A REGISTER that names one of the algorithms of IMS AKA is offered
+// that one alone, the value it sent, as TS 24.229 5.4.1.2.1A item 1 c
+// asks. One that names none, which is what TS 24.229 5.1.1.2.2 item a
+// has a UE send, leaves no value to send back, so it is offered both, as
+// TS 33.203 6.1.1 asks.
+func akaAlgorithms(named string) []string {
+	for _, algorithm := range imsAKAAlgorithms {
+		if strings.EqualFold(named, algorithm) {
+			return []string{algorithm}
+		}
+	}
+	return imsAKAAlgorithms
+}
+
 // challengeAKA fetches an authentication vector with a MAR and
 // challenges the UE with a 401 (TS 24.229 5.4.1.2.1 steps 3 to 7, and
 // 5.4.1.2.1A). serverName is the one that the registration of the user
 // holds, or for a re-synchronisation the one of the challenge whose
-// RAND and AUTS resync carries (5.4.1.2.3A).
-//
-// SIMPLIFIED: TS 33.203 6.1.1 and TS 24.229 5.4.1.2.1A. The S-CSCF
-// offers AKAv1-MD5 only, not AKAv2-SHA-256 first and AKAv1-MD5 after
-// it: SIPp, the independent test peer, speaks AKAv1-MD5 only.
-func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID, serverName string, resync *cx.Resynchronization, stale bool, log *slog.Logger) {
+// RAND and AUTS resync carries (5.4.1.2.3A). named is the algorithm that
+// the Authorization of the challenged REGISTER names, if any
+// (akaAlgorithms).
+func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID, serverName, named string, resync *cx.Resynchronization, stale bool, log *slog.Logger) {
 	serverName = s.assignedName(serverName)
 	answer, err := s.request(context.Background(), cx.MultimediaAuthRequest{
 		Header:                  diameter.NewHeader(s.node, "", s.cfg.HomeDomain),
@@ -150,13 +172,15 @@ func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID, ser
 		PublicIdentity:  publicID,
 		CallID:          st.Request.Get("Call-ID"),
 		// 5.4.1.2.1A item 1 a: a globally unique name of the S-CSCF.
-		Realm:     s.cfg.Host,
-		Nonce:     aka.Nonce(av.RAND, av.AUTN),
-		Algorithm: sip.AlgorithmAKAv1MD5,
+		Realm:      s.cfg.Host,
+		Nonce:      aka.Nonce(av.RAND, av.AUTN),
+		Algorithms: akaAlgorithms(named),
 		// The RAND of the newest 401 replaces any stored before
 		// (5.4.1.2.1A).
 		RAND:       av.RAND,
 		XRES:       av.XRES,
+		IK:         av.IK,
+		CK:         av.CK,
 		HSSHost:    originHost(answer),
 		ServerName: serverName,
 	}
@@ -164,24 +188,29 @@ func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID, ser
 		s.storeFailed(st, err, log)
 		return
 	}
-	log.Info("challenged with IMS AKA", "nonce", ch.Nonce, "stale", stale, "resynchronised", resync != nil)
-	challenge := sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: ch.Algorithm, QOP: []string{"auth"}}
-	// 5.4.1.2.1A item 1 c: IK and CK for the P-CSCF (7.2A.1).
-	challenge.SetKeys(hex.EncodeToString(av.IK[:]), hex.EncodeToString(av.CK[:]))
-	s.respond(st, 401, func(r *sip.Message) { r.Add("WWW-Authenticate", challenge.String()) })
+	log.Info("challenged with IMS AKA", "nonce", ch.Nonce, "algorithms", ch.Algorithms, "stale", stale,
+		"resynchronised", resync != nil)
+	s.respond(st, 401, func(r *sip.Message) {
+		for _, algorithm := range ch.Algorithms {
+			challenge := sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: algorithm, QOP: []string{"auth"}}
+			// 5.4.1.2.1A item 1 c: IK and CK for the P-CSCF (7.2A.1).
+			challenge.SetKeys(hex.EncodeToString(av.IK[:]), hex.EncodeToString(av.CK[:]))
+			r.Add("WWW-Authenticate", challenge.String())
+		}
+	})
 }
 
 // resynchronise is TS 24.229 5.4.1.2.3A for a REGISTER with auts: the
 // S-CSCF asks the HSS for a new vector with the RAND it stored and the
 // AUTS of the UE, and challenges again (TS 33.203 6.1.3).
-func (s *SCSCF) resynchronise(st *sip.ServerTransaction, ch Challenge, auts string, log *slog.Logger) {
+func (s *SCSCF) resynchronise(st *sip.ServerTransaction, ch Challenge, named, auts string, log *slog.Logger) {
 	a, err := aka.ParseAUTS(auts)
 	if err != nil {
 		s.authenticationFailed(st, ch.PrivateIdentity, ch.PublicIdentity, ch, "unreadable auts", log)
 		return
 	}
 	log.Info("synchronisation failure")
-	s.challengeAKA(st, ch.PrivateIdentity, ch.PublicIdentity, ch.ServerName, &cx.Resynchronization{RAND: ch.RAND, AUTS: a}, false, log)
+	s.challengeAKA(st, ch.PrivateIdentity, ch.PublicIdentity, ch.ServerName, named, &cx.Resynchronization{RAND: ch.RAND, AUTS: a}, false, log)
 }
 
 // authenticationFailed ends the authentication of ch with 403 (TS 24.229

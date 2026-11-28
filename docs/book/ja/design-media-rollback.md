@@ -12,7 +12,7 @@
 
 オファーとアンサー、re-INVITE、信頼性のある暫定応答と PRACK は、[通話のトランザクション、ダイアログ、メディアの交渉](call-signaling.md) で扱います。IBCF と TrGW は [網間接続](interconnect.md) で、P-CSCF の台が共有する保存先は [複数台と障害で引き継ぐもの](design-shared-state.md) で扱います。
 
-この章が引く仕様は RFC 3261、RFC 3262、RFC 3264、RFC 3311、RFC 6141、TS 24.229 V18.11.0 です。表の中のポート A、B は説明のための例で、キャプチャの値ではありません。
+この章が引く仕様は RFC 3261、RFC 3262、RFC 3264、RFC 3311、RFC 6141、TS 24.229 V18.11.0、TS 29.214 V20.0.0 です。表の中のポート A、B は説明のための例で、キャプチャの値ではありません。
 
 ## 合意と中継ノードの設定が同時に決まらない理由
 
@@ -63,16 +63,25 @@ UE がポート A で受けている通話で、UE がポート B へ移る re-I
 
 コメントが、この値を保存先に置く理由を 2 つ挙げています。1 つは、中継ノードの制御の操作が `Add`、`Modify`、`Subtract` だけで、いまの設定を尋ねる操作が無いことです。もう 1 つは、同じダイアログの次の要求が、別の P-CSCF の台を通るかもしれないことです。どの台が応答を扱っても戻せるように、戻す先を台の外に置きます。
 
-この値が書き換わるのは、アンサーが成立したときだけです。P-CSCF が応答の SDP を中継ノードに通した直後の処理です。
+この値が書き換わるのは、アンサーが成立したときだけです。P-CSCF が応答の SDP を中継ノードに通した直後の処理です。PCRF が変わったメディアを知らされるのも、このときだけです。
 
 [internal/pcscf/session.go](../../../internal/pcscf/session.go)
 
 ```go
 		taken = true
 		if resp.StatusCode < 200 && !resp.Requires(sip.Option100rel) {
+			// The SDP of a provisional response that is not reliable is no
+			// answer (RFC 3261 13.2.1). The relay sends where it says, so
+			// that early media of the session being renegotiated reaches the
+			// party that offered, and goBack takes that back when the request
+			// fails. Nothing else of the session follows it: the media that
+			// the dialog keeps and that the PCRF has authorised stay those of
+			// the last offer and answer that are done, which is what the
+			// session carries until this offer is answered.
 			previewed = sent
-		} else if !settled && d.Relay != nil {
-			settled = true
+			return
+		}
+		if !settled && d.Relay != nil {
 			_, _, err := p.store.UpdateDialog(context.Background(), d.Key, func(d *Dialog) {
 				if d.Relay != nil {
 					d.Relay = d.Relay.agreeing(facingSender(toUE), offered).agreeing(facingSender(!toUE), sent)
@@ -85,9 +94,28 @@ UE がポート A で受けている通話で、UE がポート B へ移る re-I
 				log.Warn("the dialog keeps the offer and answer before this one: the store failed", "error", err.Error())
 			}
 		}
+		settled = true
+		// A 2xx to a re-INVITE comes again until its ACK arrives.
+		if authorized || d.PolicySession == "" || p.policy == nil {
+			return
+		}
+		authorized = true
+		_, err = p.policy.AuthorizeMedia(context.Background(), policy.MediaRequest{
+			Session:   d.PolicySession,
+			UE:        ue,
+			SDP:       policy.OfferAnswer{Offer: offer, Answer: ueSide(received, resp.Body, !toUE), UEOffered: !toUE},
+			Subscribe: mediaEvents,
+		})
+		if err != nil {
+			log.Warn("the PCRF refused the changed media", "policy_session", string(d.PolicySession), "error", err.Error())
+			return
+		}
+		log.Info("changed media authorised", "policy_session", string(d.PolicySession))
 ```
 
-入力は、要求への応答 `resp` と、その SDP を中継ノードに通した結果 `sent`（答えた側がメディアを受けるアドレス）です。信頼性のない暫定応答の SDP は、アンサーではありません（RFC 3261 13.2.1）。同じアンサーを先に見せているだけなので、`previewed` に覚えるだけで、成立したものにはしません。2xx か信頼性のある暫定応答なら、オファーのアドレス `offered` と答えた側のアドレス `sent` を、成立したアドレスとして保存先に書きます。書き込みに失敗しても、応答は先へ進みます。その場合、このあとのオファーが断られると、中継ノードはこの 1 つ前の成立したアドレスへ戻ります。これはこの実装の限界の 1 つです。
+入力は、要求への応答 `resp` と、その SDP を中継ノードに通した結果 `sent`（答えた側がメディアを受けるアドレス）です。信頼性のない暫定応答の SDP は、アンサーではありません（RFC 3261 13.2.1）。同じアンサーを先に見せているだけです。中継ノードはもうその SDP のアドレスへ送っています。再交渉中のセッションの early media を、オファーした側へ届けるためです。そのアドレスは、あとで戻せるように `previewed` に覚えます。それ以外は何も変えません。関数はそこで戻り、成立したアドレスは最後のオファーとアンサーのままで、PCRF にも何も伝えません。2xx か信頼性のある暫定応答なら、オファーのアドレス `offered` と答えた側のアドレス `sent` を、成立したアドレスとして保存先に書き、`settled` を真にします。書き込みに失敗しても、応答は先へ進みます。その場合、このあとのオファーが断られると、中継ノードはこの 1 つ前の成立したアドレスへ戻ります。これはこの実装の限界の 1 つです。
+
+PCRF が変わったサービス情報を受け取るのは、そのあとです。ダイアログの PCRF のセッションで伝えます（TS 29.214 A.1、4.4.2）。この情報は、オファーとアンサーが成立したセッションのメディアを表し、網はそこに書かれたメディアの資源を確保します。信頼性のない 183 の SDP でこれを送ると、そのあと要求が失敗したときに、セッションが一度も受け入れていないオファーのメディアのために bearer が確保されたまま残ります。`authorized` は、ACK が届くまで繰り返し届く re-INVITE の 2xx で、同じ情報を 2 回送らないためのものです。最初の INVITE は違います。守るべき前のメディアが無いので、P-CSCF は信頼性のない 183 のアンサーも PCRF に伝え、呼の early media に bearer を用意します（[VoLTE の登録と通話](volte.md#通話のメディアの-aar)）。
 
 ## 標準が決めていることと、決めていないこと
 
@@ -140,9 +168,9 @@ UE がポート A で受けている通話で、UE がポート B へ移る re-I
 	}
 ```
 
-何もしない場合が 3 つあります。2xx で終わったとき、アンサーがもう成立していたとき（`settled`）、P-CSCF が呼の解放をもう決めていたとき（`refused`）です。2 つ目は、re-INVITE への信頼性のある 183 にアンサーが入っていた場合です。そのオファーとアンサーは終わっています。RFC 6141 3.3 は、このように変更を実行した UAS に 2xx を返すよう求めていますが、それでも re-INVITE が 488 で終わることはあります。そのときも戻すものはありません。両者の見方をそろえるのは、UAC が送る次のオファーです（RFC 6141 3.4）。
+何もしない場合が 3 つあります。2xx で終わったとき、アンサーがもう成立していたとき（`settled`）、P-CSCF が呼の解放をもう決めていたとき（`refused`）です。2 つ目は、re-INVITE への信頼性のある 183 にアンサーが入っていた場合です。そのオファーとアンサーは終わっています。RFC 6141 3.3 は、このように変更を実行した UAS に 2xx を返すよう求めていますが、それでも re-INVITE が 488 で終わることはあります。そのときも戻すものはありません。どちらのターミネーションも、そのオファーとアンサーのアドレスへ送り続け、PCRF もそのアンサーのメディアを許可したままです。両者の見方をそろえるのは、UAC が送る次のオファーです（RFC 6141 3.4）。
 
-それ以外では、オファーした側に面したターミネーションを `offered` から戻します。信頼性のない暫定応答の SDP で動かしたもう一方のターミネーションも、`previewed` から戻します。どちらかが戻らなければ `stuck` が真になります。
+それ以外では、オファーした側に面したターミネーションを `offered` から戻します。信頼性のない暫定応答の SDP で動かしたもう一方のターミネーションも、`previewed` から戻します。PCRF には、このオファーのこともその SDP のことも伝えていないので、PCRF の側で戻すものはありません。P-CSCF が最後に PCRF に伝えたのは、いまも最後に成立したオファーとアンサーのメディアです。どちらかのターミネーションが戻らなければ `stuck` が真になります。
 
 戻す操作は `goBack` です。
 
@@ -283,19 +311,18 @@ P-CSCF は、まず 2xx 以外の応答をそのままオファーした側へ�
 
 **新しい設定のままにする方法**が安全なのは、限られた場合です。オファーがアドレスを変えていなければ、戻すものはありません。`goBack` は、そのときは `Modify` を送りません。届いたパケットの送信元へ送る中継ノード（ラッチング）なら、SDP のアドレスへの依存は小さくなります。しかし、この実装のコア側のターミネーションはラッチングをせず、最新の SDP のアドレスへ送ります。網の側に面したこのターミネーションでは、戻すことが音声を正しく保ちます。
 
-もう 1 つ、**アンサーが来てから中継ノードを変える方法**も考えられます。オファーのときは中継ノードを動かさず、アンサーが通るときに両方のターミネーションを変えます。断られたときに戻すものはありません。RFC 3264 8.3.1 は、オファーした側に、アンサーを受け取って新しいポートに音声が届くまで古いポートで受け続けるよう求めているので、そのあいだ古いアドレスへ送ることも規則に合います。代わりに、中継ノードの失敗がアンサーの通る時点に集まります。アンサーは誰も断れないので、そこで中継ノードが失敗すれば、呼を終えるしかありません。オファーのときに動かす方法なら、中継ノードの失敗の多くは、オファーを 500 で断るだけで済みます。この実装は中継ノードについてこの方法を取りませんが、PCRF にはこれに近い扱いをしています。P-CSCF は、変わったメディアを PCRF に、オファーのときではなく、応答の SDP を中継ノードに通したときに伝えます。そのため、SDP の入った応答の無いまま断られたオファーでは、PCRF に戻すものはありません。
+もう 1 つ、**アンサーが来てから中継ノードを変える方法**も考えられます。オファーのときは中継ノードを動かさず、アンサーが通るときに両方のターミネーションを変えます。断られたときに戻すものはありません。RFC 3264 8.3.1 は、オファーした側に、アンサーを受け取って新しいポートに音声が届くまで古いポートで受け続けるよう求めているので、そのあいだ古いアドレスへ送ることも規則に合います。代わりに、中継ノードの失敗がアンサーの通る時点に集まります。アンサーは誰も断れないので、そこで中継ノードが失敗すれば、呼を終えるしかありません。オファーのときに動かす方法なら、中継ノードの失敗の多くは、オファーを 500 で断るだけで済みます。この実装は中継ノードについてこの方法を取りませんが、PCRF にはこの方法を取っています。P-CSCF は、変わったメディアを PCRF に、オファーのときにも、信頼性のない暫定応答の SDP のときにも伝えません。伝えるのは、アンサーが 2xx か信頼性のある暫定応答で届いたときだけです。そのため、断られたオファーでは、PCRF に戻すものはありません。183 でアンサーを先に見せたあとで断られても同じです。PCRF では、中継ノードと損得が違います。中継ノードを先に動かせば、再交渉中のセッションの early media が流れ、中継ノードの失敗の多くはオファーの時点で済みます。PCRF に先に伝えると、誰も合意していないメディアのために資源を確保することになります。
 
 中継ノードに、いまの設定を尋ねてから決める方法もあります。分からない場合を減らせます。しかし、この実装の制御の操作には、ターミネーションの設定を読むものがありません。尋ねるあいだ、応答も待たせることになります。
 
 ## この実装の選択と限界
 
-**P-CSCF。** オファーが通るときに中継ノードを動かし、2xx 以外の応答を渡す前に戻します。成立したアドレスは、ダイアログの記録と一緒に、台が共有する保存先に置きます。re-INVITE が 1 台目を通り、その次の UPDATE が 2 台目を通っても、2 台目が戻せます。限界は次のとおりです。
+**P-CSCF。** オファーが通るときに中継ノードを動かし、2xx 以外の応答を渡す前に戻します。PCRF には、アンサーが成立してから変わったメディアを伝えます。そのため、再交渉が失敗しても、PCRF に伝えたメディアは最後に成立したオファーとアンサーのものです。成立したアドレスは、ダイアログの記録と一緒に、台が共有する保存先に置きます。re-INVITE が 1 台目を通り、その次の UPDATE が 2 台目を通っても、2 台目が戻せます。限界は次のとおりです。
 
 - 成立したアドレスを保存先に書けなかったときは、そのあと断られたオファーで、1 つ前の成立したアドレスへ戻ります。
 - 中継ノードが答えないときに、中継ノードの状態を確かめる手段がありません。呼を終わらせます。
 - 中継ノードの失敗で呼を終わらせるときの BYE は 5.2.8.1.2 の手順ですが、その節はこのきっかけを挙げていません。この実装の選択です。BYE の Reason は `SIP;cause=503;text="Service Unavailable"` です。
 - PCRF が変わったメディアを断ったときは、P-CSCF はログに残すだけです。呼は前に許可されたまま続きます（コードの `SIMPLIFIED:`。TS 29.214 4.4.2）。
-- 信頼性のない暫定応答の SDP を中継ノードに通したときも、P-CSCF はそのメディアを PCRF に伝えます。そのあと要求が 2xx 以外で終わると、中継ノードは戻りますが、PCRF に伝えたメディアは、次のオファーとアンサーまでそのままです。
 
 **IBCF。** 規則は P-CSCF と同じで、2xx 以外の応答を渡す前に TrGW を戻し、戻せなければ呼を解放します。違うのは、成立したアドレスの置き場です。IBCF は B2BUA で、呼の 2 つのダイアログは、その INVITE を受けた台のプロセスの中にあります。ダイアログの中の要求は、いつも同じ台に戻ってきます。そのため、成立したアドレスもその台のメモリに置けば足ります。台が止まれば呼も止まり、保存先が残っていれば、同じ名前で起動し直した台がその記録から呼を終わらせます（[網間接続](interconnect.md) と [保守で止めることと、突然失うこと](design-maintenance.md)）。
 
@@ -310,6 +337,9 @@ P-CSCF は、まず 2xx 以外の応答をそのままオファーした側へ�
 - 同じファイルの `TestRejectedOfferGoesBackToTheLastOfferAndAnswer`。戻る先が INVITE のときのアドレスではなく、最後に 2xx を受けた re-INVITE のオファーとアンサーのアドレスであることを確かめています。
 - 同じファイルの `TestRejectedOfferAfterAPreviewPutsBothSidesBack`。信頼性のない 183 で動いた側も含めて、両方のターミネーションが戻ることを確かめています。
 - 同じファイルの `TestRejectedOfferEndsTheCallWhenTheRelayDoesNotGoBack`。戻す `Modify` が失敗すると、488 が渡ったあとで両方に BYE が届き、PCRF のセッションとコンテキストが解放されることを確かめています。
+- `internal/pcscf/renegotiate_test.go` の `TestRejectedOfferAfterAPreviewKeepsTheAuthorisedMedia`。相手が re-INVITE へのアンサーを信頼性のない 183 で見せてから 488 で断っても、PCRF が INVITE のときのメディアを許可したままで、中継ノードには呼のコンテキストが 1 つだけあることを確かめています。そのあとのオファーが 200 で答えられると、PCRF はそのアンサーのメディアを許可します。
+- 同じファイルの `TestAnswerAfterAPreviewIsAuthorisedOnce`。信頼性のない 183 のあとに相手が 200 で答えると、PCRF は 183 では何も受け取らず、200 のメディアを 1 回だけ受け取ることを確かめています。
+- 同じファイルの `TestRejectedOfferAfterAReliableAnswerKeepsTheNewMedia`。相手が re-INVITE に信頼性のある 183 で答え、UE が PRACK で確認したあとで 488 で断っても、PCRF がそのアンサーのメディアを許可したままで、どちらのターミネーションもそのオファーとアンサーのアドレスへ送り続けることを確かめています。
 - `internal/pcscf/refusedoffer_test.go` の `TestRefusedOfferWithinTheDialogIsRejected`。中継ノードが `Modify` を断ると、P-CSCF が 500 を返して要求を先へ渡さず、呼が続き、次のオファーは通ることを確かめています。
 - 同じファイルの `TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt`。中継ノードが期限内に答えない場合（試験の中継ノードは変更を実行している）と、コンテキストを無くしたと答える場合に、500 と両方への BYE になることを確かめています。
 - `internal/pcscf/refusedanswer_test.go` の `TestRefusedAnswerWithinTheDialogReleasesTheCall`。応答のアンサーを中継ノードが受け取らないと、200 が渡ったあと（re-INVITE なら ACK のあと）に BYE が届くことを確かめています。

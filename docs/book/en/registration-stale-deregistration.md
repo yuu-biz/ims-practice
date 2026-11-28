@@ -88,6 +88,8 @@ The first is `accept`, which accepts the registration after checking the answer 
 
 It compares only when a registration is stored and the arriving Contact is the same as the stored Contact. If the Contact differs, the rule treats it as another binding, so there is no comparison. In this implementation, the new Contact replaces the old binding.
 
+A registration past its expiry is not a stored binding for this comparison, even while it waits in the store for the S-CSCF to handle its expiry. A binding that has run out is gone, and step 7 compares only with a binding that exists. So a REGISTER with the Call-ID of an expired binding and a CSeq that is not higher is not refused: it starts a new registration. [Registration order and expiry](design-registration-order.md) shows how the S-CSCF reads the registration so.
+
 The second is the deregistration, `deregister`.
 
 [internal/scscf/scscf.go](../../../internal/scscf/scscf.go)
@@ -145,6 +147,8 @@ A different Call-ID is no reason to skip the authentication. The request with Ca
 Across the refused requests, the test also checks that the HSS received only two SARs: `REGISTRATION` for the initial registration, and RE_REGISTRATION for the re-registration at CSeq 4. The refused requests did not reach the HSS.
 
 In the third row, the REGISTER with CSeq 3 gets a 401, not a 500. The order is compared in `accept`, after the answer to the authentication is checked.
+
+`TestRegisterAfterTheBindingExpiredStartsAfresh` in `internal/scscf/registration_deadline_test.go` checks the expired binding. It lets a binding of one second run out, with no sweep to remove it, and registers again with the same Call-ID and no higher CSeq. The REGISTER gets 200 OK, and its SAR carries `REGISTRATION`.
 
 The same CSeq arriving twice is not the same as a retransmission of one request. When the same REGISTER is retransmitted over UDP, the SIP transaction layer (RFC 3261 17.2) absorbs it and sends the earlier response again. The retransmission does not reach the registration handling of the S-CSCF and is not subject to this comparison. `TestServerTransactionAbsorbsRetransmissions` in `internal/sip/stack_test.go` checks this behavior of that layer.
 

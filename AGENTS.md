@@ -25,6 +25,7 @@ AI エージェント（Claude Code、Codex、Cursor など）がこのリポジ
 | `scripts/e2e-sms.sh` | SMS |
 | `scripts/e2e-volte.sh` | IMS-AKA と VoLTE の通話 |
 | `scripts/e2e-esp.sh` | IMS-AKA の信号にかける ESP（暗号化は null。`deploy/esp/`） |
+| `scripts/e2e-esp-encryption.sh` | 同じ ESP に秘匿までかけた構成と、キャプチャの復号（`deploy/esp/encryption.yaml`） |
 | `scripts/e2e-mmtel.sh` | 付加サービス |
 | `scripts/e2e-mrf.sh` | MRF |
 | `scripts/e2e-interconnect.sh` | 2 つの網の相互接続 |

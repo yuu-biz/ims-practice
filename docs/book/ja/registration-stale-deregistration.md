@@ -88,6 +88,8 @@ S-CSCF がこの関数を呼ぶ場所は 2 つあります。どちらも、HSS 
 
 登録が保存されていて、届いた Contact が保存した Contact と同じときだけ比べます。Contact が違えば、規則のうえでは別の登録先なので比べません。この実装では、新しい Contact が古い登録先を置き換えます。
 
+期限の過ぎた登録は、S-CSCF がその期限を処理するまで保存先に残っていても、この比較では保存された登録先として数えません。期限の切れた登録先はもう無く、手順 7 が比べるのは、ある登録先とだけだからです。そのため、期限の切れた登録先と同じ Call-ID で、CSeq が大きくない REGISTER も断られず、新しい登録になります。S-CSCF が登録をどう読むかは [登録の順序と期限](design-registration-order.md) で見ます。
+
 2 つ目は、登録の解除 `deregister` です。
 
 [internal/scscf/scscf.go](../../../internal/scscf/scscf.go)
@@ -145,6 +147,8 @@ Call-ID が違う要求は、CSeq の大小で断りません。たとえば UE 
 断った要求のあいだ、試験は HSS に届いた SAR が、最初の登録の `REGISTRATION` と、CSeq 4 の再登録の RE_REGISTRATION の 2 つだけであることも確かめます。断った要求は HSS に届いていません。
 
 3 行目では、CSeq 3 の REGISTER は 500 ではなく 401 を受けています。順序を比べるのは、認証の答えを確かめたあとの `accept` だからです。
+
+期限の切れた登録先は、`internal/scscf/registration_deadline_test.go` の `TestRegisterAfterTheBindingExpiredStartsAfresh` が確かめています。1 秒の登録先を、消す見回りが来ないまま期限切れにし、同じ Call-ID で CSeq が大きくない REGISTER で登録し直します。REGISTER は 200 OK を受け、その SAR には `REGISTRATION` が入ります。
 
 同じ CSeq が届くことと、同じ要求の再送は別のことです。UDP で同じ REGISTER が再送されると、SIP のトランザクションの層（RFC 3261 17.2）がそれを受け止め、前の応答を送り直します。再送は S-CSCF の登録の処理に届かず、この比較の対象にもなりません。この層の動きは `internal/sip/stack_test.go` の `TestServerTransactionAbsorbsRetransmissions` が確かめています。
 

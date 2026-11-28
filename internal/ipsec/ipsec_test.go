@@ -1,12 +1,21 @@
 package ipsec
 
 import (
+	"bytes"
 	"encoding/hex"
 	"net/netip"
 	"strings"
 	"testing"
 
 	"github.com/yuu-biz/ims-practice/internal/ims"
+)
+
+// plain is the transform of a P-CSCF that applies no confidentiality,
+// and encrypted the one it offers and selects when it does (TS 33.203
+// 7.2).
+var (
+	plainTransform = ims.SupportedTransforms(ims.WithoutConfidentiality)[0]
+	encrypted      = ims.SupportedTransforms(ims.WithConfidentiality)[0]
 )
 
 // agreement is the agreement of the scenarios: the UE and the P-CSCF of
@@ -16,9 +25,9 @@ func agreement(t *testing.T) Agreement {
 	a := Agreement{
 		UE:    netip.MustParseAddr("172.28.0.120"),
 		PCSCF: netip.MustParseAddr("172.28.0.20"),
-		UEMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms[0],
+		UEMechanism: ims.IPsec3GPP{Transform: plainTransform,
 			SPIC: 4001, SPIS: 4002, PortC: 5063, PortS: 5062},
-		PCSCFMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms[0],
+		PCSCFMechanism: ims.IPsec3GPP{Transform: plainTransform,
 			SPIC: 5001, SPIS: 5002, PortC: 5065, PortS: 5064},
 	}
 	copy(a.CK[:], decode(t, "b40ba9a3c58b2a05bbf0d987b21bf8cb"))
@@ -120,6 +129,100 @@ func TestIKESPRefusesAnotherTransform(t *testing.T) {
 	a := agreement(t)
 	if _, err := IKESP(ims.Transform{Algorithm: "hmac-sha-1-96"}, a.IK, a.CK); err == nil {
 		t.Error("IKESP accepted hmac-sha-1-96, which this package does not set up")
+	}
+}
+
+// TestIKESPIsTheSameForBothEncryptionAlgorithms: Annex I derives IK_ESP
+// from the integrity algorithm alone, so the two transforms of this
+// package share it.
+func TestIKESPIsTheSameForBothEncryptionAlgorithms(t *testing.T) {
+	a := agreement(t)
+	with, err := IKESP(encrypted, a.IK, a.CK)
+	if err != nil {
+		t.Fatalf("IKESP for %s: %v", encrypted.EncryptionAlgorithm, err)
+	}
+	without, err := IKESP(a.UEMechanism.Transform, a.IK, a.CK)
+	if err != nil {
+		t.Fatalf("IKESP for null encryption: %v", err)
+	}
+	if !bytes.Equal(with, without) {
+		t.Errorf("IK_ESP with %s is %x, want the %x of null encryption",
+			encrypted.EncryptionAlgorithm, with, without)
+	}
+}
+
+// TestCKESP: Annex I takes CK_ESP from CK_IM without expanding it,
+// since AES-CBC of RFC 3602 uses the 128 bits of CK_IM as its key. Null
+// encryption has no key at all.
+func TestCKESP(t *testing.T) {
+	a := agreement(t)
+	key, err := CKESP(encrypted, a.CK)
+	if err != nil {
+		t.Fatalf("CKESP: %v", err)
+	}
+	if got, want := hex.EncodeToString(key), hex.EncodeToString(a.CK[:]); got != want {
+		t.Errorf("CK_ESP is %s, want CK_IM %s", got, want)
+	}
+	none, err := CKESP(a.UEMechanism.Transform, a.CK)
+	if err != nil {
+		t.Fatalf("CKESP for null encryption: %v", err)
+	}
+	if len(none) != 0 {
+		t.Errorf("null encryption has the key %x, want none", none)
+	}
+}
+
+// TestCKESPRefusesAnotherTransform: an encryption algorithm that
+// Annex H allows and this package does not set up gives no key, so no
+// agreement is set up with the key of another algorithm.
+func TestCKESPRefusesAnotherTransform(t *testing.T) {
+	a := agreement(t)
+	if _, err := CKESP(ims.Transform{Algorithm: "null", EncryptionAlgorithm: "aes-gcm-us"}, a.CK); err == nil {
+		t.Error("CKESP accepted aes-gcm-us, which this package does not set up")
+	}
+}
+
+// TestSetupStateWithEncryption: with the transform that carries
+// confidentiality, the state carries AES-CBC with CK_ESP beside the
+// integrity algorithm with IK_ESP, and nothing else of it changes.
+func TestSetupStateWithEncryption(t *testing.T) {
+	a := agreement(t)
+	a.UEMechanism.Transform, a.PCSCFMechanism.Transform = encrypted, encrypted
+	cmds := setup(t, a, UEEnd)
+	const want = "ip xfrm state add src 172.28.0.120 dst 172.28.0.20 proto esp spi 0x138a reqid 5002" +
+		" mode transport replay-window 32 auth-trunc 'hmac(sha256)'" +
+		" 0x9e98fd635ce304d820de064bea152b645b2fa171ba99416e3a3e90f5f9687c9e 128" +
+		" enc 'cbc(aes)' 0xb40ba9a3c58b2a05bbf0d987b21bf8cb"
+	if !holds(cmds, want) {
+		t.Errorf("Setup has no command\n%s\nin:\n%s", want, strings.Join(cmds, "\n"))
+	}
+	// The four states carry the same two keys, and the policies are the
+	// ones of the agreement with null encryption.
+	if n := len(with(cmds, "ip xfrm state add ")); n != 4 {
+		t.Errorf("Setup adds %d states, want the four of the agreement", n)
+	}
+	if n := strings.Count(strings.Join(cmds, "\n"), "0xb40ba9a3c58b2a05bbf0d987b21bf8cb"); n != 4 {
+		t.Errorf("CK_ESP is in %d commands, want the four states", n)
+	}
+	plain := setup(t, agreement(t), UEEnd)
+	if got, want := with(cmds, "ip xfrm policy "), with(plain, "ip xfrm policy "); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("the policies differ with encryption:\n%s\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+// TestRedactTakesTheEncryptionKeyOut: a state with AES-CBC carries
+// CK_ESP as well as IK_ESP, and both are 128 bits or longer, so the log
+// of a command that failed carries neither.
+func TestRedactTakesTheEncryptionKeyOut(t *testing.T) {
+	a := agreement(t)
+	a.UEMechanism.Transform, a.PCSCFMechanism.Transform = encrypted, encrypted
+	state := with(setup(t, a, UEEnd), "ip xfrm state add ")[0]
+	key := hex.EncodeToString(a.CK[:])
+	if !strings.Contains(state, "0x"+key) {
+		t.Fatalf("the command carries no encryption key, so this test checks nothing: %q", state)
+	}
+	if text := redact(state); strings.Contains(text, key) || strings.Contains(text, key[:8]) {
+		t.Errorf("CK_ESP is still in %q", text)
 	}
 }
 

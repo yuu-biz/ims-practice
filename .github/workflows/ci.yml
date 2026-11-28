@@ -400,6 +400,31 @@ jobs:
         if: always()
         run: docker compose -f compose.yaml -f deploy/esp/esp.yaml --profile volte down --rmi all -v --remove-orphans
 
+  # The same deployment with the confidentiality policy of the P-CSCF on
+  # top, which encrypts the signalling. It also says whether the keys
+  # that the P-CSCF writes let tshark decrypt what it captured.
+  e2e-esp-encryption:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - run: scripts/e2e-esp-encryption.sh
+      - name: upload the capture, its ESP SAs table, the kernel's security associations and the logs of the UEs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: esp-encryption-capture
+          path: |
+            captures/*.pcap
+            captures/esp_sa
+            e2e-out/esp-encryption-xfrm.txt
+            e2e-out/*.log
+          if-no-files-found: warn
+      - name: clean up
+        if: always()
+        run: docker compose -f compose.yaml -f deploy/esp/esp.yaml -f deploy/esp/encryption.yaml --profile volte down --rmi all -v --remove-orphans
+
   e2e-mmtel:
     runs-on: ubuntu-latest
     needs: changes
@@ -792,7 +817,7 @@ jobs:
   # skips count as passed.
   all-passed:
     runs-on: ubuntu-latest
-    needs: [changes, docs, go, slide-tests, compose-docs, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-fm, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-maintenance-sip, e2e-maintenance-sms, e2e-maintenance-hss, e2e-redundancy, e2e-fault, cloud, kustomize]
+    needs: [changes, docs, go, slide-tests, compose-docs, web-lab, web-oam, e2e, e2e-registration, e2e-oam, e2e-fm, e2e-admission, e2e-call, e2e-lab, e2e-sms, e2e-volte, e2e-esp, e2e-esp-encryption, e2e-mmtel, e2e-mrf, e2e-interconnect, e2e-h248, e2e-observability, e2e-maintenance-sip, e2e-maintenance-sms, e2e-maintenance-hss, e2e-redundancy, e2e-fault, cloud, kustomize]
     if: always()
     steps:
       - name: no job failed or was cancelled

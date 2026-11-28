@@ -67,7 +67,7 @@ Here the two nodes each record something different.
 ![The HSS receives the MAR, records this S-CSCF as the one that serves the user, and marks the authentication as pending](figures/04-registration.challenge.assign.svg)
 
 - **The HSS** records the S-CSCF that sent the MAR as the one that serves this user, and marks the authentication as pending. The registration is not done yet.
-- **The S-CSCF** stores the nonce it generated and the H(A1) it got from the HSS as the pending authentication, the challenge. It also stores the Call-ID of the REGISTER it challenged. Then it starts the timer reg-await-auth, which waits for the answer (4 minutes in TS 24.229 Table 7.8.1).
+- **The S-CSCF** stores the nonce it generated and the H(A1) it got from the HSS as the pending authentication, the challenge. It also stores the Call-ID of the REGISTER it challenged and the algorithm that the 401 offers. Then it starts the timer reg-await-auth, which waits for the answer (4 minutes in TS 24.229 Table 7.8.1).
 
 The MAA carries H(A1), not the password itself. H(A1) is a hash computed from the user name, the realm and the password (RFC 7616 3.4.2). With it alone, the S-CSCF can check the UE's answer. But anyone who knows H(A1) can compute a correct answer in the same realm. It is not the password, yet it is a secret used for the authentication and is handled as one.
 
@@ -110,7 +110,11 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 	if req.Get("Call-ID") != ch.CallID || c.Realm != ch.Realm || c.CNonce == "" || c.NC == "" {
 		return wrong
 	}
-	want, err := sip.DigestResponse(ch.digestHA1(), sip.REGISTER, c)
+	// Step 3: the algorithm is one that the 401 offered.
+	if !ch.offers(c.Algorithm) {
+		return wrong
+	}
+	want, err := sip.DigestResponse(ch.digestHA1(c.Algorithm), sip.REGISTER, c)
 	if err != nil || subtle.ConstantTimeCompare([]byte(want), []byte(c.Response)) != 1 {
 		return wrong
 	}
@@ -122,11 +126,12 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 }
 ```
 
-The inputs are the REGISTER that arrived, `req`, the value of its Authorization, `c`, and the stored challenge, `ch`. The function checks three things in order.
+The inputs are the REGISTER that arrived, `req`, the value of its Authorization, `c`, and the stored challenge, `ch`. The function checks four things in order.
 
 1. Is the Call-ID the same as in the challenged REGISTER, and is the realm the one the S-CSCF gave out? If either differs, the request does not answer the challenge (TS 24.229 5.4.1.2.2A).
-2. Does the answer computed from H(A1) match the UE's `response`? If not, the password is wrong.
-3. Is this the first answer to the nonce that is pending now? If the password is right but the nonce is old, the S-CSCF treats it as stale, not wrong, and challenges again with a new nonce (TS 24.229 5.4.1.2.3B).
+2. Is the algorithm that the UE named in its Authorization one the 401 offered? Here that is MD5, and an answer that names no algorithm counts as MD5 (RFC 2617 3.2.1). An answer for an algorithm that was not offered is wrong without any further check.
+3. Does the answer computed from the H(A1) of that algorithm match the UE's `response`? If not, the password is wrong. For SIP Digest, what `ch.digestHA1` returns is the H(A1) from the HSS itself. For IMS AKA, the same function makes the H(A1) from the authentication vector ([Registration and calls over VoLTE](volte.md)).
+4. Is this the first answer to the nonce that is pending now? If the password is right but the nonce is old, the S-CSCF treats it as stale, not wrong, and challenges again with a new nonce (TS 24.229 5.4.1.2.3B).
 
 If the verdict is `valid`, the S-CSCF removes the challenge and sends the HSS a SAR (Server-Assignment-Request) with Server-Assignment-Type `REGISTRATION` (1). The HSS records that the user is registered at this S-CSCF and returns the user profile in the User-Data of the SAA. The profile holds the identities registered together and the iFCs. After that, the S-CSCF stores the binding and answers 200 OK.
 
@@ -137,7 +142,7 @@ In this flow, what the three nodes know does not change at the same moment.
 | Point | What the HSS records | What the S-CSCF stores | What the UE knows |
 | --- | --- | --- | --- |
 | First UAR and UAA | The subscriber exists. The capabilities needed | Nothing yet | It sent a REGISTER |
-| MAR, MAA, 401 | This S-CSCF serves the user. Authentication pending | The challenge (nonce, H(A1), Call-ID) and the deadline for the answer | It received the nonce in the 401 |
+| MAR, MAA, 401 | This S-CSCF serves the user. Authentication pending | The challenge (nonce, H(A1), Call-ID, algorithm) and the deadline for the answer | It received the nonce in the 401 |
 | The answer is right, and the SAR and the SAA are done | Registered at this S-CSCF. The profile | The binding (Contact, Path, expiry, identities, iFCs, Call-ID and CSeq) | It still waits for the response |
 | The 200 OK reached the UE | The same | The same | It is registered. With rspauth, it confirms that the S-CSCF knows H(A1) too, and it receives the Service-Route and the expiry |
 
