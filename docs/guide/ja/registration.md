@@ -178,7 +178,11 @@ S-CSCF は **401 Unauthorized** で答えます。**WWW-Authenticate** ヘッダ
 
 同時に、タイマー **reg-await-auth**（4 分、TS 24.229 Table 7.7.1）を始めます。
 
-reg-await-auth が切れるまでに答えが来なければ、認証は失敗です（TS 24.229 5.4.1.2.3）。S-CSCF はチャレンジを捨て、Server-Assignment-Type が `AUTHENTICATION_TIMEOUT` の SAR を HSS に送ります。それまで登録していたユーザは、登録されたままです。reg-await-auth が切れたあとにチャレンジに答えた REGISTER は、受け付けません。期限の処理より先に S-CSCF に届いても同じです。S-CSCF はまず同じ手順で、SAR を送ってチャレンジを終えます。そのうえで、待っているチャレンジの無い REGISTER として扱います。新しい MAR を送り、新しい nonce と `stale=true` を WWW-Authenticate に入れた 401 で答えます。
+reg-await-auth が切れるまでに答えが来なければ、認証は失敗です（TS 24.229 5.4.1.2.3）。S-CSCF は Server-Assignment-Type が `AUTHENTICATION_TIMEOUT` の SAR を HSS に送ります。HSS はこれを受けて、手順 5 で付けた認証中の印を消します。利用者が登録していなければ、S-CSCF の名前も消します（TS 29.228 6.1.2.1）。それまで登録していたユーザは、登録されたままです。
+
+S-CSCF は、この SAR に HSS が答えるまでチャレンジを持ち続けます。答えが来なければ、しばらくしてこの期限をもう一度処理し、SAR を送り直します。1 度の処理で送る SAR は 1 通です。REGISTER が答えなかったチャレンジのことを HSS に伝えるものは、この SAR のほかにありません。HSS は同じ SAR を 1 回受けても 2 回受けても同じ状態になるので、2 通目を送っても結果は変わりません。`DIAMETER_UNABLE_TO_COMPLY` が返ったときも送り直します。HSS は要求を処理できないときにこれを返し、そのとき登録の状態を変えないためです（TS 29.228 6.1.2.1）。それ以外の答えが返れば、HSS はこの SAR を処理したので、S-CSCF はチャレンジを捨てます。チャレンジの期限が切れてから reg-await-auth の時間が経てば、答えが来ていなくてもチャレンジを捨てます。SAR を送り直すのは、そのあいだだけです。そのあとは、その利用者の次の REGISTER が送る MAR が、利用者を担当する S-CSCF を HSS に記録し直します。
+
+reg-await-auth が切れたあとにチャレンジに答えた REGISTER は、受け付けません。期限の処理より先に S-CSCF に届いても同じです。S-CSCF はその場で、同じ SAR を送ってチャレンジを終えます。そのうえで、待っているチャレンジの無い REGISTER として扱います。新しい MAR を送り、新しい nonce と `stale=true` を WWW-Authenticate に入れた 401 で答えます。この MAR が認証中の印を付け直すので、終えたチャレンジの SAR は 1 回だけ送り、送り直しません。
 
 401 は I-CSCF と P-CSCF を通って戻ります。各ノードは自分の Via を取り除きます。そのため UE に届く応答には、UE 自身の Via だけが残っています。
 
