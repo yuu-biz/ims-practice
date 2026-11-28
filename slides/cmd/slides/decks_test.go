@@ -12,11 +12,38 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/yuu-biz/ims-practice/slides/internal/book"
 	"github.com/yuu-biz/ims-practice/slides/internal/deck"
 	"github.com/yuu-biz/ims-practice/slides/internal/html"
 	"github.com/yuu-biz/ims-practice/slides/internal/layout"
 	"github.com/yuu-biz/ims-practice/slides/internal/pptx"
 )
+
+// TestBook runs the checks of "slides check" on the book of the
+// repository, so that the tests fail on a chapter that quotes code its
+// file no longer has, shows a figure that is not the drawing of its step
+// as the deck is now, links to a heading that is gone, or differs from
+// its other language in its figures and code; and on a unit of the book
+// that names a function, a test or a scene that is gone.
+func TestBook(t *testing.T) {
+	b, problems := book.Load("../../../docs/book", "../../..")
+	for _, p := range problems {
+		t.Error(p)
+	}
+	if b == nil {
+		return
+	}
+	for _, p := range book.Check(b) {
+		t.Error(p)
+	}
+	units, err := book.LoadUnits("../../../docs/book/units.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range book.CheckUnits(b, units) {
+		t.Error(p)
+	}
+}
 
 // TestDecks runs the checks of "slides check" on the decks of the
 // repository, so that the tests of the repository fail on a deck that

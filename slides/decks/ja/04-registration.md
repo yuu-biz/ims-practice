@@ -275,30 +275,52 @@ events:
     to: ue
     proto: SIP
   # 登録のあとで使う経路
+  - id: route-path-store
+    do: Path を保存する
+    at: scscf
+    fields:
+      - 保存するもの: "Contact と Path の `sip:term@pcscf...`"
+      - 使うとき: この UE あての要求を送るとき
+  - id: route-sr-store
+    do: Service-Route を保存する
+    at: ue
+    fields:
+      - 保存するもの: "200 OK の Service-Route の `sip:orig@scscf...`"
+      - 使うとき: UE が新しい要求を出すとき
   - id: mt-s-p
     msg: INVITE
     from: scscf
     to: pcscf
     proto: SIP
     note: (着信)
+    fields:
+      - Request-URI: UE が登録した Contact
+      - Route: "保存した Path の `sip:term@pcscf...`"
   - id: mt-p-ue
     msg: INVITE
     from: pcscf
     to: ue
     proto: SIP
     note: (着信)
+    fields:
+      - Route: P-CSCF が自分の値を取り除き、残りは無い
   - id: mo-ue-p
     msg: INVITE
     from: ue
     to: pcscf
     proto: SIP
     note: (発信)
+    fields:
+      - Request-URI: "相手の番号 `tel:+1-202-555-0102`"
+      - Route: "P-CSCF の URI と、保存した Service-Route の `sip:orig@scscf...`"
   - id: mo-p-s
     msg: INVITE
     from: pcscf
     to: scscf
     proto: SIP
     note: (発信)
+    fields:
+      - Route: P-CSCF が自分の値を取り除き、残りが Service-Route と一致するかを確かめる
   # P-CSCF の購読（手順 11 と 12）
   - id: psub-p-i
     msg: SUBSCRIBE
@@ -571,6 +593,81 @@ events:
     fields:
       - Reason-Code: PERMANENT_TERMINATION (0)
       - User-Name: 秘密の識別子
+  # 遅れて届いた登録の解除（説明のための例）
+  - id: ord-stored
+    do: 登録を保存している
+    at: scscf
+    fields:
+      - Call-ID: A（例のために短く書いた値）
+      - CSeq: 5（再登録で保存した値）
+      - Contact: C
+      - 期限: 再登録で延びた期限
+  - id: ord-late
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (遅れた解除)
+    fields:
+      - Call-ID: A
+      - CSeq: "3"
+      - Contact: "C に `expires=0`"
+  - id: ord-compare
+    do: 順序を比べる
+    at: scscf
+    fields:
+      - Call-ID: 保存した値と同じ A
+      - CSeq: 3 は保存した 5 より大きくない
+      - 判断: この要求で登録を変えない
+  - id: ord-500
+    msg: "500"
+    from: scscf
+    to: icscf
+    proto: SIP
+    fields:
+      - 応答のコード: RFC 3261 10.3 は失敗とだけ定める。この実装は 500 を返す
+  - id: ord-kept
+    do: 登録をそのまま残す
+    at: scscf
+    fields:
+      - Contact と期限: 変えない
+      - CSeq: 5 のまま
+      - HSS: 解除の SAR を送らない
+  - id: ord-other
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (別の Call-ID)
+    fields:
+      - Call-ID: B
+      - CSeq: 2（CSeq 1 が受けた 401 に答える）
+      - Contact: C
+  - id: ord-other-compare
+    do: CSeq を比べない
+    at: scscf
+    fields:
+      - Call-ID: 保存した A と違う B
+      - 判断: 認証の答えを確かめ、普通の再登録として進む
+  - id: ord-other-sar
+    msg: SAR
+    from: scscf
+    to: hss
+    proto: Cx
+    fields:
+      - Server-Assignment-Type: RE_REGISTRATION (2)
+  - id: ord-other-saa
+    msg: SAA
+    from: hss
+    to: scscf
+    proto: Cx
+  - id: ord-other-ok
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+    fields:
+      - 保存する値: Call-ID B と CSeq 2。次の要求はこの値と比べる
   - id: rej-s-p
     msg: NOTIFY
     from: scscf
@@ -1085,9 +1182,18 @@ steps:
 
 ```ims-scene
 id: routes
-nodes: [ue, pcscf, dns, icscf, hss, scscf]
-lead: どちらも 200 OK で届く経路ですが、使う向きが逆です。通話の回で、実際の INVITE で確かめます。
+nodes: [ue, pcscf, icscf, scscf]
+lead: どちらも登録で決まる経路ですが、保存する側と使う向きが逆です。
 steps:
+  - id: register
+    title: 登録で 2 つの経路が決まる
+    only: [route-path-store, route-sr-store]
+    focus: [scscf, ue]
+    detail: [route-path-store, route-sr-store]
+    checkpoint: true
+    text: |
+      S-CSCF は、P-CSCF が REGISTER に付けた Path を、登録先と一緒に保存します。
+      S-CSCF が 200 OK に付けた Service-Route は、UE が保存します。
   - id: path
     title: Path は UE に届く要求の経路
     only: [mt-s-p, mt-p-ue]
@@ -1095,8 +1201,8 @@ steps:
     focus: [scscf, pcscf, ue]
     checkpoint: true
     text: |
-      S-CSCF は UE あての要求を Path に沿って、その UE の P-CSCF 経由で送ります。
-      着信の INVITE がこの経路を通ります。
+      S-CSCF は UE あての要求の Request-URI を Contact にし、保存した Path を Route に入れます。
+      着信の INVITE は、UE が登録に使った P-CSCF を通って届きます。
   - id: service-route
     title: Service-Route は UE から出ていく要求の経路
     only: [mo-ue-p, mo-p-s]
@@ -1108,7 +1214,8 @@ steps:
       発信の INVITE と、このあとの UE の SUBSCRIBE がこの経路を通ります。
 ```
 
-- UE は発信するときに Service-Route を使います。Path は着信のときに使います。どちらも通話の回でもう一度出てきます。
+- UE は発信するときに Service-Route を使います。Path は着信のときに使います。どちらも、登録への応答が戻る Via の一覧とは別のものです。Via はいま送った要求の応答の戻り道で、Path と Service-Route はこのあとの新しい要求の経路です。
+- 着信と発信の INVITE の全体は、通話のデッキでもう一度出てきます。
 
 > 手順書 [10](../../../docs/guide/ja/registration.md#10-s-cscf-が登録を受け付ける200-ok)。RFC 3327、RFC 3608。
 
@@ -1310,6 +1417,58 @@ steps:
 - 更新されない登録も同じように終わります。`event="expired"` と、TIMEOUT_DEREGISTRATION の SAR です。手順書の同じ節にあります。
 
 > 手順書 [「登録の解除」](../../../docs/guide/ja/registration.md#登録の解除)。TS 24.229 5.1.1.6.1、5.4.1.4.1、5.4.2.1.2。
+
+---
+
+## 遅れて届いた登録の解除
+
+```ims-scene
+id: registration-order
+nodes: [icscf, scscf, hss]
+basis: illustration
+lead: 同じ Call-ID の要求が登録を変えられるのは、CSeq が保存した値より大きいときだけです。
+steps:
+  - id: stored
+    title: 新しい登録が保存されている
+    only: [ord-stored]
+    focus: [scscf]
+    text: 再登録が CSeq 5 で受け付けられました。S-CSCF は、その Call-ID と CSeq を登録先と一緒に保存しています。
+  - id: late
+    title: 古い解除の REGISTER が届く
+    show: [ord-late]
+    text: 再登録より前に UE が送った CSeq 3 の解除の再送が、遅れて届きました。手前の P-CSCF と I-CSCF の処理は、図から省いています。
+  - id: compare
+    title: 保存した CSeq と比べる
+    show: [ord-compare]
+    text: Call-ID が同じなので、S-CSCF は CSeq を比べます。3 は 5 より大きくありません。
+  - id: refuse
+    title: 500 で断り、登録を残す
+    show: [ord-500, ord-kept]
+    active: ord-500
+    detail: [ord-500, ord-kept]
+    checkpoint: true
+    text: |
+      S-CSCF は 500 で答え、Contact、期限、CSeq を変えません。HSS へ解除の SAR も送りません。
+      CSeq 5 の要求も、大きくないので同じように断られます。
+  - id: other
+    title: 別の Call-ID の REGISTER は比べない
+    only: [ord-stored, ord-other, ord-other-compare]
+    focus: [scscf]
+    detail: [ord-other, ord-other-compare]
+    text: Call-ID B の要求は、A の CSeq と比べません。認証の答えが正しければ、普通の再登録として進みます。
+  - id: accepted
+    title: SAR を送り、B の値を保存する
+    show: [ord-other-sar, ord-other-saa, ord-other-ok]
+    active: ord-other-ok
+    checkpoint: true
+    text: S-CSCF は RE_REGISTRATION の SAR を送り、200 OK で答えます。このあとは Call-ID B と CSeq 2 が、比べる値になります。
+```
+
+- 図の Call-ID の A と B、Contact の C は、長い値を短く書いた例です。キャプチャの値ではありません。
+- 比べる規則は RFC 3261 10.3 の手順 6 です。Call-ID が同じなら、CSeq が保存した値より大きいときだけ登録先を変え、そうでなければ要求は失敗します。規則は応答のコードを定めていません。この実装は、同じ節の手順 7 がバインディングの更新に失敗したときのコードとして挙げる 500 を返します。
+- S-CSCF は、認証の答えを確かめたあと、HSS へ SAR を送る前に比べます。解除の要求は、IP の対応付けがあれば認証を求め直さずに比べます。どちらでも、断った要求は HSS にも登録先にも何も残しません。
+
+> 本 [遅れて届いた登録の解除が、新しい登録を消さない理由](../../../docs/book/ja/registration-stale-deregistration.md)。手順書 [7](../../../docs/guide/ja/registration.md#7-ue-が認証の要求に答える)。
 
 ---
 

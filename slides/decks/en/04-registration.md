@@ -275,30 +275,52 @@ events:
     to: ue
     proto: SIP
   # The routes used after the registration
+  - id: route-path-store
+    do: Stores the Path
+    at: scscf
+    fields:
+      - What it stores: "The Contact and the Path, `sip:term@pcscf...`"
+      - When it is used: When a request for this UE goes out
+  - id: route-sr-store
+    do: Stores the Service-Route
+    at: ue
+    fields:
+      - What it stores: "The Service-Route of the 200 OK, `sip:orig@scscf...`"
+      - When it is used: When the UE sends a new request
   - id: mt-s-p
     msg: INVITE
     from: scscf
     to: pcscf
     proto: SIP
     note: (incoming)
+    fields:
+      - Request-URI: The Contact that the UE registered
+      - Route: "The stored Path, `sip:term@pcscf...`"
   - id: mt-p-ue
     msg: INVITE
     from: pcscf
     to: ue
     proto: SIP
     note: (incoming)
+    fields:
+      - Route: The P-CSCF removes its own value, and none is left
   - id: mo-ue-p
     msg: INVITE
     from: ue
     to: pcscf
     proto: SIP
     note: (outgoing)
+    fields:
+      - Request-URI: "The number called, `tel:+1-202-555-0102`"
+      - Route: "The URI of the P-CSCF, then the stored Service-Route, `sip:orig@scscf...`"
   - id: mo-p-s
     msg: INVITE
     from: pcscf
     to: scscf
     proto: SIP
     note: (outgoing)
+    fields:
+      - Route: The P-CSCF removes its own value and checks that the rest is the Service-Route
   # The subscription of the P-CSCF (steps 11 and 12)
   - id: psub-p-i
     msg: SUBSCRIBE
@@ -571,6 +593,81 @@ events:
     fields:
       - Reason-Code: PERMANENT_TERMINATION (0)
       - User-Name: the private identity
+  # A deregistration that comes late (an example to explain the rule)
+  - id: ord-stored
+    do: Holds the registration
+    at: scscf
+    fields:
+      - Call-ID: A (a long value, written short for the example)
+      - CSeq: 5 (stored by the re-registration)
+      - Contact: C
+      - Expiry: The one that the re-registration extended
+  - id: ord-late
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (late deregistration)
+    fields:
+      - Call-ID: A
+      - CSeq: "3"
+      - Contact: "C with `expires=0`"
+  - id: ord-compare
+    do: Compares the order
+    at: scscf
+    fields:
+      - Call-ID: A, the same as the stored one
+      - CSeq: 3 is not higher than the stored 5
+      - Decision: This request does not change the registration
+  - id: ord-500
+    msg: "500"
+    from: scscf
+    to: icscf
+    proto: SIP
+    fields:
+      - Status code: RFC 3261 10.3 says only that the request fails. This implementation answers 500
+  - id: ord-kept
+    do: Keeps the registration as it is
+    at: scscf
+    fields:
+      - Contact and expiry: Unchanged
+      - CSeq: Still 5
+      - HSS: No SAR for a deregistration
+  - id: ord-other
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (another Call-ID)
+    fields:
+      - Call-ID: B
+      - CSeq: 2 (it answers the 401 that CSeq 1 got)
+      - Contact: C
+  - id: ord-other-compare
+    do: Does not compare the CSeq
+    at: scscf
+    fields:
+      - Call-ID: B, not the stored A
+      - Decision: Checks the answer to the challenge and goes on as a re-registration
+  - id: ord-other-sar
+    msg: SAR
+    from: scscf
+    to: hss
+    proto: Cx
+    fields:
+      - Server-Assignment-Type: RE_REGISTRATION (2)
+  - id: ord-other-saa
+    msg: SAA
+    from: hss
+    to: scscf
+    proto: Cx
+  - id: ord-other-ok
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+    fields:
+      - Values stored: Call-ID B and CSeq 2. The next request is compared with them
   - id: rej-s-p
     msg: NOTIFY
     from: scscf
@@ -1086,9 +1183,18 @@ The filter is `diameter.cmd.code == 301`. Wireshark names User-Data `Cx-User-Dat
 
 ```ims-scene
 id: routes
-nodes: [ue, pcscf, dns, icscf, hss, scscf]
-lead: Both routes arrive in the 200 OK, but they are used in opposite directions. The call session shows them with real INVITEs.
+nodes: [ue, pcscf, icscf, scscf]
+lead: Registration sets up both routes, but a different node keeps each, and they are used in opposite directions.
 steps:
+  - id: register
+    title: Registration sets up two routes
+    only: [route-path-store, route-sr-store]
+    focus: [scscf, ue]
+    detail: [route-path-store, route-sr-store]
+    checkpoint: true
+    text: |
+      The S-CSCF stores the Path that the P-CSCF put in the REGISTER, with the binding.
+      The UE stores the Service-Route that the S-CSCF put in the 200 OK.
   - id: path
     title: Path is the route of requests to the UE
     only: [mt-s-p, mt-p-ue]
@@ -1096,8 +1202,8 @@ steps:
     focus: [scscf, pcscf, ue]
     checkpoint: true
     text: |
-      The S-CSCF sends requests for the UE along the Path, through the P-CSCF of that UE.
-      An incoming INVITE takes this route.
+      The S-CSCF makes the Request-URI of a request for the UE the Contact, and puts the stored Path in its Route.
+      An incoming INVITE reaches the UE through the P-CSCF that the UE registered through.
   - id: service-route
     title: Service-Route is the route of requests from the UE
     only: [mo-ue-p, mo-p-s]
@@ -1109,7 +1215,8 @@ steps:
       An outgoing INVITE takes this route, and so does the SUBSCRIBE of the UE later in this session.
 ```
 
-- The UE uses Service-Route when it calls. Path is used when it is called. Both come back in the call.
+- The UE uses Service-Route when it calls. Path is used when it is called. Neither is the list of Via that the answer to the REGISTER goes back along: Via is the way back of the answer to the request just sent, and Path and Service-Route are the routes of the new requests that come after it.
+- The call deck shows the whole incoming and outgoing INVITE again.
 
 > Guide: [10](../../../docs/guide/en/registration.md#10-the-s-cscf-accepts-200-ok). RFC 3327, RFC 3608.
 
@@ -1311,6 +1418,58 @@ steps:
 - A registration that is not refreshed expires the same way: `event="expired"`, and a SAR with TIMEOUT_DEREGISTRATION. The same section of the guide has it.
 
 > Guide: ["Deregistration"](../../../docs/guide/en/registration.md#deregistration). TS 24.229 5.1.1.6.1, 5.4.1.4.1, 5.4.2.1.2.
+
+---
+
+## A deregistration that comes late
+
+```ims-scene
+id: registration-order
+nodes: [icscf, scscf, hss]
+basis: illustration
+lead: A request with the same Call-ID changes the registration only with a CSeq higher than the stored one.
+steps:
+  - id: stored
+    title: A newer registration is stored
+    only: [ord-stored]
+    focus: [scscf]
+    text: A re-registration was accepted with CSeq 5. The S-CSCF keeps its Call-ID and CSeq with the binding.
+  - id: late
+    title: An old deregistration arrives
+    show: [ord-late]
+    text: A retransmission of a deregistration with CSeq 3, which the UE sent before the re-registration, comes late. The figure leaves out what the P-CSCF and the I-CSCF did before.
+  - id: compare
+    title: The S-CSCF compares it with the stored CSeq
+    show: [ord-compare]
+    text: The Call-ID is the same, so the S-CSCF compares the CSeq. 3 is not higher than 5.
+  - id: refuse
+    title: A 500, and the registration stays
+    show: [ord-500, ord-kept]
+    active: ord-500
+    detail: [ord-500, ord-kept]
+    checkpoint: true
+    text: |
+      The S-CSCF answers 500 and changes neither the Contact, nor the expiry, nor the CSeq. No SAR for a deregistration goes to the HSS.
+      A request with CSeq 5 is refused the same way, since it is not higher.
+  - id: other
+    title: A REGISTER with another Call-ID is not compared
+    only: [ord-stored, ord-other, ord-other-compare]
+    focus: [scscf]
+    detail: [ord-other, ord-other-compare]
+    text: A request with Call-ID B is not compared with the CSeq of A. If its answer to the challenge is right, it goes on as a re-registration.
+  - id: accepted
+    title: An SAR, and the values of B are stored
+    show: [ord-other-sar, ord-other-saa, ord-other-ok]
+    active: ord-other-ok
+    checkpoint: true
+    text: The S-CSCF sends an SAR of RE_REGISTRATION and answers 200 OK. From now on, Call-ID B and CSeq 2 are the values to compare with.
+```
+
+- A and B for the Call-ID and C for the Contact are long values written short for the example. They are not values of a capture.
+- The rule is step 6 of RFC 3261 10.3. With the same Call-ID, the binding changes only with a CSeq higher than the stored one; otherwise the request fails. The rule names no status code. This implementation answers 500, the code that step 7 of the same section names for a binding update that fails.
+- The S-CSCF compares after it has checked the answer to the challenge, and before it sends an SAR to the HSS. A deregistration is compared without a new challenge when there is an IP association. Either way, a refused request leaves nothing behind, at the HSS or in the binding.
+
+> Book: [Why a late deregistration does not remove a newer registration](../../../docs/book/en/registration-stale-deregistration.md). Guide: [7](../../../docs/guide/en/registration.md#7-the-ue-answers-the-challenge).
 
 ---
 

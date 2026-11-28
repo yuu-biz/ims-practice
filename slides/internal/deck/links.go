@@ -31,7 +31,7 @@ func CheckLinks(d *Deck) []error {
 				continue
 			}
 			if anchors[file] == nil {
-				found, err := headingAnchors(file)
+				found, err := HeadingAnchors(file)
 				if err != nil {
 					problems = append(problems, err)
 					continue
@@ -105,11 +105,11 @@ var (
 	notInAnchor = regexp.MustCompile(`[^\p{L}\p{M}\p{N}\-_ ]`)
 )
 
-// headingAnchors returns the anchors that the repository host gives the
+// HeadingAnchors returns the anchors that the repository host gives the
 // headings of a Markdown file: lower case, without anything but letters,
 // marks, digits, "-", "_" and spaces, and with each space turned into
 // "-". A second heading with the same anchor gets "-1", a third "-2".
-func headingAnchors(file string) (map[string]bool, error) {
+func HeadingAnchors(file string) (map[string]bool, error) {
 	text, err := os.ReadFile(file)
 	if err != nil {
 		return nil, err

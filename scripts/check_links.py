@@ -8,7 +8,9 @@ LINK = re.compile(r"\]\(([^)#\s]+)(?:#[^)]*)?\)")
 # A fenced code block shows text as it is, so "](" inside one is not a
 # link; a regular expression in a YAML sample would look like one.
 FENCE = re.compile(r"^(```|~~~).*?^\1[ \t]*$", re.DOTALL | re.MULTILINE)
-SKIP_DIRS = {".git", ".claude", "node_modules"}
+# dist/ holds what the generators write, such as the book for Zenn,
+# whose links point where the book is published.
+SKIP_DIRS = {".git", ".claude", "node_modules", "dist"}
 
 
 def main() -> int:

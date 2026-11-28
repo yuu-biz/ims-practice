@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Check that every abbreviation in the guides is in the glossary.
 
-A learner who meets an abbreviation in a guide, a slide deck or a
+A learner who meets an abbreviation in the book, a guide, a slide deck or a
 README looks it up in docs/glossary.md. This script takes each
 abbreviation from those files (the READMEs at the top, beside the
 slides, and under deploy/ and internal/), outside code spans, code blocks and link targets, and lists each
@@ -44,6 +44,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GLOSSARY = ROOT / "docs" / "glossary.md"
 FILES = (
+    "docs/book/*/*.md",
     "docs/guide/**/*.md",
     "README*.md",
     "slides/README*.md",

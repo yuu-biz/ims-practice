@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - slides/**
+      - docs/book/**
       - docs/guide/**
       - go.mod
       - compose.yaml
@@ -17,6 +18,7 @@ on:
   pull_request:
     paths:
       - slides/**
+      - docs/book/**
       - docs/guide/**
       - go.mod
       - compose.yaml

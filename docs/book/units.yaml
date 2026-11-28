@@ -1,0 +1,82 @@
+# What each part of the book explains, and what the explanation rests on:
+# the chapter, the scenes of the decks, the code and the tests it quotes
+# or reads, and the clauses it states. "go run ./cmd/slides check" in
+# slides/ checks that each of them exists, and lists the units whose code
+# or tests changed since the commit in "verified": their chapter is read
+# again, and "verified" moves on once it still holds.
+#
+# evidence: code (the author read it), test (the author ran it),
+# capture (the author looked at one), illustration (an example made up
+# to explain the idea).
+units:
+  - id: registration-two-registers
+    question:
+      ja: なぜ REGISTER を 2 回送るのか
+      en: Why does a UE send REGISTER twice
+    setup: deploy/compose, a softphone that registers with SIP Digest; P-CSCF, I-CSCF, S-CSCF, HSS
+    chapter: registration-two-registers
+    scenes: [04-registration/overview, 04-registration/select, 04-registration/challenge, 04-registration/second-register, 04-registration/accept]
+    code:
+      - internal/icscf/icscf.go:register
+      - internal/icscf/icscf.go:choose
+      - internal/hss/hss.go:userAuthorization
+      - internal/hss/hss.go:multimediaAuth
+      - internal/scscf/scscf.go:challenge
+      - internal/scscf/scscf.go:check
+      - internal/scscf/scscf.go:accept
+      - internal/scscf/store.go:Challenge
+    tests:
+      - internal/scscf/scscf_test.go:TestRegistrationWithSIPDigest
+      - internal/scscf/scscf_test.go:TestWrongPasswordIsForbidden
+      - internal/scscf/scscf_test.go:TestAnswerOnAnotherCallIDIsForbidden
+      - internal/icscf/icscf_test.go:TestFirstRegistrationChoosesAnSCSCFByCapability
+      - internal/ue/ue_test.go:TestRegisterRefreshAndDeregisterThroughTheWholeIMS
+    standards:
+      - TS 24.229 V18.11.0 5.4.1.2.1, 5.4.1.2.1B, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3B, 5.2.2.3, Table 7.7.1
+      - TS 29.228 V18.0.0 6.1.1, 6.1.1.1, 6.3, 6.7
+      - RFC 2617 3.2.2.2, 3.2.3
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: registration-routes
+    question:
+      ja: Path と Service-Route は誰が何のために使うのか
+      en: Who uses Path and Service-Route, and for what
+    setup: deploy/compose, a softphone that registers with SIP Digest; the UE, the P-CSCF and the S-CSCF
+    chapter: registration-routes
+    scenes: [04-registration/routes]
+    code:
+      - internal/pcscf/pcscf.go:pathURI
+      - internal/scscf/scscf.go:bindingResponse
+      - internal/scscf/session.go:routeTerminating
+      - internal/ue/call.go:routeSet
+    tests:
+      - internal/scscf/session_test.go:TestTerminatingCallFollowsThePath
+      - internal/pcscf/session_test.go:TestOriginatingCallGoesThroughTheRelay
+    standards:
+      - TS 24.229 V18.11.0 5.1.2A.1.1, 5.2.2.1, 5.2.6.3.3, 5.4.1.2.2F, 5.4.3.3
+      - RFC 3327 5.3, 5.4
+      - RFC 3608 6.1
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: registration-stale-deregistration
+    question:
+      ja: 遅れて届いた解除が、新しい登録を消さないのはなぜか
+      en: Why does a late deregistration not remove a newer registration
+    setup: deploy/compose, a softphone that registers with SIP Digest; one binding per private identity at the S-CSCF
+    chapter: registration-stale-deregistration
+    scenes: [04-registration/registration-order]
+    code:
+      - internal/scscf/store.go:Registration
+      - internal/scscf/scscf.go:outOfOrder
+      - internal/scscf/scscf.go:refuseOutOfOrder
+      - internal/scscf/scscf.go:accept
+      - internal/scscf/scscf.go:deregister
+      - internal/scscf/scscf.go:register
+    tests:
+      - internal/scscf/scscf_test.go:TestRegisterOutOfOrderLeavesTheBindingAlone
+      - internal/sip/stack_test.go:TestServerTransactionAbsorbsRetransmissions
+    standards:
+      - RFC 3261 10.3 steps 6 and 7, 17.1.2, 17.2
+      - TS 24.229 V18.11.0 5.4.1.2.2A
+    evidence: [code, test, illustration]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96

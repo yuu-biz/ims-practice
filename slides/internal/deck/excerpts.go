@@ -38,10 +38,10 @@ func CheckExcerpts(d *Deck) []error {
 					file := filepath.Join(filepath.Dir(d.Path), filepath.FromSlash(target))
 					lines, ok := files[file]
 					if !ok {
-						lines = readLines(file)
+						lines = ReadLines(file)
 						files[file] = lines
 					}
-					if lines != nil && !contains(lines, b.Lines) {
+					if lines != nil && !ContainsRun(lines, b.Lines) {
 						problems = append(problems, fmt.Errorf("%s: slide %d: the excerpt that starts %q is not in %s, line for line", d.Path, slide.Number, firstLine(b.Lines), target))
 					}
 				default:
@@ -66,23 +66,29 @@ func linkedFile(p Paragraph) string {
 	return href
 }
 
-// readLines returns the lines of a file the way the parser keeps the
+// ReadLines returns the lines of a file the way the parser keeps the
 // lines of a code block: tabs as four spaces, without trailing blanks.
 // It returns nil for a file that cannot be read.
-func readLines(file string) []string {
+func ReadLines(file string) []string {
 	text, err := os.ReadFile(file)
 	if err != nil {
 		return nil
 	}
-	lines := strings.Split(strings.ReplaceAll(string(text), "\r\n", "\n"), "\n")
+	return CodeLines(string(text))
+}
+
+// CodeLines splits text into lines the way the parser keeps the lines of
+// a code block.
+func CodeLines(text string) []string {
+	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	for i, l := range lines {
 		lines[i] = strings.ReplaceAll(strings.TrimRight(l, " \t"), "\t", "    ")
 	}
 	return lines
 }
 
-// contains reports whether part is a run of consecutive lines of whole.
-func contains(whole, part []string) bool {
+// ContainsRun reports whether part is a run of consecutive lines of whole.
+func ContainsRun(whole, part []string) bool {
 	if len(part) == 0 {
 		return true
 	}
