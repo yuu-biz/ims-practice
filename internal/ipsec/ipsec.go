@@ -113,6 +113,16 @@ type transform struct {
 	// cipher of its own there, with an empty key.
 	encryption      string
 	confidentiality bool
+	// readBy are the names of the same two algorithms in the ESP
+	// settings of Wireshark, which a reader of a capture needs to see
+	// what the associations carry (WiresharkSAs).
+	readBy wireshark
+}
+
+// wireshark is how the ESP settings of Wireshark name the two
+// algorithms of a transform.
+type wireshark struct {
+	integrity, encryption string
 }
 
 // transforms are the transforms this package sets up, by the names that
@@ -126,9 +136,11 @@ type transform struct {
 var transforms = map[ims.Transform]transform{
 	{Algorithm: "hmac-sha2-256-128", EncryptionAlgorithm: "null"}: {
 		integrity: "hmac(sha256)", truncation: 128, encryption: "ecb(cipher_null)",
+		readBy: wireshark{integrity: "HMAC-SHA-256-128 [RFC4868]", encryption: "NULL"},
 	},
 	{Algorithm: "hmac-sha2-256-128", EncryptionAlgorithm: "aes-cbc"}: {
 		integrity: "hmac(sha256)", truncation: 128, encryption: "cbc(aes)", confidentiality: true,
+		readBy: wireshark{integrity: "HMAC-SHA-256-128 [RFC4868]", encryption: "AES-CBC [RFC3602]"},
 	},
 }
 
