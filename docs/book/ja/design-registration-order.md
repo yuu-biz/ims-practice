@@ -31,7 +31,9 @@ S-CSCF に届く REGISTER は、どれも同じ形のメッセージです。そ
 | タイマーが動いているかで手順が分かれる | TS 24.229 5.4.1.2.2A | 動いていなければ、認証を新しく始めます。動いていれば、答えの Call-ID が最後の問いを運んだ 401 の Call-ID と同じときだけ先へ進み、タイマーを止めて答えを確かめます。 |
 | 待っているあいだに届いた最初の REGISTER | TS 24.229 5.4.1.2.3 | タイマーを止め、認証が無かったものとして新しい問いを返します。 |
 | 時間切れは認証の失敗 | TS 24.229 5.4.1.2.3 の NOTE 2 | すでに登録している公開の識別子は、登録したまま残します。 |
-| 時間切れを聞いた HSS | TS 29.228 6.1.2.1 | Server-Assignment-Type が AUTHENTICATION_TIMEOUT の SAR を受けた HSS は、登録の状態を変えません。S-CSCF の名前を消すのは、利用者が Not Registered のときだけです。 |
+| MAR を受けた HSS が認証中の印を付ける | TS 29.228 6.3.1 | SIP Digest と IMS-AKA の認証では、HSS は MAR の秘密の識別子と公開の識別子の組に、認証中の印（authentication pending flag）を付けます。登録済みの利用者で、S-CSCF の名前が保存したものと同じときは付けません。 |
+| 時間切れを聞いた HSS | TS 29.228 6.1.2.1 | Server-Assignment-Type が AUTHENTICATION_TIMEOUT の SAR を受けた HSS は、登録の状態を変えません。S-CSCF の名前を消すのは、利用者が Not Registered のときだけです。認証中の印が付いていれば、それを外します。 |
+| 要求に応えられない HSS | TS 29.228 6.1.2.1 | データベースの誤りなどで SAR に応えられない HSS は、DIAMETER_UNABLE_TO_COMPLY を返し、登録の状態を変えません。 |
 | IMS-AKA の仮の保護も同じ時間で切れる | TS 24.229 3.1、5.2.2.2 | 401 のときに UE と P-CSCF が張る仮のセキュリティアソシエーションは、SIP の上での寿命が reg-await-auth と同じです。 |
 
 標準が決めていないこともあります。タイマーをプロセスのタイマーで持つか、保存先に時刻として置くか。記録をいつまで残すか。複数の台が 1 つのレジストラとして働くとき、「不可分」をどう作るか。順序の古い要求にどの応答のコードを返すか。この章が比べるのは、この選べる部分です。最後のものは [遅れて届いた登録の解除が、新しい登録を消さない理由](registration-stale-deregistration.md) で見たとおりで、この実装は 500 を返します。
@@ -66,9 +68,9 @@ S-CSCF が利用者ごとに持つ記録は 2 つです。どちらも秘密の�
 | 消すものの無い解除 | 登録の記録が無いか、Contact が違う | 何も変えない | 481 |
 | 遅れて届いた要求 | Call-ID と Contact が同じで、CSeq が保存した値より大きくない | 何も変えない | 500 |
 | トランザクションの中の再送 | 前の要求と同じトランザクションに属する | 何も変えない | トランザクションの層が前の応答を送り直す |
-| 期限を過ぎた答え | 認証の記録はあるが、今が `Expires` を過ぎている | 認証の記録を消す。登録は変えない | AUTHENTICATION_TIMEOUT の SAR。SIP Digest では `stale=true` の新しい 401 |
+| 期限を過ぎた答え | 認証の記録はあるが、今が `Expires` を過ぎている | 認証の記録を消す。登録は変えない | AUTHENTICATION_TIMEOUT の SAR を 1 回（答えは見ない）。SIP Digest では `stale=true` の新しい 401 |
 | 待っているあいだの最初の REGISTER | 認証の記録があり、REGISTER は答えを持たない | 認証の記録を新しいもので置き換える | MAR、新しい 401 |
-| 答えが来ないままの時間切れ | 期限の索引で、認証の記録の `Expires` が来た | 認証の記録を消す。登録は変えない | AUTHENTICATION_TIMEOUT の SAR |
+| 答えが来ないままの時間切れ | 期限の索引で、認証の記録の `Expires` が来た | HSS が SAR に答えたら、認証の記録を消す。登録は変えない | AUTHENTICATION_TIMEOUT の SAR。答えが無いか DIAMETER_UNABLE_TO_COMPLY なら、期限を借り直した台が送り直す |
 | 登録の期限切れ | 期限の索引で、登録の `Expires` が来た | 登録を消す | NOTIFY と TIMEOUT_DEREGISTRATION の SAR |
 
 この表から分かることが 3 つあります。
@@ -120,7 +122,7 @@ func (s *SCSCF) putChallenge(ch Challenge) error {
 }
 ```
 
-`Expires` は今から reg-await-auth の後、`KeepUntil` はそこからさらに reg-await-auth の後です。保存先は、記録を書くときに、期限の索引にも `Expires` の時刻で 1 つの項目を入れます。この項目は秘密の識別子と nonce で名前が付いています。Valkey に置く Store は、記録そのものに `KeepUntil` までの生存時間を付けます。プロセスの中の Store も、`KeepUntil` を過ぎた記録を返しません。
+`Expires` は今から reg-await-auth の後、`KeepUntil` はそこからさらに reg-await-auth の後です。保存先は、記録を書くときに、期限の索引にも `Expires` の時刻で 1 つの項目を入れます。この項目は秘密の識別子と nonce で名前が付いています。Valkey に置く Store は、記録そのものに `KeepUntil` までの生存時間を付けます。プロセスの中の Store も、`KeepUntil` を過ぎた記録を返さず、読んだときに捨てます。
 
 401 からの時間で並べると、次のようになります。
 
@@ -128,12 +130,13 @@ func (s *SCSCF) putChallenge(ch Challenge) error {
 | --- | --- | --- | --- |
 | 0 | 401 を返す。`putChallenge` が 2 つの時刻を書き、期限の索引に `Expires` の時刻を入れる | ある | 受け付ける |
 | 4 分（`Expires`） | reg-await-auth が切れる | ある | 受け付けない |
-| 4 分を少し過ぎたころ | どこかの台の見回りが期限を借り、`regAwaitAuthExpired` が記録を消し、AUTHENTICATION_TIMEOUT の SAR を送る | 無い | 問いの無い REGISTER として扱う |
-| 8 分（`KeepUntil`） | どの台も処理しなかった記録も、保存先から消える | 無い | 問いの無い REGISTER として扱う |
+| 4 分を少し過ぎたころ | どこかの台の見回りが期限を借り、`regAwaitAuthExpired` が AUTHENTICATION_TIMEOUT の SAR を送り、HSS が答えたら記録を消す | HSS が答えたら無い。答えなければある | 問いの無い REGISTER として扱う |
+| そのあと、借りが切れるたび | HSS が答えなかった期限を、どこかの台が借り直し、同じ SAR を送り直す | HSS が答えるまである | 問いの無い REGISTER として扱う |
+| 8 分（`KeepUntil`） | どの台も処理しなかった記録も、HSS が SAR に答えなかった記録も、保存先から消える。SAR の送り直しも止まる | 無い | 問いの無い REGISTER として扱う |
 
-見回りは 1 秒ごとなので、ふつうは `Expires` から 1 秒ほどで期限が処理されます。期限を借りた台が止まると、借りが切れる 15 秒後に、ほかの台が借り直します。保存先が答えないあいだは、どの台も処理を終えられず、借り直しが続きます。
+見回りは 1 秒ごとなので、ふつうは `Expires` から 1 秒ほどで期限が処理されます。期限を借りた台が止まると、借りが切れる 15 秒後に、ほかの台が借り直します。保存先が答えないあいだは、どの台も処理を終えられず、借り直しが続きます。HSS が時間切れの SAR に答えないあいだも同じです。
 
-**記録を `Expires` のあとも残す理由。** 期限を処理する台は、認証の記録から HSS の名前と S-CSCF の名前を読んで、正しい HSS に正しい名前で AUTHENTICATION_TIMEOUT の SAR を送ります。記録が `Expires` ちょうどに消えると、少しでも遅れた処理は何も見つけず、SAR を送りません。そうなると HSS は、認証が終わったことを知らないままです。登録していない利用者なら、S-CSCF の名前も残ります。`KeepUntil` は、遅れた処理に、もう 1 回分の reg-await-auth の時間を与えます。
+**記録を `Expires` のあとも残す理由。** 期限を処理する台は、認証の記録から HSS の名前と S-CSCF の名前を読んで、正しい HSS に正しい名前で AUTHENTICATION_TIMEOUT の SAR を送ります。記録が `Expires` ちょうどに消えると、少しでも遅れた処理は何も見つけず、SAR を送りません。そうなると HSS は、認証が終わったことを知らないままです。登録していない利用者なら、S-CSCF の名前も残ります。`KeepUntil` は、遅れた処理に、もう 1 回分の reg-await-auth の時間を与えます。HSS が SAR に答えないときに、送り直しを続ける時間の上限にもなります。
 
 **記録があることと、答えを受け付けてよいことは別。** 保存先に記録が残っているのは、後始末のためです。もし REGISTER の処理が「記録があれば、問いへの答えを待っている」と判断すると、答えを受け付ける期限は、見回りがいつ動くかで変わってしまいます。ふつうは 1 秒ほど延び、台が止まれば 15 秒延び、どの台も処理できなければ `KeepUntil` まで、つまり 4 分も延びます。見回りが動く時刻は、台の数、負荷、借りの時間、保存先の状態で決まり、SIP の手順とは関係ありません。標準は受け付ける期限をタイマーで決めています。IMS-AKA では、UE と P-CSCF の仮のセキュリティアソシエーションも、そのタイマーで切れています（TS 24.229 3.1、5.2.2.2）。そのため、REGISTER の処理は時刻を自分で確かめます。
 
@@ -155,7 +158,7 @@ func (s *SCSCF) putChallenge(ch Challenge) error {
 	}
 ```
 
-入力は、利用者のロックを取ったあとに読んだ認証の記録 `ch` です。`pending` は記録があったことを、`ch.Expires` は受け付ける期限を表します。今がその時刻を過ぎていれば、S-CSCF は期限の処理と同じ `endRegAwaitAuth` で記録を消し、HSS に AUTHENTICATION_TIMEOUT を伝えます。そのうえで `pending` を偽にして、問いを待っていない REGISTER として扱います。SIP Digest の REGISTER は答えを持っているので、S-CSCF は新しい MAR を送り、新しい nonce と `stale=true` を入れた 401 を返します（TS 24.229 5.4.1.2.2A の手順 1）。IMS-AKA の保護された答えは、問いを待っていない保護された REGISTER として扱われ、登録の無い利用者なら 500 を受けます。
+入力は、利用者のロックを取ったあとに読んだ認証の記録 `ch` です。`pending` は記録があったことを、`ch.Expires` は受け付ける期限を表します。今がその時刻を過ぎていれば、S-CSCF は `endRegAwaitAuth` で記録を消し、HSS に AUTHENTICATION_TIMEOUT を伝えます。期限の処理とは別の関数で、その違いはこのあとで見ます。そのうえで `pending` を偽にして、問いを待っていない REGISTER として扱います。SIP Digest の REGISTER は答えを持っているので、S-CSCF は新しい MAR を送り、新しい nonce と `stale=true` を入れた 401 を返します（TS 24.229 5.4.1.2.2A の手順 1）。IMS-AKA の保護された答えは、問いを待っていない保護された REGISTER として扱われ、登録の無い利用者なら 500 を受けます。
 
 期限を処理する側も、同じロックを取り、記録を読み直します。
 
@@ -175,28 +178,62 @@ func (s *SCSCF) regAwaitAuthExpired(ctx context.Context, privateID, nonce string
 	if !ok || ch.Nonce != nonce {
 		return nil
 	}
-	return s.endRegAwaitAuth(ctx, ch)
-}
-
-// endRegAwaitAuth ends the challenge ch, whose reg-await-auth has run
-// out, and tells the HSS (TS 24.229 5.4.1.2.3). The lock of the user is
-// held: the expiry takes it in regAwaitAuthExpired, and a REGISTER that
-// finds the challenge late already holds it (register).
-func (s *SCSCF) endRegAwaitAuth(ctx context.Context, ch Challenge) error {
 	// TS 24.229 5.4.1.2.3 NOTE 2: authentication has failed; a user who
 	// was registered stays registered.
+	s.log.Info("reg-await-auth expired", "private_identity", privateID)
+	if !s.tellAuthenticationTimeout(ctx, ch) {
+		return errors.New("the HSS did not answer the SAR of AUTHENTICATION_TIMEOUT")
+	}
+	return s.store.DeleteChallenge(ctx, privateID)
+}
+```
+
+`regAwaitAuthExpired` は、借りた期限の nonce と、いま保存されている記録の nonce が同じときだけ記録を終わらせます。REGISTER の処理が先に終わらせていれば、記録は無いので何もしません。UE が待っているあいだに最初の REGISTER を送り直していれば（TS 24.229 5.4.1.2.3）、記録は新しい nonce のものに置き換わっているので、それにも触りません。記録が残っていれば、先に AUTHENTICATION_TIMEOUT の SAR を送り、HSS が答えたときだけ記録を消します。HSS が答えなければ、誤りを返します。誤りを返すと、その期限には処理を終えた印が付かないので、期限の借りが切れる 15 秒後に、どこかの台がまた借ります。記録も残っているので、その台が同じ SAR を送り直します。
+
+HSS が答えたとみなすかどうかは、`tellAuthenticationTimeout` が決めます。
+
+[internal/scscf/scscf.go](../../../internal/scscf/scscf.go)
+
+```go
+func (s *SCSCF) tellAuthenticationTimeout(ctx context.Context, ch Challenge) bool {
+	saa, err := s.serverAssignment(ctx, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, ch.ServerName, cx.AuthenticationTimeout)
+	if err == nil && saa.Result != diameter.Base(diameter.DiameterUnableToComply) {
+		return true
+	}
+	s.log.Warn("the HSS did not answer the SAR of AUTHENTICATION_TIMEOUT",
+		"private_identity", ch.PrivateIdentity, "result", describe(saa.Result, err))
+	return false
+}
+```
+
+答えが来ないとき、S-CSCF には、SAR が HSS に届かなかったのか、HSS は SAR を受けたが答えだけが失われたのかが分かりません。DIAMETER_UNABLE_TO_COMPLY は、HSS が要求に応えられず、登録の状態を変えなかったことを表します（TS 29.228 6.1.2.1）。どちらの場合も、同じ SAR を送り直せば HSS に届く見込みがあるので、関数は偽を返します。それ以外の答えは、DIAMETER_SUCCESS でも DIAMETER_ERROR_USER_UNKNOWN でも、この利用者についての HSS の返事です。同じ SAR を送っても同じ返事が来るだけなので、関数は真を返し、記録は消されます。
+
+**送ってから消す理由。** 送り直してよいのは、同じ SAR を 2 回受けた HSS が、1 回受けたときと同じ状態になるからです。AUTHENTICATION_TIMEOUT を受けた HSS は、登録の状態を変えず、利用者が Not Registered なら S-CSCF の名前を消し、認証中の印が付いていれば外します（TS 29.228 6.1.2.1）。2 回目の SAR が届くころには、消すものも外すものも残っていません。反対に、送り直さなければ、答えの来なかった問いのことを HSS に伝えるものはほかにありません。登録していない利用者なら、HSS は S-CSCF の名前と認証中の印を持ったままになります。そこで、記録を残したまま SAR を送り、HSS が答えてから消します。消してから送ると、SAR が届かなかったとき、次に期限を借りた台は記録を見つけられず、送り直せません。
+
+登録の期限を処理する `registrationExpired` は、順が逆です。先に登録を消し、そのあとで購読者への NOTIFY と TIMEOUT_DEREGISTRATION の SAR を送ります。登録の期限では NOTIFY も送るので、期限をもう一度処理すると、購読者が同じ通知を 2 回受けるからです。認証の時間切れで外へ出ていくのは HSS への SAR だけで、それは 2 回届いても結果が変わりません。外へ何を送るかで、送ってから消すか、消してから送るかが分かれます。
+
+**送り直しが止まるとき。** 1 回の借りで送る SAR は 1 通なので、送り直しは期限の借りの 15 秒ごとに 1 回です。HSS が答えたときのほかに、送り直しは 2 つの場合に止まります。1 つは `KeepUntil` で、保存先が記録を忘れます。そのあとで期限を借りた台は記録を見つけず、何もせずにその期限を終えます。HSS が答えないままでも、送る SAR の数には上限があり、期限の項目もいつまでも保存先に残ることはありません。もう 1 つは、利用者の REGISTER が記録を取り除いたときです。期限を過ぎた答えも、答えを持たない最初の REGISTER も、新しい問いの記録を残すので、古い期限の nonce とは合いません。
+
+`internal/scscf/scscf_test.go` の 3 つの試験が、送り直しを確かめています。どれも reg-await-auth を 1 秒、期限の借りを 100 ミリ秒にして動かします。`TestTheSAROfAnAuthenticationTimeoutIsSentAgain` は、SAR が HSS に届かない場合と、HSS が SAR を受けて答えだけが失われる場合のどちらでも、S-CSCF が AUTHENTICATION_TIMEOUT の SAR を 2 回送ることを確かめます。どちらの場合も、最後に HSS は利用者を Not Registered として持ち、S-CSCF の名前も認証中の印も持たず、S-CSCF の保存先からは記録が消えています。`TestTheSAROfAnAuthenticationTimeoutAfterARefusal` は、最初の SAR に DIAMETER_UNABLE_TO_COMPLY が返ると SAR がもう 1 回送られ、DIAMETER_ERROR_USER_UNKNOWN が返ると送られないことを確かめます。`TestTheSAROfAnAuthenticationTimeoutStopsWithTheChallenge` は、HSS が何も答えないあいだ SAR が送り直され、保存先が記録を忘れたあとはそれ以上送られず、期限に処理を終えた印が付くことを確かめます。`internal/scscf/storefailure_test.go` の `TestMemoryStoreForgetsAChallengePastItsKeepUntil` は、プロセスの中の Store が、`KeepUntil` を過ぎた記録を読んだときに捨てることを確かめます。
+
+**期限を過ぎた答えでは 1 回だけ送る。** REGISTER の処理が使う `endRegAwaitAuth` は、記録を先に消し、SAR を 1 回だけ送ります。
+
+[internal/scscf/scscf.go](../../../internal/scscf/scscf.go)
+
+```go
+func (s *SCSCF) endRegAwaitAuth(ctx context.Context, ch Challenge) error {
 	s.log.Info("reg-await-auth expired", "private_identity", ch.PrivateIdentity)
 	if err := s.store.DeleteChallenge(ctx, ch.PrivateIdentity); err != nil {
 		return err
 	}
-	s.serverAssignment(ctx, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, ch.ServerName, cx.AuthenticationTimeout)
+	s.tellAuthenticationTimeout(ctx, ch)
 	return nil
 }
 ```
 
-`regAwaitAuthExpired` は、借りた期限の nonce と、いま保存されている記録の nonce が同じときだけ記録を終わらせます。REGISTER の処理が先に終わらせていれば、記録は無いので何もしません。UE が待っているあいだに最初の REGISTER を送り直していれば（TS 24.229 5.4.1.2.3）、記録は新しい nonce のものに置き換わっているので、それにも触りません。こうして、どちらが先に動いても、HSS に時間切れを伝えるのは 1 回です。ただし、`endRegAwaitAuth` は SAR の答えを確かめません。SAR が HSS に届かなくても、送り直しません。
+`tellAuthenticationTimeout` の結果は読みません。この REGISTER は、このあとで新しい MAR を送り、新しい問いの 401 を返すからです。MAR を受けた HSS は S-CSCF の名前を保存し、「標準が決めていること」の表で見た場合を除いて、認証中の印を付けます（TS 29.228 6.3.1）。そのため、古い問いの SAR が HSS に届いていてもいなくても、新しい MAR のあとの HSS の状態は同じです。そこから先の HSS の状態は、新しい問いを終わらせる SAR が決めます。古い記録を送り直しのために残しても、新しい問いの記録がすぐに同じ場所を上書きするので、送り直す機会はありません。
 
-`internal/scscf/challenge_deadline_test.go` の `TestRegistrationRejectsExpiredChallengeBeforeSweep` が、この場合を確かめています。試験は reg-await-auth を 200 ミリ秒にし、見回りを 1 時間に 1 回にします。これで、見回りが記録を終わらせることはありません。`Expires` を過ぎてから正しい答えを送ると、結果は 401 で、新しい nonce と `stale=true` が入り、登録は作られません。そのあとで古い nonce の期限の処理を呼んでも、新しい問いはそのまま残ります。新しい問いに答えると 200 OK になり、HSS が受けた SAR は AUTHENTICATION_TIMEOUT と `REGISTRATION` の 2 つだけです。`TestIMSAKARejectsExpiredChallengeBeforeSweep` は、IMS-AKA の保護された答えも 200 にならないことを確かめます。`internal/kvstore/scscfstore` の `TestAChallengePastItsExpiresIsNotAnswered` は、Valkey に置く Store の実装でも同じ結果になることを確かめます。
+`internal/scscf/challenge_deadline_test.go` の `TestRegistrationRejectsExpiredChallengeBeforeSweep` が、期限を過ぎた答えの場合を確かめています。試験は reg-await-auth を 200 ミリ秒にし、見回りを 1 時間に 1 回にします。これで、見回りが記録を終わらせることはありません。`Expires` を過ぎてから正しい答えを送ると、結果は 401 で、新しい nonce と `stale=true` が入り、登録は作られません。そのあとで古い nonce の期限の処理を呼んでも、新しい問いはそのまま残ります。新しい問いに答えると 200 OK になり、HSS が受けた SAR は AUTHENTICATION_TIMEOUT と `REGISTRATION` の 2 つだけです。`TestIMSAKARejectsExpiredChallengeBeforeSweep` は、IMS-AKA の保護された答えも 200 にならないことを確かめます。`internal/kvstore/scscfstore` の `TestAChallengePastItsExpiresIsNotAnswered` は、Valkey に置く Store の実装でも同じ結果になることを確かめます。
 
 **登録の期限も同じ考え方。** 登録の `Expires` を過ぎた登録も、見回りが終わらせるまでは保存先に残ります。期限を処理する台が、誰に知らせるかと、HSS が利用者をどの名前で持っているかを、その記録から読むためです。それでも、REGISTER を処理するときと、着信の宛先を探すときは、時刻で判断します。登録の手順は、1 つの関数を通して登録を読みます。
 
@@ -275,7 +312,7 @@ func (s *Store) RegistrationOf(ctx context.Context, publicID string) (scscf.Regi
 
 試験が確かめているのは、3 の答えが 401 を受けることと、登録が残り、その期限が 3 の前と同じことです。HSS の扱いは TS 29.228 6.1.2.1 のとおりで、この実装の HSS も、登録済みの利用者の AUTHENTICATION_TIMEOUT では状態を変えません。登録は、UE が新しい問いに答えて更新するか、自分の期限が来るまで、そのまま使えます。
 
-答えがまったく来ない場合も、登録への影響は同じです。見回りが `regAwaitAuthExpired` で認証の記録を消し、AUTHENTICATION_TIMEOUT の SAR を送り、登録には触りません。誤った答えの場合は違います。S-CSCF は 403 を返し、AUTHENTICATION_FAILURE の SAR を送ります（TS 24.229 5.4.1.2.3B）。それでも登録は、期限が来るまで残ります。`internal/scscf/scscf_test.go` の `TestFailedReauthenticationKeepsTheRegistrationExpiry` は、誤った答えに 403 が返り、HSS が受ける SAR が `REGISTRATION`、AUTHENTICATION_FAILURE、TIMEOUT_DEREGISTRATION の順になることを確かめます。最後のものは、登録が自分の期限で終わったときの SAR です。
+答えがまったく来ない場合も、登録への影響は同じです。見回りが `regAwaitAuthExpired` で AUTHENTICATION_TIMEOUT の SAR を送り、HSS が答えてから認証の記録を消し、登録には触りません。誤った答えの場合は違います。S-CSCF は 403 を返し、AUTHENTICATION_FAILURE の SAR を送ります（TS 24.229 5.4.1.2.3B）。それでも登録は、期限が来るまで残ります。`internal/scscf/scscf_test.go` の `TestFailedReauthenticationKeepsTheRegistrationExpiry` は、誤った答えに 403 が返り、HSS が受ける SAR が `REGISTRATION`、AUTHENTICATION_FAILURE、TIMEOUT_DEREGISTRATION の順になることを確かめます。最後のものは、登録が自分の期限で終わったときの SAR です。
 
 登録していない利用者では、時間切れのあとに HSS が S-CSCF の名前を消します。`internal/scscf/instances_test.go` の `TestAnotherInstanceNamesTheAssignedSCSCF` の「reg-await-auth at the other instance」の場合は、401 を返した台が止まり、別の台が期限を処理します。そのあとで HSS は、その利用者の S-CSCF を持っていません。
 
@@ -392,13 +429,13 @@ func (l *Locker) release(key, version string) {
 
 - `internal/scscf/scscf_test.go` の `TestRegisterOutOfOrderLeavesTheBindingAlone`。同じ Call-ID で CSeq が大きくない解除、更新、`*` の解除が 500 を受け、登録と期限が変わらず、HSS に SAR が届かないこと。別の Call-ID の更新と、それより大きい CSeq の解除が通ること。
 - `internal/sip/stack_test.go` の `TestServerTransactionAbsorbsRetransmissions`。サーバーのトランザクションが再送を捨て、最後の応答を送り直すこと。
-- `internal/scscf/challenge_deadline_test.go` の `TestRegistrationRejectsExpiredChallengeBeforeSweep`、`TestExpiredChallengeKeepsTheRegistration`、`TestIMSAKARejectsExpiredChallengeBeforeSweep`。期限を過ぎた答えを受け付けないこと、登録を残すこと、HSS に時間切れを 1 回だけ伝えること。
+- `internal/scscf/challenge_deadline_test.go` の `TestRegistrationRejectsExpiredChallengeBeforeSweep`、`TestExpiredChallengeKeepsTheRegistration`、`TestIMSAKARejectsExpiredChallengeBeforeSweep`。期限を過ぎた答えを受け付けないこと、登録を残すこと、そのあとで古い期限を処理しても HSS に時間切れを 2 回は伝えないこと。
 - `internal/kvstore/scscfstore` の `TestAChallengePastItsExpiresIsNotAnswered` と `TestARegistrationRefreshedBeforeItsExpiryIsHandled`。Valkey に置く Store の実装でも、期限を過ぎた答えを受け付けないこと。期限を借りた台が、更新された登録を終わらせないこと。
 - `internal/scscf/session_test.go` の `TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact`。期限を過ぎた登録の Contact に着信を送らないこと。
 - `internal/scscf/registration_deadline_test.go` の `TestRegisterAfterTheBindingExpiredStartsAfresh`、`TestDeregisterAfterTheBindingExpiredGets481`、`TestProtectedRegisterAfterTheBindingExpiredIsRefused`、`TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration`。登録の期限が切れたあとの REGISTER が登録先を見つけず、新しい登録を作るか、481 か 500 を受けること。そのあとで処理する期限が、新しい登録を残すこと。
-- `internal/scscf/scscf_test.go` の `TestRegAwaitAuthExpiry`、`TestFailedReauthenticationKeepsTheRegistrationExpiry`、`TestUsersDoNotWaitForEachOther`。答えの来ない問いに AUTHENTICATION_TIMEOUT の SAR が出ること。誤った答えのあとも登録が期限まで残ること。利用者どうしが待たないこと。
+- `internal/scscf/scscf_test.go` の `TestRegAwaitAuthExpiry`、`TestTheSAROfAnAuthenticationTimeoutIsSentAgain`、`TestTheSAROfAnAuthenticationTimeoutAfterARefusal`、`TestTheSAROfAnAuthenticationTimeoutStopsWithTheChallenge`、`TestFailedReauthenticationKeepsTheRegistrationExpiry`、`TestUsersDoNotWaitForEachOther`。答えの来ない問いに AUTHENTICATION_TIMEOUT の SAR が出ること。HSS が答えないときと DIAMETER_UNABLE_TO_COMPLY を返したときは SAR を送り直し、ほかの答えのあとと、保存先が記録を忘れたあとは送らないこと。誤った答えのあとも登録が期限まで残ること。利用者どうしが待たないこと。
 - `internal/scscf/instances_test.go` の `TestAnotherInstanceNamesTheAssignedSCSCF`。別の台が期限を処理したあと、HSS が S-CSCF の名前を持たないこと。
-- `internal/scscf/storefailure_test.go` の `TestRegisterWhenTheLockFails`。ロックを取れない REGISTER が 500 を受けること。
+- `internal/scscf/storefailure_test.go` の `TestRegisterWhenTheLockFails` と `TestMemoryStoreForgetsAChallengePastItsKeepUntil`。ロックを取れない REGISTER が 500 を受けること。プロセスの中の Store が、`KeepUntil` を過ぎた記録を読んだときに捨てること。
 - `internal/kvstore/kvlock/kvlock_test.go` の `TestOnlyOneInstanceHoldsTheLock`、`TestMutualExclusion`、`TestStoppedHolder`。
 
 フェンシングが無いことの影響は、コードとそのコメントから読み取ったもので、試験で起こしたものではありません。図のうち、登録の比較の図は説明のための例で、ロックの図はロックの考え方の模式図です。どちらもキャプチャではありません。

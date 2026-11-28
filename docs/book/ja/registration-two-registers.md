@@ -161,7 +161,7 @@ HSS の「登録済み」と、S-CSCF の登録先の保存と、UE が 200 OK �
 この章で見たのは、正常な最初の登録です。次の場合は REGISTER の数が変わります。
 
 - **答えが古いとき。** パスワードは正しいのに nonce が古ければ、S-CSCF は `stale=true` を付けた新しい 401 で問い直します。REGISTER は 3 回以上になります。
-- **答えが期限に遅れたとき。** reg-await-auth が切れたら、認証は失敗です（TS 24.229 5.4.1.2.3）。S-CSCF はチャレンジを終え、Server-Assignment-Type が AUTHENTICATION_TIMEOUT の SAR を HSS に送ります。そのあとに届いた答えは、待っている認証の無い REGISTER として扱います。答えを持つ REGISTER なので、S-CSCF は新しい nonce と `stale=true` を付けた 401 で問い直します（5.4.1.2.2A step 1）。
+- **答えが期限に遅れたとき。** reg-await-auth が切れたら、認証は失敗です（TS 24.229 5.4.1.2.3）。S-CSCF は Server-Assignment-Type が AUTHENTICATION_TIMEOUT の SAR を HSS に送り、HSS が答えたらチャレンジを終えます。答えが来なければ、しばらくあとで同じ SAR を送り直します。期限を過ぎて届いた答えは、待っている認証の無い REGISTER として扱います。答えを持つ REGISTER なので、S-CSCF は新しい nonce と `stale=true` を付けた 401 で問い直します（5.4.1.2.2A step 1）。
 - **登録の解除。** 解除の REGISTER は、P-CSCF が IP の対応付けを持っていれば `ip-assoc-yes` が付き、S-CSCF は問い直さずに処理します。1 回で済みます。
 - **再登録。** S-CSCF は、登録を受け付けたときにチャレンジを消しています。そのため SIP Digest の再登録も新しい 401 で問い直され、REGISTER はまた 2 回になります。前の nonce で答えてきた REGISTER への 401 には `stale=true` が付きます（TS 24.229 5.4.1.2.2A）。
 

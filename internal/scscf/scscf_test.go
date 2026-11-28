@@ -61,6 +61,8 @@ func came(d time.Duration, cond func() bool) bool {
 // and records the Server-Assignment-Type of every SAR.
 type fakeHSS struct {
 	hss *hss.HSS
+	// identity is the Diameter identity of hss, which it answers under.
+	identity diameter.Identity
 	// subscribers is the store of hss, where a test reads what the HSS
 	// holds of a user.
 	subscribers *hss.MemoryStore
@@ -80,6 +82,11 @@ type fakeHSS struct {
 	// missing, as on a Diameter path that fails.
 	lost     lostAt
 	lostType cx.ServerAssignmentType
+	// refusal, when set, is the result that the next SAR of refusalType
+	// is answered with in place of the HSS stub's own answer, as an HSS
+	// that cannot serve it answers.
+	refusal     *diameter.Result
+	refusalType cx.ServerAssignmentType
 }
 
 // lostAt is where a request goes missing on the way to the HSS and back.
@@ -102,6 +109,14 @@ func (f *fakeHSS) lose(t cx.ServerAssignmentType, at lostAt) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.lost, f.lostType = at, t
+}
+
+// refuse answers the next SAR of type t with the result r, and leaves
+// what the HSS stub holds of the user untouched.
+func (f *fakeHSS) refuse(t cx.ServerAssignmentType, r diameter.Result) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refusal, f.refusalType = &r, t
 }
 
 // subscriber is what the HSS holds of the user of the harness.
@@ -130,6 +145,7 @@ func (f *fakeHSS) Request(ctx context.Context, m *diam.Message) (*diam.Message, 
 		return nil, err
 	}
 	user, lost := "", notLost
+	var refusal *diameter.Result
 	if r, err := cx.ParseMultimediaAuthRequest(req); err == nil && req.Header.CommandCode == cx.CommandMultimediaAuth {
 		user = r.UserName
 		f.mu.Lock()
@@ -144,10 +160,16 @@ func (f *fakeHSS) Request(ctx context.Context, m *diam.Message) (*diam.Message, 
 		if f.lost != notLost && f.lostType == r.ServerAssignmentType {
 			lost, f.lost = f.lost, notLost
 		}
+		if f.refusal != nil && f.refusalType == r.ServerAssignmentType {
+			refusal, f.refusal = f.refusal, nil
+		}
 		f.mu.Unlock()
 	}
 	if lost == requestLost {
 		return nil, errNoAnswer
+	}
+	if refusal != nil {
+		return cx.ServerAssignmentAnswer{Result: *refusal}.Message(req, f.identity), nil
 	}
 	f.mu.Lock()
 	stalled := f.stalled
@@ -241,7 +263,7 @@ func newHarnessWithHSS(t *testing.T, cfg Config, resolver Resolver, hssCfg hss.C
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fakeHSS{hss: h, subscribers: subscribers}
+	f := &fakeHSS{hss: h, identity: identity, subscribers: subscribers}
 	node := diameter.NewNode(diameter.Identity{OriginHost: "scscf." + domain, OriginRealm: domain}, []uint32{diameter.ApplicationIDCx}, diameter.Timers{}, quiet())
 
 	cfg.HomeDomain = domain
@@ -719,6 +741,104 @@ func TestRegAwaitAuthExpiry(t *testing.T) {
 	h := newHarness(t, Config{RegAwaitAuth: 100 * time.Millisecond})
 	h.register(sip.NewCallID(), 1, 600000, initial)
 	waitForAssignments(t, h.hss, cx.AuthenticationTimeout)
+}
+
+// The SAR of an authentication that timed out goes out again when its
+// answer does not come: nothing else tells the HSS of a challenge that
+// no REGISTER answered, and until the HSS is told it keeps the
+// authentication pending with this S-CSCF assigned (TS 29.228 6.1.2.1,
+// 6.3.1). The expiry stays in the Store for another claim, so the
+// instance that claims it next sends the SAR again, and the HSS reaches
+// the same state whether it took the first SAR or not.
+func TestTheSAROfAnAuthenticationTimeoutIsSentAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		lost lostAt
+	}{
+		{"the SAR does not reach the HSS", requestLost},
+		{"the HSS takes the SAR and the SAA is lost", answerLost},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, Config{RegAwaitAuth: time.Second, ExpiryLease: 100 * time.Millisecond})
+			h.hss.lose(cx.AuthenticationTimeout, tc.lost)
+			if r := h.register(sip.NewCallID(), 1, 600000, initial); r.StatusCode != 401 {
+				t.Fatalf("REGISTER got %d, want 401", r.StatusCode)
+			}
+			waitForAssignments(t, h.hss, cx.AuthenticationTimeout, cx.AuthenticationTimeout)
+			if sub := h.hss.subscriber(t); sub.State != hss.NotRegistered || sub.ServerName != "" || sub.AuthenticationPending {
+				t.Errorf("the HSS holds the user %v at %q with the authentication pending %v, want %v at no S-CSCF with none pending",
+					sub.State, sub.ServerName, sub.AuthenticationPending, hss.NotRegistered)
+			}
+			if _, ok, err := h.store.Challenge(t.Context(), impi); err != nil || ok {
+				t.Errorf("the challenge is %v (%v) once the HSS has been told, want it gone", ok, err)
+			}
+		})
+	}
+}
+
+// An HSS that answers the SAR has had its say, and the same SAR would
+// only hear it again: DIAMETER_ERROR_USER_UNKNOWN ends the attempts.
+// DIAMETER_UNABLE_TO_COMPLY does not, because the HSS answers it when
+// it cannot serve the request and then changes no registration state
+// (TS 29.228 6.1.2.1), which a later SAR may still find it able to do.
+func TestTheSAROfAnAuthenticationTimeoutAfterARefusal(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		result diameter.Result
+		want   []cx.ServerAssignmentType
+	}{
+		{"DIAMETER_UNABLE_TO_COMPLY", diameter.Base(diameter.DiameterUnableToComply),
+			[]cx.ServerAssignmentType{cx.AuthenticationTimeout, cx.AuthenticationTimeout}},
+		{"DIAMETER_ERROR_USER_UNKNOWN", diameter.Experimental(cx.DiameterErrorUserUnknown),
+			[]cx.ServerAssignmentType{cx.AuthenticationTimeout}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, Config{RegAwaitAuth: time.Second, ExpiryLease: 100 * time.Millisecond})
+			h.hss.refuse(cx.AuthenticationTimeout, tc.result)
+			if r := h.register(sip.NewCallID(), 1, 600000, initial); r.StatusCode != 401 {
+				t.Fatalf("REGISTER got %d, want 401", r.StatusCode)
+			}
+			waitForAssignments(t, h.hss, tc.want...)
+			if came(watch, func() bool { return len(h.hss.assignments()) > len(tc.want) }) {
+				t.Errorf("SARs = %v, want %v", h.hss.assignments(), tc.want)
+			}
+		})
+	}
+}
+
+// The SARs stop when the Store forgets the challenge, reg-await-auth
+// after its Expires: the record that says whom to tell is gone by then,
+// and the MAR of the next REGISTER of the user tells the HSS that the
+// user is authenticating here again. An HSS that answers nothing
+// therefore costs a bounded number of SARs, one per claim of the expiry,
+// and the expiry does not stay in the Store for ever.
+func TestTheSAROfAnAuthenticationTimeoutStopsWithTheChallenge(t *testing.T) {
+	h := newHarness(t, Config{RegAwaitAuth: time.Second, ExpiryLease: 100 * time.Millisecond})
+	if r := h.register(sip.NewCallID(), 1, 600000, initial); r.StatusCode != 401 {
+		t.Fatalf("REGISTER got %d, want 401", r.StatusCode)
+	}
+	ch := heldChallenge(t, h)
+	// From here the HSS answers nothing, as one that cannot be reached
+	// does: every SAR ends with the claim of the expiry that sent it.
+	h.hss.stall(impi, make(chan struct{}))
+	if !came(3*time.Second, func() bool { return len(h.hss.assignments()) >= 2 }) {
+		t.Fatalf("SARs = %v, want the SAR of AUTHENTICATION_TIMEOUT sent again while the Store holds the challenge",
+			h.hss.assignments())
+	}
+	if !came(3*time.Second, func() bool {
+		_, ok, err := h.store.Challenge(t.Context(), impi)
+		return err == nil && !ok
+	}) {
+		t.Fatalf("the Store holds the challenge past its KeepUntil %v", ch.KeepUntil)
+	}
+	sent := len(h.hss.assignments())
+	if came(watch, func() bool { return len(h.hss.assignments()) > sent }) {
+		t.Errorf("SARs = %v, want no more than the %d sent while the Store held the challenge",
+			h.hss.assignments(), sent)
+	}
+	if h.failing.handled(RegAwaitAuthExpiry) == 0 {
+		t.Error("the expiry was never marked done, so it stays in the Store")
+	}
 }
 
 // TestASlowExpiryHoldsUpNeitherAnotherNorClose: the HSS does not answer

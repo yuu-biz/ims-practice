@@ -31,7 +31,9 @@ Before comparing design choices, it helps to see what the standard settles. None
 | The procedure depends on whether the timer runs | TS 24.229 5.4.1.2.2A | If it does not, the authentication starts anew. If it does, the S-CSCF goes on only when the Call-ID of the answer is that of the 401 that carried the last challenge, then stops the timer and checks the answer. |
 | An initial REGISTER while the timer runs | TS 24.229 5.4.1.2.3 | Stop the timer and send a new challenge, as if no authentication were going on. |
 | Running out is a failed authentication | TS 24.229 5.4.1.2.3 NOTE 2 | A public identity that was registered stays registered. |
-| What the HSS does when told | TS 29.228 6.1.2.1 | An HSS that receives a SAR with the Server-Assignment-Type AUTHENTICATION_TIMEOUT keeps the registration state. It clears the S-CSCF name only when the user is Not Registered. |
+| The HSS marks the authentication as pending on a MAR | TS 29.228 6.3.1 | With SIP Digest and IMS AKA, the HSS sets the authentication pending flag of the pair of the private and the public identity in the MAR. It does not when the user is registered and the S-CSCF name is the one it holds. |
+| What the HSS does when told | TS 29.228 6.1.2.1 | An HSS that receives a SAR with the Server-Assignment-Type AUTHENTICATION_TIMEOUT keeps the registration state. It clears the S-CSCF name only when the user is Not Registered. It clears the authentication pending flag if the flag is set. |
+| An HSS that cannot serve the request | TS 29.228 6.1.2.1 | An HSS that cannot fulfil a SAR, for example because of a database error, answers DIAMETER_UNABLE_TO_COMPLY and changes no registration state. |
 | The temporary protection of IMS AKA ends with the same timer | TS 24.229 3.1, 5.2.2.2 | The temporary security associations that the UE and the P-CSCF set up at the 401 have a SIP level lifetime equal to reg-await-auth. |
 
 The standard leaves other things open: whether the timer is a timer of the process or a time in the store; how long a record stays; how several instances that act as one registrar make the processing atomic; which response code a request out of order gets. This chapter compares the choices in that open part. The last one is covered in [Why a late deregistration does not remove a newer registration](registration-stale-deregistration.md): this implementation answers 500.
@@ -66,9 +68,9 @@ With the two records and the values of the request, the REGISTER requests fall i
 | Deregistration with nothing to remove | No registration, or another Contact | Nothing | 481 |
 | Late request | The same Call-ID and Contact, a CSeq that is not higher than the stored one | Nothing | 500 |
 | Retransmission within the transaction | Belongs to the transaction of the earlier request | Nothing | The transaction layer sends the earlier response again |
-| Answer after the expiry | An authentication record, but now is past `Expires` | Remove the authentication record. Not the registration | SAR of AUTHENTICATION_TIMEOUT. With SIP Digest, a new 401 with `stale=true` |
+| Answer after the expiry | An authentication record, but now is past `Expires` | Remove the authentication record. Not the registration | One SAR of AUTHENTICATION_TIMEOUT, whose answer is not read. With SIP Digest, a new 401 with `stale=true` |
 | Initial REGISTER while the challenge is pending | An authentication record, and a REGISTER that carries no answer | Replace the authentication record with a new one | MAR, a new 401 |
-| Running out with no answer | The `Expires` of the authentication record comes up in the time index | Remove the authentication record. Not the registration | SAR of AUTHENTICATION_TIMEOUT |
+| Running out with no answer | The `Expires` of the authentication record comes up in the time index | Remove the authentication record once the HSS has answered the SAR. Not the registration | SAR of AUTHENTICATION_TIMEOUT. With no answer or DIAMETER_UNABLE_TO_COMPLY, the instance that claims the expiry again sends it again |
 | Expiry of the registration | The `Expires` of the registration comes up in the time index | Remove the registration | NOTIFY and a SAR of TIMEOUT_DEREGISTRATION |
 
 Three things follow from the table.
@@ -120,7 +122,7 @@ func (s *SCSCF) putChallenge(ch Challenge) error {
 }
 ```
 
-`Expires` is reg-await-auth from now, and `KeepUntil` is reg-await-auth after that. As the store writes the record, it also puts one member into the time index, due at `Expires`; the member is named by the private identity and the nonce. The Store on Valkey gives the record itself a time to live until `KeepUntil`, and the Store in the process does not return a record past `KeepUntil` either.
+`Expires` is reg-await-auth from now, and `KeepUntil` is reg-await-auth after that. As the store writes the record, it also puts one member into the time index, due at `Expires`; the member is named by the private identity and the nonce. The Store on Valkey gives the record itself a time to live until `KeepUntil`, and the Store in the process does not return a record past `KeepUntil` either: it drops such a record when it reads it.
 
 Counted from the 401:
 
@@ -128,12 +130,13 @@ Counted from the 401:
 | --- | --- | --- | --- |
 | 0 | The 401 goes out. `putChallenge` writes the two times and puts `Expires` in the time index | There | Accepted |
 | 4 minutes (`Expires`) | reg-await-auth runs out | There | Not accepted |
-| A little after 4 minutes | The sweep of some instance claims the expiry, and `regAwaitAuthExpired` removes the record and sends a SAR of AUTHENTICATION_TIMEOUT | Gone | Handled as a REGISTER with no challenge |
-| 8 minutes (`KeepUntil`) | A record that no instance handled leaves the store as well | Gone | Handled as a REGISTER with no challenge |
+| A little after 4 minutes | The sweep of some instance claims the expiry, and `regAwaitAuthExpired` sends a SAR of AUTHENTICATION_TIMEOUT and removes the record once the HSS answers | Gone if the HSS answered; there if it did not | Handled as a REGISTER with no challenge |
+| After that, each time the claim runs out | Some instance claims again the expiry whose SAR the HSS did not answer, and sends the same SAR again | There until the HSS answers | Handled as a REGISTER with no challenge |
+| 8 minutes (`KeepUntil`) | A record that no instance handled, and one whose SAR the HSS never answered, leave the store as well. The SAR is not sent again after this | Gone | Handled as a REGISTER with no challenge |
 
-The sweep runs every second, so an expiry is usually handled about a second after `Expires`. When the instance that claimed it stops, another instance claims it again once the claim runs out 15 seconds later. While the store does not answer, no instance can finish, and the claims go on.
+The sweep runs every second, so an expiry is usually handled about a second after `Expires`. When the instance that claimed it stops, another instance claims it again once the claim runs out 15 seconds later. While the store does not answer, no instance can finish, and the claims go on. The same holds while the HSS does not answer the SAR of the timeout.
 
-**Why the record stays after `Expires`.** The instance that handles the expiry reads the name of the HSS and the name of the S-CSCF from the authentication record, so that the SAR of AUTHENTICATION_TIMEOUT goes to the right HSS under the right name. If the record were gone right at `Expires`, a handler only a little late would find nothing and send no SAR. The HSS would then never learn that the authentication ended, and for a user who is not registered it would keep the S-CSCF name too. `KeepUntil` gives a late handler one more reg-await-auth.
+**Why the record stays after `Expires`.** The instance that handles the expiry reads the name of the HSS and the name of the S-CSCF from the authentication record, so that the SAR of AUTHENTICATION_TIMEOUT goes to the right HSS under the right name. If the record were gone right at `Expires`, a handler only a little late would find nothing and send no SAR. The HSS would then never learn that the authentication ended, and for a user who is not registered it would keep the S-CSCF name too. `KeepUntil` gives a late handler one more reg-await-auth. It is also how long the SAR is sent again at most, when the HSS does not answer it.
 
 **A record that is there is not an answer that may be accepted.** The record stays for the clean-up. If the REGISTER code took "there is a record" to mean "an answer is awaited", the time until which an answer is accepted would depend on when the sweep runs: usually about a second longer, 15 seconds longer when an instance stops, and up to `KeepUntil`, 4 minutes longer, when no instance can handle it. When the sweep runs depends on the number of instances, the load, the claims and the state of the store, none of which is part of the SIP procedure. The standard sets the time by the timer. With IMS AKA, the temporary security associations of the UE and the P-CSCF have ended with that timer too (TS 24.229 3.1, 5.2.2.2). So the REGISTER code checks the time itself.
 
@@ -155,7 +158,7 @@ The sweep runs every second, so an expiry is usually handled about a second afte
 	}
 ```
 
-The input is the authentication record `ch`, read after the lock of the user is taken. `pending` says that there was a record, and `ch.Expires` is the time until which an answer is accepted. When now is past it, the S-CSCF removes the record with `endRegAwaitAuth`, the same function the expiry uses, and tells the HSS of AUTHENTICATION_TIMEOUT. Then it sets `pending` to false and handles the REGISTER as one with no challenge pending. A SIP Digest REGISTER carries an answer, so the S-CSCF sends a new MAR and answers with a 401 that has a new nonce and `stale=true` (TS 24.229 5.4.1.2.2A step 1). A protected answer with IMS AKA is handled as a protected REGISTER with no challenge pending, and gets 500 for a user who is not registered.
+The input is the authentication record `ch`, read after the lock of the user is taken. `pending` says that there was a record, and `ch.Expires` is the time until which an answer is accepted. When now is past it, the S-CSCF removes the record with `endRegAwaitAuth` and tells the HSS of AUTHENTICATION_TIMEOUT. That is not the function the expiry uses; the difference comes below. Then it sets `pending` to false and handles the REGISTER as one with no challenge pending. A SIP Digest REGISTER carries an answer, so the S-CSCF sends a new MAR and answers with a 401 that has a new nonce and `stale=true` (TS 24.229 5.4.1.2.2A step 1). A protected answer with IMS AKA is handled as a protected REGISTER with no challenge pending, and gets 500 for a user who is not registered.
 
 The expiry takes the same lock and reads the record again.
 
@@ -175,28 +178,62 @@ func (s *SCSCF) regAwaitAuthExpired(ctx context.Context, privateID, nonce string
 	if !ok || ch.Nonce != nonce {
 		return nil
 	}
-	return s.endRegAwaitAuth(ctx, ch)
-}
-
-// endRegAwaitAuth ends the challenge ch, whose reg-await-auth has run
-// out, and tells the HSS (TS 24.229 5.4.1.2.3). The lock of the user is
-// held: the expiry takes it in regAwaitAuthExpired, and a REGISTER that
-// finds the challenge late already holds it (register).
-func (s *SCSCF) endRegAwaitAuth(ctx context.Context, ch Challenge) error {
 	// TS 24.229 5.4.1.2.3 NOTE 2: authentication has failed; a user who
 	// was registered stays registered.
+	s.log.Info("reg-await-auth expired", "private_identity", privateID)
+	if !s.tellAuthenticationTimeout(ctx, ch) {
+		return errors.New("the HSS did not answer the SAR of AUTHENTICATION_TIMEOUT")
+	}
+	return s.store.DeleteChallenge(ctx, privateID)
+}
+```
+
+`regAwaitAuthExpired` ends the record only when its nonce is the nonce of the expiry it claimed. If the REGISTER code ended it first, there is no record, and nothing happens. If the UE sent a new initial REGISTER while it waited (TS 24.229 5.4.1.2.3), the record has been replaced by one with a new nonce, which it leaves alone too. When the record is still there, it sends the SAR of AUTHENTICATION_TIMEOUT first, and removes the record only when the HSS has answered. When the HSS has not, it returns an error. An expiry that ends in an error is not marked as handled, so some instance claims it again once the claim runs out 15 seconds later. The record is still there as well, so that instance sends the same SAR again.
+
+Whether the HSS counts as having answered is up to `tellAuthenticationTimeout`.
+
+[internal/scscf/scscf.go](../../../internal/scscf/scscf.go)
+
+```go
+func (s *SCSCF) tellAuthenticationTimeout(ctx context.Context, ch Challenge) bool {
+	saa, err := s.serverAssignment(ctx, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, ch.ServerName, cx.AuthenticationTimeout)
+	if err == nil && saa.Result != diameter.Base(diameter.DiameterUnableToComply) {
+		return true
+	}
+	s.log.Warn("the HSS did not answer the SAR of AUTHENTICATION_TIMEOUT",
+		"private_identity", ch.PrivateIdentity, "result", describe(saa.Result, err))
+	return false
+}
+```
+
+When no answer comes, the S-CSCF cannot tell whether the SAR did not reach the HSS, or the HSS took it and only the answer was lost. DIAMETER_UNABLE_TO_COMPLY says that the HSS could not serve the request and changed no registration state (TS 29.228 6.1.2.1). In both cases the same SAR may still get through when sent again, so the function returns false. Any other answer, DIAMETER_SUCCESS or DIAMETER_ERROR_USER_UNKNOWN alike, is the HSS's word on this user. The same SAR would only hear it again, so the function returns true and the record is removed.
+
+**Why it sends first and removes afterwards.** Sending the SAR again is safe because an HSS that takes the same SAR twice ends up in the state it reaches when it takes it once. On AUTHENTICATION_TIMEOUT the HSS keeps the registration state, clears the S-CSCF name if the user is Not Registered, and clears the authentication pending flag if it is set (TS 29.228 6.1.2.1). By the time a second SAR arrives, there is nothing left to clear. Not sending it again, on the other hand, leaves nothing else to tell the HSS of a challenge that got no answer. For a user who is not registered, the HSS would keep the S-CSCF name and the pending flag. So the S-CSCF sends the SAR with the record still in place, and removes the record after the HSS has answered. Were it to remove first and send afterwards, the instance that claims the expiry next would find no record after a SAR that did not get through, and could not send it again.
+
+`registrationExpired`, which handles the expiry of a registration, goes the other way round. It removes the registration first, and then sends the NOTIFYs to the subscribers and the SAR of TIMEOUT_DEREGISTRATION. The expiry of a registration sends NOTIFYs too, so handling it once more would give the subscribers the same notification twice. The timeout of an authentication sends nothing out but the SAR to the HSS, and that SAR has the same outcome when it arrives twice. What goes out decides whether to send first or to remove first.
+
+**When the SAR stops going out again.** One claim sends one SAR, so the SAR goes out again once per claim of 15 seconds. Besides the HSS answering, two things stop it. One is `KeepUntil`, when the store forgets the record. An instance that claims the expiry after that finds no record and finishes the expiry without doing anything. Even when the HSS never answers, the number of SARs is bounded, and the expiry does not stay in the store for ever. The other is a REGISTER of the user that takes the record away. An answer after the expiry and an initial REGISTER with no answer both leave the record of a new challenge, whose nonce is not that of the old expiry.
+
+Three tests in `internal/scscf/scscf_test.go` check the sending again. Each runs with a reg-await-auth of 1 second and a claim of 100 milliseconds. `TestTheSAROfAnAuthenticationTimeoutIsSentAgain` checks that the S-CSCF sends the SAR of AUTHENTICATION_TIMEOUT twice, both when the SAR does not reach the HSS and when the HSS takes the SAR and only the answer is lost. In both cases the HSS ends up holding the user as Not Registered, with no S-CSCF name and no pending flag, and the record is gone from the store of the S-CSCF. `TestTheSAROfAnAuthenticationTimeoutAfterARefusal` checks that the SAR is sent once more when the first one gets DIAMETER_UNABLE_TO_COMPLY, and not when it gets DIAMETER_ERROR_USER_UNKNOWN. `TestTheSAROfAnAuthenticationTimeoutStopsWithTheChallenge` checks that the SAR is sent again while the HSS answers nothing, that no more is sent once the store has forgotten the record, and that the expiry is marked as handled. `TestMemoryStoreForgetsAChallengePastItsKeepUntil` in `internal/scscf/storefailure_test.go` checks that the Store in the process drops a record past its `KeepUntil` when it reads it.
+
+**An answer after the expiry sends the SAR once.** `endRegAwaitAuth`, which the REGISTER code uses, removes the record first and sends the SAR once.
+
+[internal/scscf/scscf.go](../../../internal/scscf/scscf.go)
+
+```go
+func (s *SCSCF) endRegAwaitAuth(ctx context.Context, ch Challenge) error {
 	s.log.Info("reg-await-auth expired", "private_identity", ch.PrivateIdentity)
 	if err := s.store.DeleteChallenge(ctx, ch.PrivateIdentity); err != nil {
 		return err
 	}
-	s.serverAssignment(ctx, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, ch.ServerName, cx.AuthenticationTimeout)
+	s.tellAuthenticationTimeout(ctx, ch)
 	return nil
 }
 ```
 
-`regAwaitAuthExpired` ends the record only when its nonce is the nonce of the expiry it claimed. If the REGISTER code ended it first, there is no record, and nothing happens. If the UE sent a new initial REGISTER while it waited (TS 24.229 5.4.1.2.3), the record has been replaced by one with a new nonce, which it leaves alone too. Whichever runs first, the HSS hears of the timeout once. `endRegAwaitAuth` does not look at the answer to the SAR, though: a SAR that does not reach the HSS is not sent again.
+It does not read what `tellAuthenticationTimeout` returns, because this REGISTER goes on to send a new MAR and to answer with the 401 of a new challenge. An HSS that receives a MAR stores the S-CSCF name and, but for the case in the table of what the standard fixes, sets the authentication pending flag (TS 29.228 6.3.1). So whether or not the SAR of the old challenge reached the HSS, the HSS is in the same state after the new MAR. From there on, the SAR that ends the new challenge decides where the HSS stands. Keeping the old record to send the SAR again would give no chance to send it either, since the record of the new challenge takes its place at once.
 
-`TestRegistrationRejectsExpiredChallengeBeforeSweep` in `internal/scscf/challenge_deadline_test.go` checks this case. The test sets reg-await-auth to 200 milliseconds and the sweep to once an hour, so that the sweep never ends the record. A correct answer sent after `Expires` gets a 401 with a new nonce and `stale=true`, and no registration is made. Calling the expiry of the old nonce after that leaves the new challenge in place. The answer to the new challenge gets 200 OK, and the HSS has received two SARs only: AUTHENTICATION_TIMEOUT and `REGISTRATION`. `TestIMSAKARejectsExpiredChallengeBeforeSweep` checks that a protected answer with IMS AKA does not get 200 either. `TestAChallengePastItsExpiresIsNotAnswered` in `internal/kvstore/scscfstore` checks the same result with the Store on Valkey.
+`TestRegistrationRejectsExpiredChallengeBeforeSweep` in `internal/scscf/challenge_deadline_test.go` checks the case of an answer after the expiry. The test sets reg-await-auth to 200 milliseconds and the sweep to once an hour, so that the sweep never ends the record. A correct answer sent after `Expires` gets a 401 with a new nonce and `stale=true`, and no registration is made. Calling the expiry of the old nonce after that leaves the new challenge in place. The answer to the new challenge gets 200 OK, and the HSS has received two SARs only: AUTHENTICATION_TIMEOUT and `REGISTRATION`. `TestIMSAKARejectsExpiredChallengeBeforeSweep` checks that a protected answer with IMS AKA does not get 200 either. `TestAChallengePastItsExpiresIsNotAnswered` in `internal/kvstore/scscfstore` checks the same result with the Store on Valkey.
 
 **The expiry of a registration follows the same idea.** A registration past its `Expires` also stays in the store until the sweep ends it: the instance that handles the expiry reads from it whom to tell, and the name under which the HSS holds the user. Still, the REGISTER code and the lookup of where to send a call go by the time. The registration procedures read the registration through one function.
 
@@ -275,7 +312,7 @@ This section follows one case exactly: an authentication of a user who is regist
 
 The test checks that the answer of 3 gets 401, and that the registration is still there with the same expiry as before 3. The HSS acts as TS 29.228 6.1.2.1 says: the HSS of this implementation does not change the state of a registered user on AUTHENTICATION_TIMEOUT. The registration stays usable until the UE answers the new challenge and refreshes it, or until its own expiry.
 
-When no answer comes at all, the effect on the registration is the same: the sweep removes the authentication record in `regAwaitAuthExpired`, sends the SAR of AUTHENTICATION_TIMEOUT, and leaves the registration alone. A wrong answer is different. The S-CSCF answers 403 and sends a SAR of AUTHENTICATION_FAILURE (TS 24.229 5.4.1.2.3B). Even then the registration stays until it expires. `TestFailedReauthenticationKeepsTheRegistrationExpiry` in `internal/scscf/scscf_test.go` checks that the wrong answer gets 403 and that the HSS receives the SARs `REGISTRATION`, AUTHENTICATION_FAILURE and TIMEOUT_DEREGISTRATION in that order. The last one is the SAR of the registration ending at its own expiry.
+When no answer comes at all, the effect on the registration is the same: the sweep sends the SAR of AUTHENTICATION_TIMEOUT in `regAwaitAuthExpired`, removes the authentication record once the HSS has answered, and leaves the registration alone. A wrong answer is different. The S-CSCF answers 403 and sends a SAR of AUTHENTICATION_FAILURE (TS 24.229 5.4.1.2.3B). Even then the registration stays until it expires. `TestFailedReauthenticationKeepsTheRegistrationExpiry` in `internal/scscf/scscf_test.go` checks that the wrong answer gets 403 and that the HSS receives the SARs `REGISTRATION`, AUTHENTICATION_FAILURE and TIMEOUT_DEREGISTRATION in that order. The last one is the SAR of the registration ending at its own expiry.
 
 For a user who is not registered, the HSS clears the S-CSCF name after the timeout. In the case "reg-await-auth at the other instance" of `TestAnotherInstanceNamesTheAssignedSCSCF` in `internal/scscf/instances_test.go`, the instance that sent the 401 stops and another instance handles the expiry. After that the HSS holds no S-CSCF for the user.
 
@@ -392,13 +429,13 @@ The account of this chapter was checked against the code and the tests below. Ea
 
 - `TestRegisterOutOfOrderLeavesTheBindingAlone` in `internal/scscf/scscf_test.go`: a deregistration, a refresh and a deregistration with `*` with the same Call-ID and a CSeq that is not higher get 500, the registration and its expiry stay, and no SAR reaches the HSS; a refresh with another Call-ID and a deregistration with a higher CSeq go through.
 - `TestServerTransactionAbsorbsRetransmissions` in `internal/sip/stack_test.go`: a server transaction discards retransmissions and sends its last response again.
-- `TestRegistrationRejectsExpiredChallengeBeforeSweep`, `TestExpiredChallengeKeepsTheRegistration` and `TestIMSAKARejectsExpiredChallengeBeforeSweep` in `internal/scscf/challenge_deadline_test.go`: an answer after the expiry is not accepted, the registration stays, and the HSS hears of the timeout once.
+- `TestRegistrationRejectsExpiredChallengeBeforeSweep`, `TestExpiredChallengeKeepsTheRegistration` and `TestIMSAKARejectsExpiredChallengeBeforeSweep` in `internal/scscf/challenge_deadline_test.go`: an answer after the expiry is not accepted, the registration stays, and the old expiry handled after it does not tell the HSS of the timeout a second time.
 - `TestAChallengePastItsExpiresIsNotAnswered` and `TestARegistrationRefreshedBeforeItsExpiryIsHandled` in `internal/kvstore/scscfstore`: with the Store on Valkey too, an answer after the expiry is not accepted; an instance that claimed an expiry does not end a registration that was refreshed.
 - `TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact` in `internal/scscf/session_test.go`: a call does not go to the Contact of an expired registration.
 - `TestRegisterAfterTheBindingExpiredStartsAfresh`, `TestDeregisterAfterTheBindingExpiredGets481`, `TestProtectedRegisterAfterTheBindingExpiredIsRefused` and `TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration` in `internal/scscf/registration_deadline_test.go`: a REGISTER after the expiry of a registration finds no binding, so it makes a new registration, or gets 481 or 500; the expiry handled afterwards leaves the new registration alone.
-- `TestRegAwaitAuthExpiry`, `TestFailedReauthenticationKeepsTheRegistrationExpiry` and `TestUsersDoNotWaitForEachOther` in `internal/scscf/scscf_test.go`: a challenge with no answer leads to a SAR of AUTHENTICATION_TIMEOUT; after a wrong answer the registration stays until it expires; users do not wait for each other.
+- `TestRegAwaitAuthExpiry`, `TestTheSAROfAnAuthenticationTimeoutIsSentAgain`, `TestTheSAROfAnAuthenticationTimeoutAfterARefusal`, `TestTheSAROfAnAuthenticationTimeoutStopsWithTheChallenge`, `TestFailedReauthenticationKeepsTheRegistrationExpiry` and `TestUsersDoNotWaitForEachOther` in `internal/scscf/scscf_test.go`: a challenge with no answer leads to a SAR of AUTHENTICATION_TIMEOUT; the SAR is sent again when the HSS does not answer and when it answers DIAMETER_UNABLE_TO_COMPLY, and not after any other answer or once the store has forgotten the record; after a wrong answer the registration stays until it expires; users do not wait for each other.
 - `TestAnotherInstanceNamesTheAssignedSCSCF` in `internal/scscf/instances_test.go`: after another instance handles the expiry, the HSS holds no S-CSCF name.
-- `TestRegisterWhenTheLockFails` in `internal/scscf/storefailure_test.go`: a REGISTER whose user cannot be locked gets 500.
+- `TestRegisterWhenTheLockFails` and `TestMemoryStoreForgetsAChallengePastItsKeepUntil` in `internal/scscf/storefailure_test.go`: a REGISTER whose user cannot be locked gets 500; the Store in the process drops a record past its `KeepUntil` when it reads it.
 - `TestOnlyOneInstanceHoldsTheLock`, `TestMutualExclusion` and `TestStoppedHolder` in `internal/kvstore/kvlock/kvlock_test.go`.
 
 What the missing fencing can do is read from the code and its comment; no test makes it happen. Of the figures, the one of the registration order is an illustration, and the one of the lock a schematic of the idea. Neither is a capture.

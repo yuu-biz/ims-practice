@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"log/slog"
 	"slices"
@@ -965,8 +966,24 @@ func covers(reg Registration, ids []string) bool {
 
 // regAwaitAuthExpired ends the challenge of nonce, whose REGISTER never
 // came, and tells the HSS (TS 24.229 5.4.1.2.3). It returns the failure
-// of the store or of the lock that left the challenge where it was, so
-// that the expiry is handled again (handleExpiry).
+// of the store or of the lock that left the challenge where it was, and
+// the SAR that the HSS did not answer, so that the expiry is handled
+// again (handleExpiry).
+//
+// The SAR goes out before the challenge is removed, so that the expiry
+// is still in the Store to be claimed again when the HSS does not
+// answer. Nothing else would tell the HSS of a challenge that no
+// REGISTER ever answered, and the HSS takes the same SAR twice with the
+// same outcome (tellAuthenticationTimeout), so sending it again is no
+// worse than sending it once. The expiry of a registration removes its
+// item first instead, because it sends NOTIFYs as well, which the
+// subscribers would then see twice (registrationExpired).
+//
+// One claim sends one SAR, so the attempts come a claim apart
+// (ims.ExpiryLease) and stop when the Store forgets the challenge,
+// reg-await-auth after its Expires (putChallenge). They stop sooner when
+// a REGISTER of the user takes the challenge out of the Store, for a
+// challenge or a registration of its own.
 func (s *SCSCF) regAwaitAuthExpired(ctx context.Context, privateID, nonce string) error {
 	unlock, err := s.users.Lock(ctx, privateID)
 	if err != nil {
@@ -980,22 +997,56 @@ func (s *SCSCF) regAwaitAuthExpired(ctx context.Context, privateID, nonce string
 	if !ok || ch.Nonce != nonce {
 		return nil
 	}
-	return s.endRegAwaitAuth(ctx, ch)
+	// TS 24.229 5.4.1.2.3 NOTE 2: authentication has failed; a user who
+	// was registered stays registered.
+	s.log.Info("reg-await-auth expired", "private_identity", privateID)
+	if !s.tellAuthenticationTimeout(ctx, ch) {
+		return errors.New("the HSS did not answer the SAR of AUTHENTICATION_TIMEOUT")
+	}
+	return s.store.DeleteChallenge(ctx, privateID)
 }
 
 // endRegAwaitAuth ends the challenge ch, whose reg-await-auth has run
-// out, and tells the HSS (TS 24.229 5.4.1.2.3). The lock of the user is
-// held: the expiry takes it in regAwaitAuthExpired, and a REGISTER that
-// finds the challenge late already holds it (register).
+// out, for the REGISTER that found it late and is handled as one with no
+// challenge pending (register). The lock of the user is held.
+//
+// The SAR is sent once and its outcome is not read: the REGISTER goes on
+// to a challenge of its own, whose MAR says again that the user is
+// authenticating here (TS 29.228 6.3.1), and the HSS learns where the
+// user stands from the SAR that ends that challenge. Keeping this
+// challenge for another attempt would hold up neither of them, since the
+// new one takes its place in the Store (PutChallenge).
 func (s *SCSCF) endRegAwaitAuth(ctx context.Context, ch Challenge) error {
-	// TS 24.229 5.4.1.2.3 NOTE 2: authentication has failed; a user who
-	// was registered stays registered.
 	s.log.Info("reg-await-auth expired", "private_identity", ch.PrivateIdentity)
 	if err := s.store.DeleteChallenge(ctx, ch.PrivateIdentity); err != nil {
 		return err
 	}
-	s.serverAssignment(ctx, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, ch.ServerName, cx.AuthenticationTimeout)
+	s.tellAuthenticationTimeout(ctx, ch)
 	return nil
+}
+
+// tellAuthenticationTimeout sends the SAR of AUTHENTICATION_TIMEOUT for
+// the challenge ch and reports whether the HSS answered it. The HSS
+// clears the authentication pending flag that the MAR of the challenge
+// set (TS 29.228 6.3.1), and the name of this S-CSCF if the user is not
+// registered, while the registration state of a user who was registered
+// stays as it is (TS 29.228 6.1.2.1, TS 33.203 6.1.2.3 and N.2.2.3).
+//
+// With no answer the S-CSCF cannot tell whether the SAR reached the HSS
+// or only its answer was lost, and DIAMETER_UNABLE_TO_COMPLY says that
+// the HSS changed nothing (TS 29.228 6.1.2.1); either way the same SAR
+// may still get through, and the HSS reaches the same state whether it
+// takes it once or twice. Any other answer is the HSS's word on this
+// user, such as DIAMETER_ERROR_USER_UNKNOWN, which the same SAR would
+// only hear again.
+func (s *SCSCF) tellAuthenticationTimeout(ctx context.Context, ch Challenge) bool {
+	saa, err := s.serverAssignment(ctx, ch.PrivateIdentity, ch.PublicIdentity, ch.HSSHost, ch.ServerName, cx.AuthenticationTimeout)
+	if err == nil && saa.Result != diameter.Base(diameter.DiameterUnableToComply) {
+		return true
+	}
+	s.log.Warn("the HSS did not answer the SAR of AUTHENTICATION_TIMEOUT",
+		"private_identity", ch.PrivateIdentity, "result", describe(saa.Result, err))
+	return false
 }
 
 // registrationExpired ends a registration that was not refreshed, and

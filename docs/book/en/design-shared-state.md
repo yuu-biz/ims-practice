@@ -56,7 +56,7 @@ The state that this chapter talks about, by where it lives and how long:
 | State | Where | How long | What ends it |
 | --- | --- | --- | --- |
 | Registration of the S-CSCF | `registration:` in the store | Until the `Expires` of the registration; no time to live | `registrationExpired` at the instance that claims the expiry |
-| Authentication in progress at the S-CSCF | `challenge:` in the store | A time to live until `KeepUntil` | The REGISTER with the answer, or `regAwaitAuthExpired` at the instance that claims the expiry |
+| Authentication in progress at the S-CSCF | `challenge:` in the store | A time to live until `KeepUntil` | The REGISTER with the answer, or `regAwaitAuthExpired` at the instance that claims the expiry. The time to live, when the HSS does not answer the SAR of the timeout |
 | Original dialog identifier of the S-CSCF | `original-dialog:` in the store | A time to live of 4 minutes | The store |
 | The times of the expiries, and their claims | The time index in the store | A claim lasts 15 seconds | `Done` at the instance that handled it. The claim of a stopped instance runs out |
 | Lock per user | `scscf:lock:` in the store | A lease of 15 seconds | The holder releases it, or the lease runs out |
@@ -65,7 +65,7 @@ The state that this chapter talks about, by where it lives and how long:
 | Record of a call at the MMTel AS | `mmtel:call:` in the store | From the 2xx to the end of the call; no time to live | The instance that ends the call. The records of a stopped instance stay |
 | Record of a call at the IBCF | In the store, under the name of the instance | From the start of the call to its end | The instance that ends the call, or the one created again under the same name |
 
-A registration of the S-CSCF has no time to live because its end calls for a SAR and a NOTIFY. If it went away by a time to live, nobody would tell the HSS and the subscribers. The instance that claims the expiry reads the registration, removes it, and tells them. For the authentication in progress, the timeout is handled through the time index, and the record itself has a time to live until `KeepUntil`, so that a late handler still finds it and the record goes in the end even when nobody handles it. An original dialog identifier only has to go away, so it has a time to live and nothing else.
+A registration of the S-CSCF has no time to live because its end calls for a SAR and a NOTIFY. If it went away by a time to live, nobody would tell the HSS and the subscribers. The instance that claims the expiry reads the registration, removes it, and tells them. For the authentication in progress, the timeout is handled through the time index, and the record itself has a time to live until `KeepUntil`, so that a late handler still finds it, and the record goes in the end even when nobody handles it or the HSS does not answer the SAR of the timeout. An original dialog identifier only has to go away, so it has a time to live and nothing else.
 
 ## What another instance can carry on once the registration is shared
 
