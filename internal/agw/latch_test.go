@@ -190,6 +190,43 @@ func TestRelatchFollowsANewSource(t *testing.T) {
 	b.toUE(b.other, "to where the UE moved")
 }
 
+// H.248.37 (06/2008) 1.1.1 and 6.6.3: a termination that has latched
+// follows a party that has moved only when its controller asks it to
+// latch again, which the controller does for each move it expects. The
+// address of a new Remote descriptor alone does not move the
+// termination (6.6.2, 6.6.4), and until a packet arrives from the new
+// source it sends where it latched before.
+func TestRelatchMovesALatchedTerminationToTheNewSource(t *testing.T) {
+	b := newLatchBed(t, TerminationRequest{})
+	b.fromUE(b.ue, "latches")
+	b.toUE(b.ue, "to where the UE sends from")
+
+	// The UE has offered a new port, which its NAT maps to the source
+	// address of other.
+	b.modify(TerminationRequest{Remote: addr(b.other), Latch: NAPTRelatch})
+	b.toUE(b.ue, "still to the latched address")
+	b.fromUE(b.other, "from the new port")
+	b.toUE(b.other, "to the new port")
+}
+
+// A renegotiation whose offer gets no 2xx leaves the session as it was
+// before it (RFC 3261 14.1), so the controller asks the termination to
+// latch again for the way back as it did for the way out (H.248.37
+// (06/2008) 1.1.1).
+func TestRelatchTakesALatchedTerminationBackWhenARenegotiationFails(t *testing.T) {
+	b := newLatchBed(t, TerminationRequest{})
+	b.fromUE(b.ue, "latches")
+	b.modify(TerminationRequest{Remote: addr(b.other), Latch: NAPTRelatch})
+	b.fromUE(b.other, "the UE moves to its new port")
+	b.toUE(b.other, "to the new port")
+
+	// The offer got no 2xx, so the termination goes back to the address
+	// of the offer and answer before it.
+	b.modify(TerminationRequest{Remote: addr(b.sdp), Latch: NAPTRelatch})
+	b.fromUE(b.ue, "the UE takes its media where it did before")
+	b.toUE(b.ue, "to the port the UE had before")
+}
+
 // H.248.37 (06/2008) 6.6.4: StopLatching stops a latching that waits for
 // its packet, and keeps an address that the termination has latched.
 func TestStopLatching(t *testing.T) {
