@@ -568,6 +568,11 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 // the offer, and reports false when the relay did not take the change
 // back. A Dialog that keeps no last offer and answer, as one of a P-CSCF
 // that kept none, leaves the relay as it is.
+//
+// The way back is a move like the way out, so it asks the termination
+// that faces the UE to latch again as well (relatching). A UE that had
+// already moved its media takes it where the last offer and answer said
+// again (RFC 3261 14.1), and the termination follows it there.
 func (p *PCSCF) goBack(rc *RelayContext, side agw.TerminationID, offered netip.AddrPort, log *slog.Logger) bool {
 	if rc == nil {
 		return true
@@ -579,7 +584,7 @@ func (p *PCSCF) goBack(rc *RelayContext, side agw.TerminationID, offered netip.A
 	relay, err := p.relayOf(*rc)
 	if err == nil {
 		ctx, cancel := relayContext()
-		err = relay.Modify(ctx, rc.ID, side, agw.TerminationRequest{Remote: agreed})
+		err = relay.Modify(ctx, rc.ID, side, agw.TerminationRequest{Remote: agreed, Latch: relatching(side, offered, agreed)})
 		cancel()
 	}
 	if err != nil {
@@ -772,6 +777,9 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 // context, a body, or an audio stream with a port, m is left as it is.
 // sender is where the termination was told to send, and is not valid
 // when m is left as it is.
+//
+// An SDP that moves the UE's media also asks the termination that faces
+// the UE to latch onto the new source of it (relatching).
 func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) (sender netip.AddrPort, err error) {
 	if rc == nil || len(m.Body) == 0 {
 		return netip.AddrPort{}, nil
@@ -800,7 +808,9 @@ func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) (sender ne
 	}
 	ctx, cancel := relayContext()
 	defer cancel()
-	if err := relay.Modify(ctx, rc.ID, facingSender(toUE), agw.TerminationRequest{Remote: sender}); err != nil {
+	side := facingSender(toUE)
+	change := agw.TerminationRequest{Remote: sender, Latch: relatching(side, rc.agreed(side), sender)}
+	if err := relay.Modify(ctx, rc.ID, side, change); err != nil {
 		return netip.AddrPort{}, err
 	}
 	if err := description.SetAudio(shown); err != nil {

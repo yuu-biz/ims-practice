@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http/httptest"
 	"net/netip"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -482,8 +483,9 @@ type fakeRelay struct {
 	// failSubtracts is how many Subtracts fail before one succeeds.
 	failSubtracts int
 	contexts      map[string]bool
-	// remotes is where each termination was last told to send.
-	remotes map[termination]netip.AddrPort
+	// modifies are the Modify requests that each termination took, in
+	// order.
+	modifies map[termination][]agw.TerminationRequest
 	// strays are the IDs that a Modify or a Subtract named, of contexts
 	// that this relay does not hold.
 	strays []string
@@ -495,13 +497,24 @@ type termination struct {
 }
 
 func newFakeRelay() *fakeRelay {
-	return &fakeRelay{contexts: map[string]bool{}, remotes: map[termination]netip.AddrPort{}}
+	return &fakeRelay{contexts: map[string]bool{}, modifies: map[termination][]agw.TerminationRequest{}}
 }
 
-func (f *fakeRelay) remote(id string, side agw.TerminationID) netip.AddrPort {
+// modified are the Modify requests that the termination side of the
+// context id took, in order.
+func (f *fakeRelay) modified(id string, side agw.TerminationID) []agw.TerminationRequest {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.remotes[termination{id, side}]
+	return slices.Clone(f.modifies[termination{id, side}])
+}
+
+// remote is where the termination was last told to send.
+func (f *fakeRelay) remote(id string, side agw.TerminationID) netip.AddrPort {
+	taken := f.modified(id, side)
+	if len(taken) == 0 {
+		return netip.AddrPort{}
+	}
+	return taken[len(taken)-1].Remote
 }
 
 func (f *fakeRelay) Add(ctx context.Context, _ ...agw.TerminationRequest) (agw.Context, error) {
@@ -542,7 +555,8 @@ func (f *fakeRelay) Modify(ctx context.Context, id string, side agw.TerminationI
 	if !f.contexts[id] {
 		f.strays = append(f.strays, id)
 	}
-	f.remotes[termination{id, side}] = change.Remote
+	t := termination{id, side}
+	f.modifies[t] = append(f.modifies[t], change)
 	if side == f.refusing {
 		return f.refusal
 	}
