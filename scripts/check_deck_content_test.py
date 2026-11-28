@@ -90,6 +90,14 @@ class TheRecordIsChecked(unittest.TestCase):
         found = problems("---\ntitle: t\nfooter: f\nlang: ja\n---\n\n# Title\n", rows, dict(files, **{"docs/guide/ja/registration.md": "# Guide\n\n## Run\n\nnothing\n"}))
         self.assertTrue(any("line of code is gone: docker compose up -d" in p for p in found), found)
 
+    # Content that is only somewhere else in the file of a place, not in
+    # the part that the row names, was not moved there.
+    def test_content_elsewhere_in_the_file(self):
+        files = dict(FILES, **{"docs/guide/ja/registration.md": "# Guide\n\n## Run\n\nnothing\n\n## Other\n\n```sh\ndocker compose up -d\n```\n"})
+        rows = MOVED.replace("| `docker compose up -d` |", "| |")
+        found = problems("---\ntitle: t\nfooter: f\nlang: ja\n---\n\n# Title\n", rows, files)
+        self.assertTrue(any("line of code is gone: docker compose up -d" in p for p in found), found)
+
     # A row that drops content says why, and its words are what may go.
     def test_a_row_that_drops_content(self):
         rows = MOVED.split("\n")[0] + "\n| Run it | | 削除 | | `docker compose up -d` |"
@@ -106,6 +114,10 @@ class TheRecordIsChecked(unittest.TestCase):
 
 
 class TheYAMLOfAScene(unittest.TestCase):
+    # A block fenced with tildes is code too.
+    def test_a_tilde_fence(self):
+        self.assertEqual(c.atoms("~~~sh\nmake it\n~~~\n"), {("line of code", "make it")})
+
     # A scene reworded with its code kept is not a loss; its code gone is.
     def test_reworded_yaml_keeps_its_code(self):
         old = "```ims-scene\nid: s\nlead: The REGISTER goes to `sip:ims` first.\n```\n"

@@ -19,7 +19,8 @@ to keep:
 - the text of each cell of a table, but its header.
 
 Each of them has to be in the deck as it is now, or in one of the
-places where the record says the slide went. A slide whose heading is
+places where the record says the slide went: in the part of the file
+under the heading or in the slide of the scene that the place names. A slide whose heading is
 gone needs a row in the record. Each row names its places, file and
 heading or scene, and the words that have to be there; the script
 checks that the file and the heading exist and that the words are in
@@ -110,9 +111,9 @@ def atoms(text):
 
     lines = text.split("\n")
     for i, line in enumerate(lines):
-        if line.startswith("```"):
+        if line.startswith("```") or line.startswith("~~~"):
             fence = not fence
-            info = line.strip("` ") if fence else ""
+            info = line.strip("`~ ") if fence else ""
             continue
         if fence:
             if info in YAML_BLOCKS:
@@ -265,9 +266,12 @@ def check(old_decks, new_decks, rows, read):
             for r in here:
                 if r["treatment"] in DROPPING:
                     dropped.update(r["words"])
+                # The part of the file that the row names, not the whole
+                # file: a word that is somewhere else in it was not moved
+                # there.
                 for place in r["places"]:
-                    path, _, _ = place.partition("#")
-                    places.append(read(path) or "")
+                    path, _, anchor = place.partition("#")
+                    places.append(section(read(path) or "", anchor) or "")
             for kind, atom in sorted(atoms(text)):
                 if atom in new or atom in dropped or any(atom in p for p in places):
                     continue
