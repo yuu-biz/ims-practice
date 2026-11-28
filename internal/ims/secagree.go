@@ -52,12 +52,43 @@ func (t Transform) same(o Transform) bool {
 	return strings.EqualFold(t.Algorithm, o.Algorithm) && strings.EqualFold(encryption(t), encryption(o))
 }
 
+// Confidentiality says whether a node offers an encryption algorithm
+// of its own beside null in the security mode set-up. The P-CSCF's
+// policy is what decides whether the signalling is encrypted (TS
+// 33.203 5.1.3 item 2): it offers the encryption algorithms it supports
+// unless it is configured never to apply confidentiality, and selects
+// the first combination of its own list that the UE offers too (7.2).
+// The UE offers the encryption algorithms it supports and takes what
+// the P-CSCF selected (5.1.3 item 1).
+type Confidentiality bool
+
+const (
+	// WithoutConfidentiality offers null encryption alone, which is
+	// what a P-CSCF that never applies confidentiality offers (TS
+	// 33.203 7.2).
+	WithoutConfidentiality Confidentiality = false
+	// WithConfidentiality offers the encryption algorithms as well,
+	// which a P-CSCF whose policy applies confidentiality wherever the
+	// UE supports it offers (TS 33.203 7.2 NOTE 5). It keeps null
+	// encryption on the list below them, so that a UE which offers no
+	// encryption algorithm is answered with null rather than refused,
+	// which 7.2 leaves to the policy as well.
+	WithConfidentiality Confidentiality = true
+)
+
 // SupportedTransforms are those that the P-CSCF and the UE simulator
-// offer, most preferred first. There is one: HMAC-SHA2-256-128, which
-// Annex H recommends over HMAC-SHA-1-96, with encryption null, which the
-// UE has to accept (TS 33.203 7.2).
-var SupportedTransforms = []Transform{
-	{Algorithm: "hmac-sha2-256-128", EncryptionAlgorithm: "null"},
+// offer for a confidentiality policy, most preferred first. The
+// integrity algorithm is HMAC-SHA2-256-128, which Annex H recommends
+// over HMAC-SHA-1-96, and the encryption algorithm is AES-CBC of RFC
+// 3602, which Annex H allows with that integrity algorithm, or null,
+// which the UE has to accept (TS 33.203 7.2).
+func SupportedTransforms(c Confidentiality) []Transform {
+	const integrity = "hmac-sha2-256-128"
+	var transforms []Transform
+	if c == WithConfidentiality {
+		transforms = append(transforms, Transform{Algorithm: integrity, EncryptionAlgorithm: "aes-cbc"})
+	}
+	return append(transforms, Transform{Algorithm: integrity, EncryptionAlgorithm: "null"})
 }
 
 // ParseIPsec3GPP reads an ipsec-3gpp sec-mechanism. It needs alg, which

@@ -195,7 +195,7 @@ func IKESP(t ims.Transform, ik aka.IK, ck aka.CK) ([]byte, error) {
 }
 
 // CKESP is the encryption key of the ESP security associations, the same
-// for all four of them (TS 33.203 6.3). Annex I takes it from CK_IM
+// for all four of them (TS 33.203 6.2). Annex I takes it from CK_IM
 // without expanding it: AES-CBC with a 128-bit key, which is the length
 // of CK_IM, has CK_ESP = CK_IM. A transform with null encryption has no
 // encryption key, and CKESP is then empty.

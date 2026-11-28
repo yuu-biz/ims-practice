@@ -10,10 +10,13 @@ import (
 	"github.com/yuu-biz/ims-practice/internal/ims"
 )
 
-// encrypted is the transform that carries confidentiality: the
-// integrity algorithm of the agreements here with AES-CBC in place of
-// null encryption (TS 33.203 Annex H).
-var encrypted = ims.Transform{Algorithm: "hmac-sha2-256-128", EncryptionAlgorithm: "aes-cbc"}
+// plain is the transform of a P-CSCF that applies no confidentiality,
+// and encrypted the one it offers and selects when it does (TS 33.203
+// 7.2).
+var (
+	plainTransform = ims.SupportedTransforms(ims.WithoutConfidentiality)[0]
+	encrypted      = ims.SupportedTransforms(ims.WithConfidentiality)[0]
+)
 
 // agreement is the agreement of the scenarios: the UE and the P-CSCF of
 // the Compose deployment, with CK and IK of test set 1 of TS 35.208.
@@ -22,9 +25,9 @@ func agreement(t *testing.T) Agreement {
 	a := Agreement{
 		UE:    netip.MustParseAddr("172.28.0.120"),
 		PCSCF: netip.MustParseAddr("172.28.0.20"),
-		UEMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms[0],
+		UEMechanism: ims.IPsec3GPP{Transform: plainTransform,
 			SPIC: 4001, SPIS: 4002, PortC: 5063, PortS: 5062},
-		PCSCFMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms[0],
+		PCSCFMechanism: ims.IPsec3GPP{Transform: plainTransform,
 			SPIC: 5001, SPIS: 5002, PortC: 5065, PortS: 5064},
 	}
 	copy(a.CK[:], decode(t, "b40ba9a3c58b2a05bbf0d987b21bf8cb"))

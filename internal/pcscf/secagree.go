@@ -146,6 +146,13 @@ type ESP struct {
 	// requests to a UE with security associations (TS 33.203 7.1 item
 	// 1).
 	ProtectedClientPort uint16
+	// Confidentiality is the policy of TS 33.203 5.1.3 item 2 and 7.2:
+	// with it the P-CSCF offers an encryption algorithm and selects it
+	// for every UE that offers it too, so that ESP encrypts the
+	// signalling as well as protecting its integrity. Without it the
+	// P-CSCF applies no confidentiality, which leaves the SIP inside
+	// ESP readable in a capture.
+	Confidentiality ims.Confidentiality
 	// Kernel is where the security associations go.
 	Kernel *ipsec.Kernel
 	// TeardownDelay is how long the associations stay in the kernel
@@ -637,7 +644,7 @@ func (p *PCSCF) receiveSecAgree(st *sip.ServerTransaction, out *sip.Message, pri
 		}
 		if code == 494 {
 			// RFC 3329 2.3.1: the server's list goes with a 494.
-			for _, t := range ims.SupportedTransforms {
+			for _, t := range ims.SupportedTransforms(p.confidentiality()) {
 				m := ims.IPsec3GPP{Transform: t}.SecurityMechanism()
 				m.Params = slices.DeleteFunc(m.Params, func(p sip.Param) bool { return strings.HasPrefix(p.Name, "spi-") || strings.HasPrefix(p.Name, "port-") })
 				resp.Add("Security-Server", m.String())
@@ -726,14 +733,25 @@ func (p *PCSCF) receiveSecAgree(st *sip.ServerTransaction, out *sip.Message, pri
 // in the order of ims.SupportedTransforms, with the SPIs and ports of
 // sa. The q values go down the list (RFC 3329 2.2).
 func (p *PCSCF) offers(sa ims.IPsec3GPP) []ims.IPsec3GPP {
+	transforms := ims.SupportedTransforms(p.confidentiality())
 	var list []ims.IPsec3GPP
-	for i, t := range ims.SupportedTransforms {
+	for i, t := range transforms {
 		m := sa
 		m.Transform = t
-		m.Preference = fmt.Sprintf("0.%d", len(ims.SupportedTransforms)-i)
+		m.Preference = fmt.Sprintf("0.%d", len(transforms)-i)
 		list = append(list, m)
 	}
 	return list
+}
+
+// confidentiality is the P-CSCF's policy on the confidentiality of the
+// signalling (TS 33.203 5.1.3 item 2). A P-CSCF that sets up no ESP
+// encrypts nothing whatever it offered, so it applies none.
+func (p *PCSCF) confidentiality() ims.Confidentiality {
+	if p.cfg.ESP == nil {
+		return ims.WithoutConfidentiality
+	}
+	return p.cfg.ESP.Confidentiality
 }
 
 // answerSecAgree is TS 24.229 5.2.2.2 for the final response to a

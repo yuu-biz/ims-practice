@@ -77,6 +77,14 @@ type PCSCF struct {
 	// 7.1). Zero leaves ESP off, and with it the protected ports carry
 	// the signalling unprotected.
 	ProtectedClientPort uint16
+	// Confidentiality is the policy of TS 33.203 5.1.3 item 2: with it
+	// the P-CSCF offers an encryption algorithm and selects it for
+	// every UE that offers one too, so that ESP encrypts the
+	// signalling. Without it the P-CSCF applies no confidentiality and
+	// the SIP inside ESP stays readable in a capture. It needs
+	// ProtectedClientPort, since only a P-CSCF that sets ESP up
+	// encrypts anything.
+	Confidentiality bool
 }
 
 type HostAccess struct {
@@ -393,6 +401,7 @@ type rawPCSCF struct {
 		ProtectedServerPort uint16 `yaml:"protected_server_port"`
 		ESP                 *struct {
 			ProtectedClientPort uint16 `yaml:"protected_client_port"`
+			Confidentiality     bool   `yaml:"confidentiality"`
 		} `yaml:"esp"`
 	} `yaml:"sec_agree"`
 }
@@ -576,6 +585,7 @@ func (raw *rawPCSCF) validate() (PCSCF, error) {
 				return PCSCF{}, fmt.Errorf("sec_agree.esp: sip.listen must name the address of this P-CSCF, not %s", c.SIP.Listen.Addr())
 			}
 			c.ProtectedClientPort = port
+			c.Confidentiality = esp.Confidentiality
 		}
 	}
 	return c, nil

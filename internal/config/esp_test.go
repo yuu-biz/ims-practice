@@ -17,6 +17,7 @@ pcscf:
   sip:
     listen: 172.28.0.40:5060
     host: pcscf.ims.mnc001.mcc001.3gppnetwork.org
+  visited_network_id: ims.mnc001.mcc001.3gppnetwork.org
   sec_agree:
     protected_server_port: 5064
     esp:
@@ -40,6 +41,35 @@ func TestESPDeployment(t *testing.T) {
 	}
 	if addr := c.SIP.Listen.Addr(); !addr.IsValid() || addr.IsUnspecified() {
 		t.Errorf("sip.listen is on %s, want the P-CSCF's own address", addr)
+	}
+}
+
+// TestESPConfidentiality: the P-CSCF decides whether the signalling is
+// encrypted (TS 33.203 5.1.3 item 2), and the esp section is where its
+// policy is set. Without it the P-CSCF applies no confidentiality,
+// which is what deploy/esp does, so that the SIP inside ESP stays
+// readable in a capture.
+func TestESPConfidentiality(t *testing.T) {
+	cfg, err := Parse(strings.NewReader(pcscfWithESP))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PCSCF.Confidentiality {
+		t.Error("a P-CSCF whose esp section says nothing of confidentiality applies it")
+	}
+	cfg, err = Parse(strings.NewReader(pcscfWithESP + "      confidentiality: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.PCSCF.Confidentiality {
+		t.Error("a P-CSCF with confidentiality: true applies none")
+	}
+	// The policy needs ESP: only a P-CSCF that sets security
+	// associations up encrypts anything, and the protected client port
+	// is what gives it one.
+	without := strings.ReplaceAll(pcscfWithESP, "      protected_client_port: 5065\n", "")
+	if _, err := Parse(strings.NewReader(without + "      confidentiality: true\n")); err == nil {
+		t.Error("confidentiality without a protected client port was accepted")
 	}
 }
 

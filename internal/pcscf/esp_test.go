@@ -181,9 +181,9 @@ func (h *espHarness) associations(spiUC, spiPC uint32) SecurityAssociations {
 	ue := netip.MustParseAddrPort("127.0.0.1:5062")
 	return SecurityAssociations{
 		UE: ue, Temporary: true, PrivateIdentity: impi, Expires: time.Now().Add(ims.RegAwaitAuth),
-		UEMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms[0],
+		UEMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms(ims.WithoutConfidentiality)[0],
 			SPIC: spiUC, SPIS: spiUC + 1, PortC: 50001, PortS: ue.Port()},
-		PCSCFMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms[0],
+		PCSCFMechanism: ims.IPsec3GPP{Transform: ims.SupportedTransforms(ims.WithoutConfidentiality)[0],
 			SPIC: spiPC, SPIS: spiPC + 1, PortC: h.p.protectedClientPort(), PortS: 5064},
 	}
 }
@@ -538,5 +538,68 @@ func TestAdmitProtected(t *testing.T) {
 	h.p.store.DeleteAssociation(context.Background(), sip.Destination{Transport: sip.UDP, Addr: sas.UE})
 	if h.p.AdmitProtected(request(sas.UEMechanism.PortC)) {
 		t.Error("a request without an IP association was admitted from the protected client port")
+	}
+}
+
+// TestESPConfidentialityPolicy: the P-CSCF decides whether the
+// signalling is encrypted (TS 33.203 5.1.3 item 2). With the policy
+// that applies confidentiality it offers AES-CBC before null in
+// Security-Server, selects AES-CBC for a UE that offers it too, and
+// keeps that transform in the SA table, from which the security
+// associations of the kernel are set up.
+func TestESPConfidentialityPolicy(t *testing.T) {
+	h := newAKAHarnessOf(t, akaOptions{protectedPort: true, esp: true, uePortC: true, confidentiality: true})
+	r, _ := h.register(false, "", "600000")
+	if r.StatusCode != 401 {
+		t.Fatalf("the first REGISTER got %d, want the challenge", r.StatusCode)
+	}
+	server, err := ims.IPsec3GPPMechanisms(r, "Security-Server")
+	if err != nil || len(server) != 2 {
+		t.Fatalf("Security-Server = %v (%v), want the two transforms of the policy", r.GetAll("Security-Server"), err)
+	}
+	if server[0].EncryptionAlgorithm != "aes-cbc" || server[0].Preference != "0.2" ||
+		server[1].EncryptionAlgorithm != "null" || server[1].Preference != "0.1" {
+		t.Errorf("Security-Server offers %+v, want AES-CBC before null", server)
+	}
+	sas, ok, err := h.store.SecurityAssociations(context.Background(), h.ueKey())
+	if err != nil || !ok {
+		t.Fatalf("the SA table has no entry for the UE: %v, %v", ok, err)
+	}
+	for _, m := range []ims.IPsec3GPP{sas.UEMechanism, sas.PCSCFMechanism} {
+		if m.EncryptionAlgorithm != "aes-cbc" {
+			t.Errorf("the set carries ealg %q, want the selected aes-cbc", m.EncryptionAlgorithm)
+		}
+	}
+	// The security associations of that transform went into the kernel,
+	// so the challenge went out: a transform the kernel cannot be given
+	// would have made the P-CSCF answer 500 instead.
+	var verify []sip.HeaderField
+	for _, v := range r.GetAll("Security-Server") {
+		verify = append(verify, sip.HeaderField{Name: "Security-Verify", Value: v})
+	}
+	if r, _ := h.register(true, "6629fae49393a05397450978507c4ef1", "600000", verify...); r.StatusCode != 200 {
+		t.Fatalf("the REGISTER over the encrypted associations got %d, want 200", r.StatusCode)
+	}
+}
+
+// TestESPWithoutConfidentialityPolicy: the P-CSCF that applies no
+// confidentiality offers null encryption alone and selects it, however
+// much the UE offers, so that the SIP inside its ESP stays readable (TS
+// 33.203 7.2).
+func TestESPWithoutConfidentialityPolicy(t *testing.T) {
+	h := newAKAHarnessOf(t, akaOptions{protectedPort: true, esp: true, uePortC: true})
+	h.securityClient = fmt.Sprintf("ipsec-3gpp;alg=hmac-sha2-256-128;ealg=aes-cbc;spi-c=1111;spi-s=2222;port-c=%d;port-s=%d, %s",
+		h.uePortC, h.ueKey().Port(), h.securityClient)
+	r, _ := h.register(false, "", "600000")
+	if r.StatusCode != 401 {
+		t.Fatalf("the first REGISTER got %d, want the challenge", r.StatusCode)
+	}
+	server, err := ims.IPsec3GPPMechanisms(r, "Security-Server")
+	if err != nil || len(server) != 1 || server[0].EncryptionAlgorithm != "null" {
+		t.Fatalf("Security-Server = %v (%v), want null encryption alone", r.GetAll("Security-Server"), err)
+	}
+	sas, ok, err := h.store.SecurityAssociations(context.Background(), h.ueKey())
+	if err != nil || !ok || sas.UEMechanism.EncryptionAlgorithm != "null" {
+		t.Errorf("the set carries %+v, %v, %v; want null encryption", sas.UEMechanism, ok, err)
 	}
 }

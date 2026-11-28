@@ -332,7 +332,8 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			// sip.listen names this P-CSCF's own address, which the
 			// security associations are bound to.
 			pc.ESP = &pcscf.ESP{Address: c.SIP.Listen.Addr(), ProtectedClientPort: port,
-				Kernel: ipsec.NewKernel(log.With("role", config.RolePCSCF))}
+				Confidentiality: ims.Confidentiality(c.Confidentiality),
+				Kernel:          ipsec.NewKernel(log.With("role", config.RolePCSCF))}
 		}
 		if h := c.HostAccess; h != nil {
 			pc.HostAccess = &pcscf.HostAccess{Gateway: h.Gateway, Address: h.Address}
@@ -1319,7 +1320,8 @@ type secAgreeView struct {
 }
 
 type espView struct {
-	ProtectedClientPort int `json:"protected_client_port"`
+	ProtectedClientPort int  `json:"protected_client_port"`
+	Confidentiality     bool `json:"confidentiality,omitempty"`
 }
 
 type icscfView struct {
@@ -1453,7 +1455,8 @@ func newConfigurationView(cfg config.Config) configurationView {
 		if c.ProtectedServerPort != 0 {
 			v.PCSCF.SecAgree = &secAgreeView{ProtectedServerPort: int(c.ProtectedServerPort)}
 			if c.ProtectedClientPort != 0 {
-				v.PCSCF.SecAgree.ESP = &espView{ProtectedClientPort: int(c.ProtectedClientPort)}
+				v.PCSCF.SecAgree.ESP = &espView{ProtectedClientPort: int(c.ProtectedClientPort),
+					Confidentiality: c.Confidentiality}
 			}
 		}
 	}

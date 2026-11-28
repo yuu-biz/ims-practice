@@ -50,6 +50,43 @@ func TestChooseTransform(t *testing.T) {
 	}
 }
 
+// TestSupportedTransforms: the confidentiality policy of a node
+// decides the encryption algorithms it offers (TS 33.203 5.1.3 item 2,
+// 7.2). Without confidentiality it offers null encryption alone; with
+// it, AES-CBC before null, so that the P-CSCF selects AES-CBC for a UE
+// that offers it and null for one that does not.
+func TestSupportedTransforms(t *testing.T) {
+	without := SupportedTransforms(WithoutConfidentiality)
+	if len(without) != 1 || without[0] != (Transform{"hmac-sha2-256-128", "null"}) {
+		t.Errorf("a node that applies no confidentiality offers %+v", without)
+	}
+	with := SupportedTransforms(WithConfidentiality)
+	if len(with) != 2 || with[0] != (Transform{"hmac-sha2-256-128", "aes-cbc"}) || with[1] != without[0] {
+		t.Fatalf("a node that applies confidentiality offers %+v", with)
+	}
+	mechanisms := func(transforms []Transform) []IPsec3GPP {
+		var out []IPsec3GPP
+		for _, t := range transforms {
+			out = append(out, IPsec3GPP{Transform: t})
+		}
+		return out
+	}
+	pcscf, ue := mechanisms(with), mechanisms(with)
+	if chosen, _, ok := ChooseTransform(pcscf, ue); !ok || chosen.EncryptionAlgorithm != "aes-cbc" {
+		t.Errorf("chose %+v, %v; want AES-CBC where both ends offer it", chosen, ok)
+	}
+	// TS 33.203 7.2: a UE that offers no encryption algorithm is
+	// answered with null encryption, not refused.
+	if chosen, _, ok := ChooseTransform(pcscf, mechanisms(without)); !ok || chosen.EncryptionAlgorithm != "null" {
+		t.Errorf("chose %+v, %v; want null encryption for a UE that offers no other", chosen, ok)
+	}
+	// And a P-CSCF that applies no confidentiality selects null even
+	// where the UE offers AES-CBC: its own list decides.
+	if chosen, _, ok := ChooseTransform(mechanisms(without), ue); !ok || chosen.EncryptionAlgorithm != "null" {
+		t.Errorf("chose %+v, %v; want null encryption where the P-CSCF applies none", chosen, ok)
+	}
+}
+
 func TestNewSPIAndPort(t *testing.T) {
 	for range 100 {
 		spi := NewSPI(4096)

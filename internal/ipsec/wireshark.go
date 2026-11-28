@@ -16,7 +16,7 @@ import (
 // algorithm with its key; it reads a packet with the first row that
 // matches its addresses and SPI.
 //
-// The keys of the four associations are the same (TS 33.203 6.3), and
+// The keys of the four associations are the same (TS 33.203 6.2, 6.3), and
 // neither of them is in the capture: the 401 that carries IK_IM and
 // CK_IM goes no further than the P-CSCF, which takes them out before
 // the response reaches the UE, and Annex I expands IK_ESP from them
