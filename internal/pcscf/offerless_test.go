@@ -202,10 +202,51 @@ func TestRefusedOfferInThe2xxReleasesTheDialog(t *testing.T) {
 	}
 }
 
+// TestRefusedOfferInThe2xxAfterAPreviewReleasesTheDialog: the far end
+// shows its offer in a 183 that is not reliable, which the relay takes,
+// and then the relay does not take the offer of the 2xx. Only the 2xx
+// carries the offer (RFC 3261 13.2.1), so the P-CSCF has no offer with
+// the relay's address to pass on, and releases the dialog as for any
+// offer of a 2xx that the relay did not take (TS 24.229 5.2.8.1).
+func TestRefusedOfferInThe2xxAfterAPreviewReleasesTheDialog(t *testing.T) {
+	pcrf := &fakePolicy{}
+	c := newRawINVITEWith(t, pcrf)
+	c.upCall(t)
+	authorised := len(pcrf.mediaRequests())
+
+	ct, st := c.reinviteWithoutOffer(t, "2")
+	farMoved := netip.MustParseAddrPort("192.0.2.99:6008")
+	progress := sip.NewResponse(st.Request, 183, "")
+	progress.Add("Contact", "<"+c.farContact+">")
+	progress.Add("Content-Type", "application/sdp")
+	progress.Body = sdp.Offer("3", farMoved).Bytes()
+	st.Respond(progress)
+	r := next(t, ct.Responses())
+	for r.StatusCode == 100 {
+		r = next(t, ct.Responses())
+	}
+	if r.StatusCode != 183 {
+		t.Fatalf("the UE got %d, want the 183 of the far end", r.StatusCode)
+	}
+
+	c.relay.refuseModify(agw.Core)
+	c.offerIn2xx(t, ct, st, "3", farMoved)
+	noRequest(t, "the far end before the ACK", c.farGot)
+
+	c.ackWithAnswer("2", "4", netip.MustParseAddrPort("192.0.2.10:4006"))
+	wantACKAndBYE(t, c.farGot)
+	if m := nextRequest(t, "the UE", c.ueGot); m.Method != sip.BYE {
+		t.Errorf("the UE got %s, want the BYE of the release", m.Method)
+	}
+	if n := len(pcrf.mediaRequests()); n != authorised {
+		t.Errorf("the PCRF got %d service information after the refused offer, want none", n-authorised)
+	}
+}
+
 // TestRefusedAnswerInTheACKReleasesTheDialog: the relay takes the offer
 // of the 2xx but not the answer of the ACK. The P-CSCF has no answer
 // with the relay's address to pass on (TS 24.229 6.7.2.1), and an ACK
-// takes no response (RFC 3261 17), so the ACK goes no further and the
+// takes no response, so the ACK goes no further and the
 // P-CSCF releases the dialog (TS 24.229 5.2.8.1.2).
 func TestRefusedAnswerInTheACKReleasesTheDialog(t *testing.T) {
 	pcrf := &fakePolicy{}
