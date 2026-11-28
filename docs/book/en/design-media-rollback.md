@@ -188,7 +188,7 @@ func (p *PCSCF) goBack(rc *RelayContext, side agw.TerminationID, offered netip.A
 	relay, err := p.relayOf(*rc)
 	if err == nil {
 		ctx, cancel := relayContext()
-		err = relay.Modify(ctx, rc.ID, side, agw.TerminationRequest{Remote: agreed})
+		err = relay.Modify(ctx, rc.ID, side, agw.TerminationRequest{Remote: agreed, Latch: relatching(side, offered, agreed)})
 		cancel()
 	}
 	if err != nil {
@@ -201,7 +201,7 @@ func (p *PCSCF) goBack(rc *RelayContext, side agw.TerminationID, offered netip.A
 }
 ```
 
-The inputs are the relay context of the dialog's record, `rc`, the termination to put back, `side`, and the address the offer moved it to, `offered`. The first condition leaves out the cases with nothing to undo. When the offer did not change the address, as for a hold that keeps the port, `offered` equals the address that is done, and no `Modify` goes out. Only when it is needed does the P-CSCF send one `Modify` with the address that is done as `Remote`. Like the `Modify` of the offer, it waits for its answer within the bound on each request to the relay, `agw.RequestTimeout`, 2 seconds.
+The inputs are the relay context of the dialog's record, `rc`, the termination to put back, `side`, and the address the offer moved it to, `offered`. The first condition leaves out the cases with nothing to undo. When the offer did not change the address, as for a hold that keeps the port, `offered` equals the address that is done, and no `Modify` goes out. Only when it is needed does the P-CSCF send one `Modify` with the address that is done as `Remote`. Going back moves the address as much as the offer did, so for the access termination it asks for latching again too, as for the offer (`relatching`): a termination that has latched does not change where it sends for a new `Remote` alone. It follows the packets of the UE, which is back on the address from before the offer (`TestRejectedOfferAsksTheAccessTerminationToLatchBack` in `internal/pcscf/latch_test.go`). Like the `Modify` of the offer, it waits for its answer within the bound on each request to the relay, `agw.RequestTimeout`, 2 seconds.
 
 There is a second way for an offer to be turned down: the relay itself refuses the `Modify` of the offer while the offer passes the P-CSCF. What an error answer of the relay means is fixed by the control API.
 
@@ -309,7 +309,7 @@ There are several ways to handle the relay after an offer is turned down. None o
 
 **Ending the call** does not suit every failure. A UE that uses preconditions cancels a re-INVITE whose resources could not be reserved (TS 24.229 6.1.4.2 item b). If each such 487 dropped the call, a lack of resources would reach the user as a call cut off. This implementation ends the call only when the state of the relay does not match the agreement, or when it cannot tell.
 
-**Keeping the new setting** is safe only in a few cases. When the offer did not change the address, there is nothing to undo, and `goBack` sends no `Modify`. A relay that sends to the source of the packets it gets (latching) depends less on the address in the SDP. But the core termination of this implementation does not latch: it sends to the address of the latest SDP. On that termination, which faces the network, putting the relay back is what keeps the audio right.
+**Keeping the new setting** is safe only in a few cases. When the offer did not change the address, there is nothing to undo, and `goBack` sends no `Modify`. A relay that sends to the source of the packets it gets (latching) depends less on the address in the SDP. Even so, the access termination does not move to a new source by itself once it has latched; it moves only when the P-CSCF asks it to latch again. And the core termination of this implementation does not latch: it sends to the address of the latest SDP. On that termination, which faces the network, putting the relay back is what keeps the audio right.
 
 A further way is to **change the relay only when the answer comes**. The relay is left alone on the offer, and both terminations change as the answer passes. Nothing has to go back after a rejection. RFC 3264 8.3.1 has the party that offered keep taking media at the old port until it has the answer and media arrive at the new one, so sending to the old address in the meantime also follows the rules. In exchange, the failures of the relay all fall on the moment the answer passes. Nobody can refuse an answer, so a relay that fails then leaves nothing but ending the call. When the relay moves on the offer, most of its failures cost only a 500 to the offer. This implementation does not do this for the relay, but it does for the PCRF: the P-CSCF tells the PCRF of the changed media neither on the offer nor on the SDP of a provisional response that is not reliable, but only when the answer comes in a 2xx or a reliable provisional response. So an offer that is turned down leaves nothing to undo at the PCRF, even after a 183 that showed its answer early. For the PCRF the trade differs from that of the relay. Moving the relay early lets the early media of the renegotiated session through and leaves most failures of the relay at the offer, while telling the PCRF early would reserve resources for media that nobody has agreed.
 

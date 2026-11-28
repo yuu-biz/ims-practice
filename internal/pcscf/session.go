@@ -471,6 +471,17 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 	// other than 2xx.
 	authorized, taken, refused, settled, stuck := false, false, false, false, false
 	var previewed netip.AddrPort
+	// told is the relay context as the responses of this request have
+	// left it: where each termination was last told to send. A response
+	// that tells it the same again, such as the 2xx after a 183 with the
+	// same SDP or a retransmitted 2xx, moves nothing, and so asks for no
+	// latching again (relatching): that would let a late packet from where
+	// the UE sent before take the termination back there.
+	var told *RelayContext
+	if d.Relay != nil {
+		c := *d.Relay
+		told = &c
+	}
 	unanswered = func(final *sip.Message, err error) {
 		// A 2xx comes as final, or, for a re-INVITE, goes through Proxy,
 		// which then returns neither a final response nor an error.
@@ -501,7 +512,10 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 			return
 		}
 		received := resp.Body
-		sent, err := p.relaySDP(resp, d.Relay, !toUE)
+		sent, err := p.relaySDP(resp, told, !toUE)
+		if err == nil && told != nil {
+			told = told.agreeing(facingSender(!toUE), sent)
+		}
 		if err != nil {
 			log.Warn("media relay refused the answer", "error", err.Error())
 			if !taken {
@@ -568,6 +582,11 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 // the offer, and reports false when the relay did not take the change
 // back. A Dialog that keeps no last offer and answer, as one of a P-CSCF
 // that kept none, leaves the relay as it is.
+//
+// The way back is a move like the way out, so it asks the termination
+// that faces the UE to latch again as well (relatching). A UE that had
+// already moved its media takes it where the last offer and answer said
+// again (RFC 3261 14.1), and the termination follows it there.
 func (p *PCSCF) goBack(rc *RelayContext, side agw.TerminationID, offered netip.AddrPort, log *slog.Logger) bool {
 	if rc == nil {
 		return true
@@ -579,7 +598,7 @@ func (p *PCSCF) goBack(rc *RelayContext, side agw.TerminationID, offered netip.A
 	relay, err := p.relayOf(*rc)
 	if err == nil {
 		ctx, cancel := relayContext()
-		err = relay.Modify(ctx, rc.ID, side, agw.TerminationRequest{Remote: agreed})
+		err = relay.Modify(ctx, rc.ID, side, agw.TerminationRequest{Remote: agreed, Latch: relatching(side, offered, agreed)})
 		cancel()
 	}
 	if err != nil {
@@ -772,6 +791,9 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 // context, a body, or an audio stream with a port, m is left as it is.
 // sender is where the termination was told to send, and is not valid
 // when m is left as it is.
+//
+// An SDP that moves the UE's media also asks the termination that faces
+// the UE to latch onto the new source of it (relatching).
 func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) (sender netip.AddrPort, err error) {
 	if rc == nil || len(m.Body) == 0 {
 		return netip.AddrPort{}, nil
@@ -800,7 +822,9 @@ func (p *PCSCF) relaySDP(m *sip.Message, rc *RelayContext, toUE bool) (sender ne
 	}
 	ctx, cancel := relayContext()
 	defer cancel()
-	if err := relay.Modify(ctx, rc.ID, facingSender(toUE), agw.TerminationRequest{Remote: sender}); err != nil {
+	side := facingSender(toUE)
+	change := agw.TerminationRequest{Remote: sender, Latch: relatching(side, rc.agreed(side), sender)}
+	if err := relay.Modify(ctx, rc.ID, side, change); err != nil {
 		return netip.AddrPort{}, err
 	}
 	if err := description.SetAudio(shown); err != nil {

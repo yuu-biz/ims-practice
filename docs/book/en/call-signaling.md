@@ -179,7 +179,9 @@ The P-CSCF rewrites both the offer and the answer. Each time an SDP passes the P
 	}
 	ctx, cancel := relayContext()
 	defer cancel()
-	if err := relay.Modify(ctx, rc.ID, facingSender(toUE), agw.TerminationRequest{Remote: sender}); err != nil {
+	side := facingSender(toUE)
+	change := agw.TerminationRequest{Remote: sender, Latch: relatching(side, rc.agreed(side), sender)}
+	if err := relay.Modify(ctx, rc.ID, side, change); err != nil {
 		return netip.AddrPort{}, err
 	}
 	if err := description.SetAudio(shown); err != nil {
@@ -191,6 +193,8 @@ The P-CSCF rewrites both the offer and the answer. Each time an SDP passes the P
 ```
 
 This is the second half of `relaySDP`. Its inputs are the message `m` with the SDP, the context of that pass `rc`, whether the message goes to the UE `toUE`, and the sender's address in the SDP `sender`. The P-CSCF first tells the termination that faces the sender, with `Modify`, where the sender receives. Then it rewrites the address of the SDP to that of the termination that faces where the message goes: the access side when it goes to the UE, the core side when it goes to the network (TS 24.229 6.7.2.1).
+
+The `Modify` can also carry an order about latching. The access termination latches onto the source of the first packet that reaches it, and sends there. Once it has latched, a new address in `Remote` does not change where it sends. So only when the UE moves its media in the SDP (when `rc.agreed(side)` and `sender` differ) does `relatching` return `NAPTRelatch`, which asks the termination to latch again onto the new source. A response that tells the same address again, and the core termination, get no such order: the core termination does not latch, and sends to the address of the SDP. `TestOfferThatMovesTheUEAsksTheAccessTerminationToLatchAgain` and `TestOfferThatLeavesTheUEWhereItIsAsksForNoRelatch` in `internal/pcscf/latch_test.go` check this.
 
 | Message | Pass of the P-CSCF | Where the relay is told to send | Address written in the SDP |
 | --- | --- | --- | --- |

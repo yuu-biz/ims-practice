@@ -179,7 +179,9 @@ P-CSCF は、オファーとアンサーの両方を書き換えます。SDP が
 	}
 	ctx, cancel := relayContext()
 	defer cancel()
-	if err := relay.Modify(ctx, rc.ID, facingSender(toUE), agw.TerminationRequest{Remote: sender}); err != nil {
+	side := facingSender(toUE)
+	change := agw.TerminationRequest{Remote: sender, Latch: relatching(side, rc.agreed(side), sender)}
+	if err := relay.Modify(ctx, rc.ID, side, change); err != nil {
 		return netip.AddrPort{}, err
 	}
 	if err := description.SetAudio(shown); err != nil {
@@ -191,6 +193,8 @@ P-CSCF は、オファーとアンサーの両方を書き換えます。SDP が
 ```
 
 `relaySDP` の後半です。入力は SDP の入ったメッセージ `m`、その通過のコンテキスト `rc`、メッセージが UE に向かうか `toUE`、SDP に書かれた送り手のアドレス `sender` です。P-CSCF は、まず送り手に面したターミネーションに、送り手がどこで受けるかを `Modify` で伝えます。そのあとで SDP のアドレスを、メッセージが向かう側に面したターミネーションのものに書き換えます。UE に向かうならアクセス側、網に向かうならコア側です（TS 24.229 6.7.2.1）。
+
+`Modify` には、ラッチングの指示も入ることがあります。アクセス側のターミネーションは、最初に届いたパケットの送信元にラッチして、そこへ送ります。ラッチしたあとは、`Remote` に新しいアドレスを書いても送り先は変わりません。そこで、UE が SDP でメディアのアドレスを変えたとき（`rc.agreed(side)` と `sender` が違うとき）だけ、`relatching` が `NAPTRelatch` を返し、新しい送信元にラッチし直すよう求めます。同じアドレスをもう一度伝える応答や、コア側のターミネーションには、指示を入れません。コア側はラッチングをせず、SDP のアドレスへ送るからです。この動きは `internal/pcscf/latch_test.go` の `TestOfferThatMovesTheUEAsksTheAccessTerminationToLatchAgain` と `TestOfferThatLeavesTheUEWhereItIsAsksForNoRelatch` が確かめています。
 
 | メッセージ | P-CSCF の通過 | 中継ノードに伝える送り先 | SDP に書くアドレス |
 | --- | --- | --- | --- |

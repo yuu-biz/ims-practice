@@ -203,6 +203,36 @@ func facingSender(toUE bool) agw.TerminationID {
 	return agw.Access
 }
 
+// relatching is the latching that goes with a Modify of the termination
+// side which tells it to send to another address, to, than the one it
+// was told before, from: the Latching Requirement of Configure AGW
+// Connection Point (TS 23.334 8.4, Table 8.4.1), or none.
+//
+// Only the access termination latches (addContext), and for it the
+// address of the SDP is not the one that works: a UE behind a NAT that
+// its SDP does not show takes its media where the NAT sends it from,
+// and a termination that has latched goes on sending there whatever a
+// later Remote descriptor says (H.248.37 (06/2008) 6.6.2, 6.6.4). So
+// when the UE moves its media, the P-CSCF asks the termination to latch
+// onto the new source of it. The gateway follows a move only when its
+// controller asks for each move it expects (H.248.37 1.1.1), and a move
+// that the UE announces in an offer or an answer is one such.
+//
+// It asks for NAPTRelatch, not NAPTLatch: the packets still on their way
+// from the port the UE had would otherwise pin the termination there,
+// since NAPTLatch takes the first packet of any source (6.6.2). Until a
+// packet comes from the new source the termination sends where it
+// latched, which is where the UE listened until it moved.
+//
+// The core termination does not latch, and sends where the SDP says, so
+// its Modify carries no latching.
+func relatching(side agw.TerminationID, from, to netip.AddrPort) agw.Latch {
+	if side != agw.Access || !from.IsValid() || !to.IsValid() || from == to {
+		return ""
+	}
+	return agw.NAPTRelatch
+}
+
 // ue and remote are the party the P-CSCF serves and the other one.
 func (d *Dialog) ue() *Party {
 	if d.Originating {
