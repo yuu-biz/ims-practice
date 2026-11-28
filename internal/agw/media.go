@@ -114,12 +114,14 @@ func (rc *relayContext) add(req TerminationRequest) (*relayTermination, error) {
 	latch := req.Latch
 	if latch == "" {
 		// SIMPLIFIED: RFC 4961. A termination added without a latching
-		// latches once, and keeps the address for the whole call.
-		// Such a termination faces a UE, and re-latching only matters
-		// when the UE changes address in the middle of a call, which
-		// takes a controller that asks for NAPTRelatch. A termination
-		// whose party changes within a call, as on the network side of
-		// the P-CSCF, is added with NAPTOff.
+		// latches once, and follows its party afterwards only when the
+		// controller asks it to latch again. Such a termination faces a
+		// UE, and the P-CSCF asks for NAPTRelatch for each move that a
+		// new SDP of the UE announces. A UE that moves without telling
+		// the network, as one whose NAT gives its media another port,
+		// is not followed. A termination whose party changes within a
+		// call, as on the network side of the P-CSCF, is added with
+		// NAPTOff.
 		latch = NAPTLatch
 	}
 	if !latch.valid() {
@@ -306,10 +308,9 @@ func (t *relayTermination) setLatch(l Latch) {
 //
 // SIMPLIFIED: H.248.37 (06/2008) 6.6.7.1. After a latch, the packets of
 // other sources pass as well, where H.248.37 has them discarded (6.6.2,
-// 6.6.3). The P-CSCF's termination towards the UE latches, and the
-// P-CSCF gives it the remote address of each new SDP without asking it
-// to latch again: the filter would drop what a party sends from a new
-// address.
+// 6.6.3). The filter guards a termination against packets that another
+// source injects into the call, which a lab network has none of: every
+// packet that reaches a termination comes from the party it faces.
 func (t *relayTermination) read(kind string, in *channel) {
 	log := t.ctx.relay.log
 	buf := make([]byte, 1500)
