@@ -40,6 +40,8 @@ What the standards settle is told apart from what an implementation or an operat
 
 - [Registration order and expiry](design-registration-order.md)
 - [What several nodes and failures hand over](design-shared-state.md)
+- [When an application server is not available](design-as-unavailable.md)
+- [Retransmitted and duplicated SMS](design-sms-duplicates.md)
 - [When a media renegotiation fails](design-media-rollback.md)
 - [Taking a node out for maintenance, and losing it](design-maintenance.md)
 

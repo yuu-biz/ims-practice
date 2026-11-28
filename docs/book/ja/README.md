@@ -40,6 +40,8 @@ IMS のノードが何を受け持ち、登録と通話で何が決まるかを�
 
 - [登録の順序と期限](design-registration-order.md)
 - [複数台と障害で引き継ぐもの](design-shared-state.md)
+- [アプリケーションサーバーが使えないとき](design-as-unavailable.md)
+- [SMS の再送と重複](design-sms-duplicates.md)
 - [メディアの再交渉が失敗したとき](design-media-rollback.md)
 - [保守で止めることと、突然失うこと](design-maintenance.md)
 

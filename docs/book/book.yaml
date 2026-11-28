@@ -29,6 +29,8 @@ chapters:
   - interconnect
   - design-registration-order
   - design-shared-state
+  - design-as-unavailable
+  - design-sms-duplicates
   - design-media-rollback
   - design-maintenance
   - go-reading
