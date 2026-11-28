@@ -647,7 +647,13 @@ func (p *PCSCF) offerInResponse(out *sip.Message, d Dialog, toUE bool, ue netip.
 		if told != nil {
 			told = told.agreeing(facingSender(!toUE), sent)
 		}
-		taken = true
+		// Only a 2xx or a reliable provisional response carries the offer
+		// (RFC 3261 13.2.1); the SDP of one that is not reliable shows it
+		// before it comes, and a refusal of the offer after it still
+		// releases the dialog.
+		if resp.StatusCode >= 200 || resp.Requires(sip.Option100rel) {
+			taken = true
+		}
 		if resp.StatusCode < 200 {
 			// The offer of a provisional response is answered in the PRACK
 			// (RFC 3262 5), not in the ACK.
