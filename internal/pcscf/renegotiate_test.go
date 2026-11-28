@@ -240,3 +240,133 @@ func TestTargetRefreshReplacesTheContacts(t *testing.T) {
 		t.Errorf("target of the UE = %q, want the Contact of its 200 %q", d.Caller.Target, want)
 	}
 }
+
+// reinvite sends a re-INVITE of the UE of c with the CSeq number cseq
+// and a new offer at media, whose SDP session identifier is session, and
+// returns the transaction of the UE and the one that the far end answers
+// by hand.
+func (c *rawINVITE) reinvite(t *testing.T, cseq, session string, media netip.AddrPort) (*sip.ClientTransaction, *sip.ServerTransaction) {
+	t.Helper()
+	m := &sip.Message{Method: sip.INVITE, RequestURI: c.farContact}
+	m.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	m.Add("Max-Forwards", "70")
+	m.Add("From", c.st.Request.Get("From"))
+	m.Add("To", c.st.Request.Get("To")+";tag=callee")
+	m.Add("Call-ID", c.st.Request.Get("Call-ID"))
+	m.Add("CSeq", cseq+" INVITE")
+	m.Add("Contact", c.st.Request.Get("Contact"))
+	m.Add("Content-Type", "application/sdp")
+	m.Body = sdp.Offer(session, media).Bytes()
+	ct, err := c.ue.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: c.pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case st := <-c.invites:
+		return ct, st
+	case <-time.After(3 * time.Second):
+		t.Fatal("the far end got no re-INVITE")
+	}
+	return nil, nil
+}
+
+// ack hands the P-CSCF the ACK of the UE for the 2xx of the INVITE with
+// the CSeq number cseq (RFC 3261 13.2.2.4), the way its stack does.
+func (c *rawINVITE) ack(cseq string) {
+	m := &sip.Message{Method: sip.ACK, RequestURI: c.farContact}
+	m.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	m.Add("Max-Forwards", "70")
+	m.Add("From", c.st.Request.Get("From"))
+	m.Add("To", c.st.Request.Get("To")+";tag=callee")
+	m.Add("Call-ID", c.st.Request.Get("Call-ID"))
+	m.Add("CSeq", cseq+" ACK")
+	c.p.OnACK(m)
+}
+
+// wantAuthorised checks the media that the PCRF holds for the call: the
+// service information it got last names offer as the address the UE
+// offers its media at, and the access termination of the relay as the
+// address the other party's media comes from (TS 29.214 A.1).
+func wantAuthorised(t *testing.T, pcrf *fakePolicy, when string, offer netip.AddrPort) {
+	t.Helper()
+	requests := pcrf.mediaRequests()
+	if len(requests) == 0 {
+		t.Fatalf("the PCRF has no service information %s, want the media offered from %v", when, offer)
+	}
+	last := requests[len(requests)-1]
+	if got := audio(t, last.SDP.Offer); got != offer {
+		t.Errorf("%s the PCRF authorises the media offered from %v, want %v", when, got, offer)
+	}
+	if got := audio(t, last.SDP.Answer); got != relayAccess {
+		t.Errorf("%s the answer the PCRF authorises names %v, want the access termination %v", when, got, relayAccess)
+	}
+}
+
+// TestRejectedOfferAfterAReliableAnswerKeepsTheNewMedia: the far end
+// answers a re-INVITE of the UE in a reliable 183, which the UE
+// acknowledges, and then turns the offer down with 488. An answer in a
+// reliable provisional response is the answer (RFC 3261 13.2.1), so that
+// offer and answer are done, and it is for the UE to bring both parties
+// to one view of the session with a new offer (RFC 6141 3.3, 3.4). So
+// the PCRF keeps the authorisation of the media that were answered, and
+// each termination of the relay keeps sending where that offer and
+// answer said.
+func TestRejectedOfferAfterAReliableAnswerKeepsTheNewMedia(t *testing.T) {
+	pcrf := &fakePolicy{}
+	c := newRawINVITEWith(t, pcrf)
+	c.st.Respond(c.response(200))
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the UE got %d, want the 200 of the far end", r.StatusCode)
+	}
+	c.ack("1")
+
+	ct, st := c.reinvite(t, "2", "2", moved)
+	farMoved := netip.MustParseAddrPort("192.0.2.99:6008")
+	progress := sip.NewResponse(st.Request, 183, "")
+	progress.Add("Contact", "<"+c.farContact+">")
+	progress.Add("Require", sip.Option100rel)
+	progress.Add("RSeq", "1")
+	progress.Add("Content-Type", "application/sdp")
+	progress.Body = sdp.Offer("3", farMoved).Bytes()
+	st.Respond(progress)
+	r := next(t, ct.Responses())
+	for r.StatusCode == 100 {
+		r = next(t, ct.Responses())
+	}
+	if r.StatusCode != 183 {
+		t.Fatalf("the UE got %d, want the reliable 183 of the far end", r.StatusCode)
+	}
+	// The PRACK acknowledges the 183 of the re-INVITE, so its RAck names
+	// the CSeq of that re-INVITE (RFC 3262 7.2).
+	prack := &sip.Message{Method: sip.PRACK, RequestURI: c.farContact}
+	prack.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	prack.Add("Max-Forwards", "70")
+	prack.Add("From", c.st.Request.Get("From"))
+	prack.Add("To", progress.Get("To"))
+	prack.Add("Call-ID", c.st.Request.Get("Call-ID"))
+	prack.Add("CSeq", "3 PRACK")
+	prack.Add("RAck", "1 2 INVITE")
+	pct, err := c.ue.SendRequest(prack, sip.Destination{Transport: sip.UDP, Addr: c.pcscf.LocalAddr()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := final(t, pct.Responses(), 3*time.Second); got.StatusCode != 200 {
+		t.Fatalf("the PRACK got %d, want the 200 of the far end", got.StatusCode)
+	}
+	wantAuthorised(t, pcrf, "for the answer of the reliable 183", moved)
+
+	st.Respond(sip.NewResponse(st.Request, 488, ""))
+	if got := final(t, ct.Responses(), 3*time.Second); got.StatusCode != 488 {
+		t.Fatalf("the re-INVITE got %d, want the 488 of the far end", got.StatusCode)
+	}
+	wantAuthorised(t, pcrf, "after the 488", moved)
+	if got := c.relay.remote("1", agw.Access); got != moved {
+		t.Errorf("the access termination sends to %v after the 488, want %v of the answered offer", got, moved)
+	}
+	if got := c.relay.remote("1", agw.Core); got != farMoved {
+		t.Errorf("the core termination sends to %v after the 488, want %v of the reliable answer", got, farMoved)
+	}
+	if n := c.relay.held(); n != 1 {
+		t.Errorf("the relay holds %d contexts after the 488, want the one of the call", n)
+	}
+}
