@@ -241,22 +241,36 @@ func TestTargetRefreshReplacesTheContacts(t *testing.T) {
 	}
 }
 
+// inDialog is a request of the UE of c within the dialog of its INVITE,
+// with the method and the CSeq number cseq.
+func (c *rawINVITE) inDialog(method sip.Method, cseq string) *sip.Message {
+	m := &sip.Message{Method: method, RequestURI: c.farContact}
+	m.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
+	m.Add("Max-Forwards", "70")
+	m.Add("From", c.st.Request.Get("From"))
+	m.Add("To", c.st.Request.Get("To")+";tag=callee")
+	m.Add("Call-ID", c.st.Request.Get("Call-ID"))
+	m.Add("CSeq", cseq+" "+string(method))
+	return m
+}
+
 // reinvite sends a re-INVITE of the UE of c with the CSeq number cseq
 // and a new offer at media, whose SDP session identifier is session, and
 // returns the transaction of the UE and the one that the far end answers
 // by hand.
 func (c *rawINVITE) reinvite(t *testing.T, cseq, session string, media netip.AddrPort) (*sip.ClientTransaction, *sip.ServerTransaction) {
 	t.Helper()
-	m := &sip.Message{Method: sip.INVITE, RequestURI: c.farContact}
-	m.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
-	m.Add("Max-Forwards", "70")
-	m.Add("From", c.st.Request.Get("From"))
-	m.Add("To", c.st.Request.Get("To")+";tag=callee")
-	m.Add("Call-ID", c.st.Request.Get("Call-ID"))
-	m.Add("CSeq", cseq+" INVITE")
+	m := c.inDialog(sip.INVITE, cseq)
 	m.Add("Contact", c.st.Request.Get("Contact"))
 	m.Add("Content-Type", "application/sdp")
 	m.Body = sdp.Offer(session, media).Bytes()
+	return c.sendReINVITE(t, m)
+}
+
+// sendReINVITE sends m, a re-INVITE of the UE of c, and returns the
+// transaction of the UE and the one that the far end answers by hand.
+func (c *rawINVITE) sendReINVITE(t *testing.T, m *sip.Message) (*sip.ClientTransaction, *sip.ServerTransaction) {
+	t.Helper()
 	ct, err := c.ue.SendRequest(m, sip.Destination{Transport: sip.UDP, Addr: c.pcscf.LocalAddr()})
 	if err != nil {
 		t.Fatal(err)
@@ -273,14 +287,23 @@ func (c *rawINVITE) reinvite(t *testing.T, cseq, session string, media netip.Add
 // ack hands the P-CSCF the ACK of the UE for the 2xx of the INVITE with
 // the CSeq number cseq (RFC 3261 13.2.2.4), the way its stack does.
 func (c *rawINVITE) ack(cseq string) {
-	m := &sip.Message{Method: sip.ACK, RequestURI: c.farContact}
-	m.Add("Route", "<sip:pcscf."+domain+":5060;lr>")
-	m.Add("Max-Forwards", "70")
-	m.Add("From", c.st.Request.Get("From"))
-	m.Add("To", c.st.Request.Get("To")+";tag=callee")
-	m.Add("Call-ID", c.st.Request.Get("Call-ID"))
-	m.Add("CSeq", cseq+" ACK")
-	c.p.OnACK(m)
+	c.p.OnACK(c.inDialog(sip.ACK, cseq))
+}
+
+// upCall has the far end of c answer the INVITE 200 and the UE
+// acknowledge it, so that the call is up. It returns once the ACK of
+// the INVITE has reached the far end, and so left what the far end
+// receives next to the requests of the tests.
+func (c *rawINVITE) upCall(t *testing.T) {
+	t.Helper()
+	c.st.Respond(c.response(200))
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the UE got %d, want the 200 of the far end", r.StatusCode)
+	}
+	c.ack("1")
+	if m := nextRequest(t, "the far end", c.farGot); m.Method != sip.ACK {
+		t.Fatalf("the far end got %s, want the ACK of the INVITE", m.Method)
+	}
 }
 
 // wantAuthorised checks the media that the PCRF holds for the call: the
@@ -314,11 +337,7 @@ func wantAuthorised(t *testing.T, pcrf *fakePolicy, when string, offer netip.Add
 func TestRejectedOfferAfterAPreviewKeepsTheAuthorisedMedia(t *testing.T) {
 	pcrf := &fakePolicy{}
 	c := newRawINVITEWith(t, pcrf)
-	c.st.Respond(c.response(200))
-	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
-		t.Fatalf("the UE got %d, want the 200 of the far end", r.StatusCode)
-	}
-	c.ack("1")
+	c.upCall(t)
 	wantAuthorised(t, pcrf, "for the INVITE", ueMedia)
 
 	ct, st := c.reinvite(t, "2", "2", moved)
@@ -367,11 +386,7 @@ func TestRejectedOfferAfterAPreviewKeepsTheAuthorisedMedia(t *testing.T) {
 func TestAnswerAfterAPreviewIsAuthorisedOnce(t *testing.T) {
 	pcrf := &fakePolicy{}
 	c := newRawINVITEWith(t, pcrf)
-	c.st.Respond(c.response(200))
-	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
-		t.Fatalf("the UE got %d, want the 200 of the far end", r.StatusCode)
-	}
-	c.ack("1")
+	c.upCall(t)
 	wantAuthorised(t, pcrf, "for the INVITE", ueMedia)
 	before := len(pcrf.mediaRequests())
 
@@ -419,11 +434,7 @@ func TestAnswerAfterAPreviewIsAuthorisedOnce(t *testing.T) {
 func TestRejectedOfferAfterAReliableAnswerKeepsTheNewMedia(t *testing.T) {
 	pcrf := &fakePolicy{}
 	c := newRawINVITEWith(t, pcrf)
-	c.st.Respond(c.response(200))
-	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
-		t.Fatalf("the UE got %d, want the 200 of the far end", r.StatusCode)
-	}
-	c.ack("1")
+	c.upCall(t)
 
 	ct, st := c.reinvite(t, "2", "2", moved)
 	farMoved := netip.MustParseAddrPort("192.0.2.99:6008")
