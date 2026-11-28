@@ -11,11 +11,13 @@ summary:
 topics: [ims, sip, volte, diameter, 3gpp]
 chapters:
   - registration
+  - call
   - services
   - registration-two-registers
   - registration-routes
   - registration-stale-deregistration
   - registration-lifecycle
+  - call-signaling
   - mmtel
   - mrf
   - design-registration-order

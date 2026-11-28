@@ -590,3 +590,130 @@ units:
       - TS 23.333 8.30
     evidence: [code, test]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: call-route
+    question:
+      ja: 電話番号しか知らない UE の INVITE は、どうやって相手の UE に届くのか
+      en: How does the INVITE of a UE that knows only a number reach the other UE
+    setup: deploy/compose, two softphones that registered with SIP Digest; P-CSCF, S-CSCF, MMTel AS, DNS with ENUM, I-CSCF, HSS
+    chapter: call
+    scenes: [05-call/overview, 05-call/orig-pcscf, 05-call/orig-scscf, 05-call/entry, 05-call/term, 05-call/shape-confirm]
+    code:
+      - internal/pcscf/session.go:session
+      - internal/scscf/session.go:session
+      - internal/scscf/session.go:routeOriginating
+      - internal/scscf/session.go:routeTerminating
+      - internal/scscf/services.go:invoke
+      - internal/sipdns/enum.go:ENUM
+      - internal/icscf/session.go:session
+    tests:
+      - internal/ue/call_test.go:TestCallThroughTheWholeIMS
+      - internal/scscf/session_test.go:TestOriginatingCallToATelURIGoesToTheICSCF
+      - internal/scscf/session_test.go:TestOriginatingCallToANumberWithoutENUMGets404
+      - internal/scscf/session_test.go:TestTerminatingCallFollowsThePath
+      - internal/icscf/icscf_test.go:TestCallToARegisteredCalleeGoesToItsSCSCF
+      - internal/mmtel/relay_test.go:TestCallThroughTheAS
+    standards:
+      - TS 24.229 V18.11.0 5.2.6.2, 5.2.6.3.3, 5.2.6.4.3, 5.3.2.1, 5.4.3.1, 5.4.3.2 steps 4C, 5, 9 and 10, 5.4.3.3
+      - TS 29.228 V18.0.0 6.1.4
+      - RFC 6116
+      - RFC 3261 18.1.1
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: call-media-path
+    question:
+      ja: 音声はなぜ信号と違う道を通り、誰がその道を作るのか
+      en: Why does the voice take another way than the signalling, and who makes that way
+    setup: deploy/compose; one P-CSCF that serves both UEs and controls the media relay (IMS-AGW) over the project's HTTP API
+    chapter: call
+    scenes: [05-call/media, 05-call/shape-bye]
+    code:
+      - internal/pcscf/setup.go:addContext
+      - internal/pcscf/session.go:relaySDP
+    tests:
+      - internal/pcscf/session_test.go:TestOriginatingCallGoesThroughTheRelay
+      - internal/agw/agw_test.go:TestRelayLatchesAndForwards
+    standards:
+      - RFC 3550 5.1
+      - RFC 3551 4.5.14
+      - RFC 3261 15.1.1
+      - TS 24.229 V18.11.0 5.1.5
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: call-dialogs
+    question:
+      ja: 1 回の通話のトランザクションとダイアログは、どのノードを通り、どのノードが何を持つのか
+      en: Which nodes do the transactions and the dialogs of one call pass, and which node keeps what
+    setup: deploy/compose; the MMTel AS as a routeing B2BUA on both sides, which gives one call three dialogs
+    chapter: call-signaling
+    scenes: [05-call/shape, 05-call/shape-confirm, 05-call/prack]
+    code:
+      - internal/sip/dialog.go:NewUACDialog
+      - internal/scscf/services.go:invoke
+      - internal/scscf/store.go:OriginalDialog
+      - internal/pcscf/dialog.go:Dialog
+    tests:
+      - internal/sip/dialog_test.go:TestUACDialogFromAProvisionalResponse
+      - internal/mmtel/relay_test.go:TestCallThroughTheAS
+    standards:
+      - RFC 3261 12, 12.1.2, 12.2.1.1, 17
+      - TS 24.229 V18.11.0 5.4.3.4, 5.7.5
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: call-offer-answer
+    question:
+      ja: 信頼性のある 183 と PRACK と SDP で、メディアはどう決まり、P-CSCF はどこを書き換えるのか
+      en: How do the reliable 183, the PRACK and the SDP settle the media, and where does the P-CSCF rewrite it
+    setup: deploy/compose; both UEs support 100rel and preconditions and have their resources; the P-CSCF points every SDP at the media relay
+    chapter: call-signaling
+    scenes: [05-call/shape, 05-call/answer, 05-call/confirm]
+    code:
+      - internal/sip/uas.go:progress
+      - internal/ue/call.go:Answer
+      - internal/pcscf/session.go:relaySDP
+    tests:
+      - internal/sip/prack_test.go:TestUASRetransmitsAReliableProvisionalUntilThePRACK
+      - internal/sip/prack_test.go:TestUASRejectsTheINVITEWithoutAPRACK
+      - internal/ue/call_test.go:TestAnswerInTheReliable183
+      - internal/pcscf/session_test.go:TestOriginatingCallGoesThroughTheRelay
+    standards:
+      - RFC 3262 3, 4, 5
+      - RFC 3264 5.1, 6.1
+      - RFC 3261 13.2.1
+      - RFC 3312 6
+      - TS 24.229 V18.11.0 6.7.2.1
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: call-failures-release
+    question:
+      ja: 通話が失敗するときと終わるときに、どのノードが応答を決め、何を解放するのか
+      en: When a call fails or ends, which node decides the response, and what is freed
+    setup: deploy/compose; busy, unregistered (with the TERMINATING_UNREGISTERED iFC of the MMTel AS, and without one), unknown and ENUM-less numbers, CANCEL before the answer, BYE after it
+    chapter: call-signaling
+    scenes: [05-call/failures, 05-call/unregistered, 05-call/unknown-number, 05-call/shape-bye, 05-call/bye]
+    code:
+      - internal/b2bua/call.go:Attempt
+      - internal/icscf/session.go:session
+      - internal/scscf/unregistered.go:routeUnregistered
+      - internal/scscf/session.go:routeOriginating
+      - internal/hss/hss.go:locationInfo
+      - internal/pcscf/setup.go:forward
+      - internal/pcscf/session.go:byeEndsDialog
+    tests:
+      - internal/ue/call_test.go:TestBusyCallee
+      - internal/ue/call_test.go:TestCallToAnUnregisteredCallee
+      - internal/ue/call_test.go:TestCallerGivesUpOnACalleeThatDoesNotAnswer
+      - internal/mmtel/relay_test.go:TestCancelThroughTheAS
+      - internal/icscf/icscf_test.go:TestCallToAnUnregisteredCalleeGets480
+      - internal/icscf/icscf_test.go:TestCallToAnUnknownCalleeGets404
+      - internal/scscf/unregistered_test.go:TestUnregisteredCalleeServices
+      - internal/scscf/session_test.go:TestOriginatingCallToANumberWithoutENUMGets404
+      - internal/pcscf/session_test.go:TestOriginatingCallGoesThroughTheRelay
+      - internal/pcscf/session_test.go:TestBYEThatIsRejectedKeepsTheMedia
+      - internal/pcscf/session_test.go:TestBYEAnswered481EndsTheMedia
+    standards:
+      - RFC 3261 9.1, 9.2, 12.2.2, 13.3.1.1, 15.1.1, 15.1.2, 16.6 step 11, 16.7 step 2, 16.8, 16.10
+      - RFC 3326 2
+      - TS 24.229 V18.11.0 5.1.5, 5.3.2.1, 5.4.3.3
+      - TS 29.228 V18.0.0 6.1.4.1
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96

@@ -1,6 +1,6 @@
 ---
 title: A voice call through the IMS
-footer: ims-practice study session 5. Call
+footer: ims-practice 5. Call
 lang: en
 format: visual
 ---
@@ -913,13 +913,13 @@ events:
 
 # A voice call through the IMS
 
-ims-practice study session 5 (a call through the media relay, with preconditions and the MMTel AS on its way)
+(a call through the media relay, with preconditions and the MMTel AS on its way)
 
 ---
 
 [layout: summary]
 
-## What you will know after this session
+## What this deck covers
 
 To begin: does UE 1 know the IP address of UE 2? It does not. It knows a telephone number.
 
@@ -931,6 +931,7 @@ To begin: does UE 1 know the IP address of UE 2? It does not. It knows a telepho
 > Guide: [Follow a voice call through the IMS](../../../docs/guide/en/call.md) (`docs/guide/en/call.md`)
 > The editions are those of Release 18, TS 24.229 V18.11.0 and TS 29.228 V18.0.0, and the RFCs named in each step.
 > Transaction, dialog, SDP, PRACK and precondition are in the [glossary](../../../docs/glossary.md).
+> Book: [From a number to the other phone](../../../docs/book/en/call.md), [Transactions, dialogs and media negotiation in a call](../../../docs/book/en/call-signaling.md)
 
 ---
 
@@ -944,7 +945,7 @@ A call uses three things that registration set up.
 | Path | S-CSCF | To send requests for the UE to its P-CSCF. |
 | IP association | P-CSCF | To check that a request comes from the registered UE. |
 
-- Both UEs register before the call, as in the last session. Their REGISTERs open the capture.
+- Both UEs register before the call, as in the registration deck. Their REGISTERs open the capture.
 
 > Guide: [registration, "10. The S-CSCF accepts: 200 OK"](../../../docs/guide/en/registration.md#10-the-s-cscf-accepts-200-ok)
 
@@ -954,7 +955,7 @@ A call uses three things that registration set up.
 
 ```ims-scene
 id: nodes
-lead: One node acts in two positions, for the caller and for the callee. That is the key to reading this capture.
+lead: One node acts in two positions, for the caller and for the callee. That is the key to reading the capture of this deck.
 steps:
   - id: ues
     title: UE 1 (172.28.0.100) and UE 2 (172.28.0.101)
@@ -980,7 +981,7 @@ steps:
     focus: [mmtel]
     text: |
       Takes the INVITE of the caller and of the callee, and sends each back.
-      Here it changes nothing. The session on supplementary services shows what it does.
+      Here it changes nothing. The deck on supplementary services shows what it does.
   - id: dns
     title: DNS (172.28.0.2)
     focus: [dns]
@@ -1005,49 +1006,11 @@ steps:
 | Media relay | 172.28.0.50 | Relays the RTP. The P-CSCF controls it. |
 | MMTel AS | 172.28.0.75 | Takes the INVITE of the caller and of the callee, and sends each back. |
 
-- One node acts in two positions, for the caller and for the callee: the key to reading this capture. In a real network the two sides are often other nodes, in other networks.
-- Here the MMTel AS sends each INVITE back unchanged. The session on supplementary services shows what it does.
+- One node acts in two positions, for the caller and for the callee: the key to reading the capture of this deck. In a real network the two sides are often other nodes, in other networks.
+- Here the MMTel AS sends each INVITE back unchanged. The deck on supplementary services shows what it does.
 - The HSS (172.28.0.10) answers the I-CSCF's location query over Cx, and the MMTel AS's query for the service settings over Sh.
 
 > Guide: ["The nodes"](../../../docs/guide/en/call.md#the-nodes)
-
----
-
-## Run it
-
-```sh
-docker compose up -d --build
-
-# First terminal: UE 2 waits for a call.
-docker compose run --rm ue2 answer \
-  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  -password test-password-2 -wav-out /captures/ue2-heard.wav
-
-# Second terminal: UE 1 calls the number, plays a tone for 3 seconds, hangs up.
-docker compose run --rm ue call -tone 3s tel:+1-202-555-0102
-```
-
-- `captures/ue2-heard.wav` holds what UE 2 heard.
-- The numbers are in the range 555-0100 to 555-0199, which the North American Numbering Plan keeps for fiction.
-
-> Guide: ["Make a call"](../../../docs/guide/en/call.md#make-a-call)
-
----
-
-## Open the capture
-
-```text
-sip || diameter.cmd.code == 302 || dns.qry.type == 35 || rtp || rtcp
-```
-
-- **Telephony > VoIP Calls** lists the call.
-  - **Flow Sequence** draws the ladder.
-  - **Play Streams** plays both directions.
-- If the RTP shows up as plain UDP, enable **rtp_udp** under **Analyze > Enabled Protocols**.
-- The numbers 1 to 13 of the guide's ladder are the numbers of the next slides.
-
-> Guide: ["Open the capture"](../../../docs/guide/en/call.md#open-the-capture) and ["The sequence"](../../../docs/guide/en/call.md#the-sequence), which has the full ladder.
 
 ---
 
@@ -1112,7 +1075,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 ```
 
 - `orig` is the originating position, the caller's side; `term` the terminating position, the callee's side.
-- The AS is a routeing B2BUA (TS 24.229 5.7.5): its new INVITE has a Call-ID of its own, so one call has three dialogs. Session 7 shows how the AS makes them.
+- The AS is a routeing B2BUA (TS 24.229 5.7.5): its new INVITE has a Call-ID of its own, so one call has three dialogs. The deck on supplementary services shows how the AS makes them.
 
 ---
 
@@ -1126,7 +1089,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 | The answer | 8 to 11 | 183, PRACK, 180, PRACK, 200 OK, ACK. |
 | Voice and hang-up | 12 and 13 | RTP through the relay. BYE ends the call. |
 
-- Come back to this table at each new part: it is the map of the session.
+- This table is the map of the deck. The numbers in brackets in the headings are the numbers 1 to 13 of the guide's ladder.
 
 ---
 
@@ -1195,7 +1158,7 @@ steps:
 | The SDP after the P-CSCF | `c=` and `m=` name the media relay. |
 
 - The network trusts P-Asserted-Identity, not From. Whatever the UE writes in From does not matter.
-- UE 1 has no access network that reserves resources, so its offer says that they are there already. A UE started with `-epc` is a VoLTE UE and offers AMR-WB and AMR before PCMU. Session 9, on VoLTE, follows that call and how it reserves its resources before the phone rings.
+- UE 1 has no access network that reserves resources, so its offer says that they are there already. A UE started with `-epc` is a VoLTE UE and offers AMR-WB and AMR before PCMU. The VoLTE deck follows that call and how it reserves its resources before the phone rings.
 - The P-CSCF talks to the media relay over a small HTTP API of this project, which the capture shows as well. The standard protocol for the task is H.248.
 
 > Guide: [1](../../../docs/guide/en/call.md#1-ue-1-sends-the-invite) and [2](../../../docs/guide/en/call.md#2-the-p-cscf-sends-it-to-the-callers-s-cscf). TS 24.229 5.1.3.1, 5.1.2A.1.1, 6.1.2, 5.2.6.2, 5.2.6.3.3. RFC 3262 4. RFC 3312. RFC 3264 5.1.
@@ -1272,9 +1235,9 @@ steps:
 
 The filter is `dns.qry.type == 35`. The records are in `deploy/compose/dns/e164.arpa.zone`.
 
-- Build the ENUM domain by hand: reverse the digits, one label each.
+- The ENUM domain is the digits of the number in reverse, one label each. For `+12025550102` it is `2.0.1.0.5.5.5.2.0.2.1` followed by `e164.arpa`.
 - The AS reads the caller's services from the HSS over Sh. With the default settings it changes nothing and sends a new INVITE back. The S-CSCF finds its `odi` in it, goes on with the next iFC, and only then turns the number into a SIP URI.
-- The UDR and UDA of the AS show with `diameter.cmd.code == 306`. The session on supplementary services reads them in detail.
+- The UDR and UDA of the AS show with `diameter.cmd.code == 306`. The deck on supplementary services reads them in detail.
 
 > Guide: [3](../../../docs/guide/en/call.md#3-the-s-cscf-turns-the-number-into-a-sip-uri). TS 24.229 5.4.3.1, 5.4.3.2, 5.7.5. RFC 6050. RFC 6116.
 
@@ -1429,6 +1392,51 @@ steps:
 
 ---
 
+## The shape of the 183 and the PRACKs (8, 9)
+
+```ims-scene
+id: shape
+view: ladder
+nodes: [ue1, pcscf, scscf, mmtel, icscf, ue2]
+lead: The 183 retraces the INVITE and passes the I-CSCF; the PRACK follows the route set and does not.
+steps:
+  - id: answer
+    title: The 183 retraces the way of the INVITE (8)
+    only: [r183-ue2-p, r183-p-s3, r183-s-as3, r183-as-s2, r183-s-i, r183-i-s, r183-s-as2, r183-as-s1, r183-s-p1, r183-p-ue1]
+    active: r183-ue2-p
+    detail: []
+    checkpoint: true
+    text: |
+      A response follows the Via of the INVITE, so it passes the I-CSCF too, which adds no Record-Route.
+      Each of the two MMTel ASs copies the 183 it gets onto its next dialog.
+  - id: prack
+    title: UE 1's PRACK ends at the caller's AS (9)
+    show: [prack-ue1-p, prack-p-s1, prack-s-as1, pok-as-s1, pok-s-p1, pok-p-ue1]
+    active: prack-ue1-p
+    detail: []
+    checkpoint: true
+    text: |
+      A PRACK is a request within a dialog, and follows the route set.
+      The far end of dialog 1 is the caller's AS, which answers 200 at once.
+  - id: prack-next
+    title: The AS sends a PRACK of its own in the next dialog (9)
+    show: [prack-as-s2, prack-s-as2, pok-as-s2, pok-s-as2, prack-as-s3, prack-s-p3, prack-p-ue2, pok-ue2-p, pok-p-s3, pok-s-as3]
+    active: prack-p-ue2
+    detail: []
+    checkpoint: true
+    text: |
+      No PRACK reaches the line of the I-CSCF: it adds no Record-Route, so it is in no route set.
+      Once the PRACK of dialog 3 arrives, UE 2 stops sending the 183 again.
+```
+
+- The 183 answers the INVITE, so it goes back the way of the INVITE's transaction: along the Via. That is why it passes the I-CSCF, which adds no Record-Route.
+- A PRACK is a request within a dialog and follows the route set built from Record-Route. The I-CSCF is in no route set, so it gets no PRACK.
+- Messages of different dialogs go their own ways, so their order among each other is not fixed. The order of the rows is one example.
+
+> Book: [Transactions, dialogs and media negotiation in a call](../../../docs/book/en/call-signaling.md)
+
+---
+
 ## UE 2 answers with a reliable 183 (8)
 
 ```ims-scene
@@ -1486,6 +1494,11 @@ steps:
     show: [r183-p-ue1]
     zoom: [ue1, agw, ue2, pcscf]
     text: UE 1 sees the access termination of its own context. Each UE talks only to the media relay.
+  - id: ue1-sdp
+    title: The SDP that UE 1 sees
+    only: [r183-p-ue1]
+    detail: [r183-p-ue1]
+    text: The SDP of the 183 to UE 1 names the access termination of context 1, not UE 2.
 ```
 
 | Look at | What to see |
@@ -1551,6 +1564,46 @@ steps:
 - The messages of two dialogs take ways of their own, so their order in the capture is not fixed.
 
 > Guide: [9](../../../docs/guide/en/call.md#9-ue-1-acknowledges-the-183-prack). RFC 3262 3, 4. RFC 3261 12.2.1.1.
+
+---
+
+## The shape of the 200 OK and the ACKs (10, 11)
+
+```ims-scene
+id: shape-confirm
+view: ladder
+nodes: [ue1, pcscf, scscf, mmtel, icscf, ue2]
+lead: The 200 OK retraces the INVITE; the ACK follows the route set of each dialog.
+steps:
+  - id: confirm
+    title: The callee's AS acknowledges UE 2's 200 OK (10, 11)
+    only: [ok-ue2-p, ok-p-s3, ok-s-as3, ack-as-s3, ack-s-p3, ack-p-ue2]
+    active: ok-ue2-p
+    detail: []
+    checkpoint: true
+    text: |
+      The 180 before it, and its PRACK, take the way of the 183, so the figure leaves them out.
+      The callee's AS sends the ACK for UE 2's 200 at once.
+  - id: confirm-next
+    title: The 200 OK of dialog 2 passes the I-CSCF (10, 11)
+    show: [ok-as-s2, ok-s-i, ok-i-s, ok-s-as2, ack-as-s2, ack-s-as2]
+    active: ok-s-i
+    detail: []
+    checkpoint: true
+    text: |
+      The 200 OK retraces the INVITE, so it passes the I-CSCF; the ACK follows the route set, so it does not.
+  - id: confirm-last
+    title: The 200 OK reaches UE 1, and UE 1 sends the ACK (10, 11)
+    show: [ok-as-s1, ok-s-p1, ok-p-ue1, ack-ue1-p, ack-p-s1, ack-s-as1]
+    active: ok-p-ue1
+    detail: []
+    checkpoint: true
+    text: |
+      Now dialog 1 is confirmed. The ACK to UE 2 may come before the 200 to UE 1.
+```
+
+- The callee's AS acknowledges UE 2's 200 at once, so the ACK to UE 2 may come before the 200 to UE 1. The order of messages of different dialogs is not fixed; the order of the rows is one example.
+- The 180 and its PRACK take the way of the 183, so this figure leaves them out.
 
 ---
 
@@ -1658,6 +1711,7 @@ steps:
     title: The RTP reaches UE 2
     show: [rtp-agw-ue2]
     zoom: [ue1, agw, ue2, pcscf]
+    detail: [agw-relay, rtp-agw-ue2]
     checkpoint: true
     text: The UEs never talk to each other directly. With the UEs behind two P-CSCFs, the call would look the same.
   - id: latch
@@ -1706,6 +1760,45 @@ The filter is `rtp || rtcp`. **Play Streams** plays the voice.
 - So the RTP crosses the relay twice, as it would cross the IMS-AGWs of two networks, and the capture tells the two sides apart. With the UEs behind two P-CSCFs, the call would look the same.
 - Latching is for UEs behind NAT: a softphone on the host sends from an address that its SDP cannot know. The P-CSCF and the IMS-AGW of a real network do the same.
 - An RTCP compound packet holds a sender report (a receiver report while the UE sends nothing) and an SDES with the CNAME. An RTCP BYE ends the stream.
+
+---
+
+## The shape of the BYE (13)
+
+```ims-scene
+id: shape-bye
+view: ladder
+nodes: [ue1, agw, pcscf, scscf, mmtel, ue2]
+lead: The BYE is a request within a dialog too, and the far end of each dialog answers it 200. The P-CSCF deletes a context as the 200 passes.
+steps:
+  - id: bye
+    title: The caller's AS answers UE 1's BYE (13)
+    only: [bye-ue1-p, bye-p-s1, bye-s-as1, bok-as-s1, bok-s-p1, bok-p-ue1, del1, del1-ok]
+    active: bye-ue1-p
+    detail: []
+    checkpoint: true
+    text: |
+      The BYE follows the route set up to the AS at the far end of dialog 1.
+      The P-CSCF sends the 200 on to UE 1, then deletes context 1.
+  - id: bye-next
+    title: The AS sends a BYE of its own in the next dialog (13)
+    show: [bye-as-s2, bye-s-as2, bok-as-s2, bok-s-as2]
+    active: bye-as-s2
+    detail: []
+    checkpoint: true
+    text: The BYE of dialog 2 goes between the two ASs through the S-CSCF.
+  - id: bye-last
+    title: The BYE reaches UE 2, and the last 200 comes back (13)
+    show: [bye-as-s3, bye-s-p3, bye-p-ue2, bok-ue2-p, bok-p-s3, bok-s-as3, del2, del2-ok]
+    active: bye-p-ue2
+    detail: []
+    checkpoint: true
+    text: |
+      The last 200 comes from UE 2.
+      The P-CSCF deletes context 2, from the pass on the callee's side, as that 200 passes too.
+```
+
+- The AS answers UE 1's BYE in its own dialog, then sends a BYE of its own in the next dialog. So the 200 to UE 1 and the BYE to UE 2 may come in either order.
 
 ---
 
@@ -1839,7 +1932,7 @@ steps:
     text: The first packet goes from the S-CSCF to the AS. The AS copies each response onto its own dialog, so look beyond the AS.
 ```
 
-| Case | How to try it | How it ends | Who answers |
+| Case | How this example is made | How it ends | Who answers |
 | --- | --- | --- | --- |
 | Busy | Start UE 2 with `-reject 486`. | 486 Busy Here | UE 2 |
 | Not registered | Call `tel:+12025550103`. | 480 Temporarily Unavailable | S-CSCF |
@@ -1848,8 +1941,44 @@ steps:
 - An unregistered user still has an iFC that calls the MMTel AS. The LIA says DIAMETER_UNREGISTERED_SERVICE (2003). The S-CSCF that the I-CSCF picks answers 480 once the AS sends the INVITE back.
 - An unknown number has no ENUM record. This project has no BGCF, so the S-CSCF answers 404.
 - Which node made a response: the source address of the first packet that carries it. The AS copies each response onto its own dialog, so look beyond the AS.
+- When the caller hangs up before the answer, UE 1 sends CANCEL. The CANCEL goes hop by hop over the nodes of the INVITE, and the INVITE of each hop ends with 487 Request Terminated. When the callee's user hangs up while it rings, UE 2 declines with 603 Decline.
 
 > Guide: ["Make a call"](../../../docs/guide/en/call.md#make-a-call), [3](../../../docs/guide/en/call.md#3-the-s-cscf-turns-the-number-into-a-sip-uri), [5](../../../docs/guide/en/call.md#5-the-i-cscf-asks-the-hss-where-the-callee-is-lir-and-lia). TS 29.228 6.1.4.1. TS 24.229 5.4.3.3.
+
+---
+
+## The shape of an INVITE to an unregistered callee
+
+```ims-scene
+id: unregistered
+view: ladder
+nodes: [icscf, hss, scscf, mmtel]
+lead: An unregistered callee still has an iFC that calls the MMTel AS, so the INVITE passes the AS before the S-CSCF ends it with 480.
+steps:
+  - id: lookup
+    title: The LIA gives capabilities, and the I-CSCF picks an S-CSCF
+    only: [lir-u, lia-u, inv-i-s-u, sar-u, saa-u]
+    active: lia-u
+    detail: [lia-u, saa-u]
+    checkpoint: true
+    text: |
+      The LIA is DIAMETER_UNREGISTERED_SERVICE (2003). The I-CSCF picks an S-CSCF as for a first registration.
+      The S-CSCF takes the profile of the unregistered user with a SAR of UNREGISTERED_USER.
+  - id: refuse
+    title: The AS sends it back, and the S-CSCF answers 480
+    show: [inv-s-as-u, inv-as-s-u, s-480, r480-s-as]
+    active: r480-s-as
+    detail: [s-480, r480-s-as]
+    checkpoint: true
+    text: |
+      With no call forwarding, the AS sends the INVITE back as it was. There is no registration to send it to, so the S-CSCF answers 480.
+      The first packet that carries the 480 goes from the S-CSCF to the AS, which copies it onto its own dialog.
+```
+
+- For an unregistered callee without services for the unregistered state (an iFC whose session case is TERMINATING_UNREGISTERED), the LIA is DIAMETER_ERROR_IDENTITY_NOT_REGISTERED instead, and the I-CSCF answers 480.
+- Every test subscriber of `deploy/compose` has an iFC that calls the MMTel AS while unregistered, so this network takes the way of this scene.
+
+> Guide: [5](../../../docs/guide/en/call.md#5-the-i-cscf-asks-the-hss-where-the-callee-is-lir-and-lia). TS 29.228 6.1.4.1. TS 24.229 5.4.3.3.
 
 ---
 
@@ -1886,77 +2015,29 @@ steps:
 
 ---
 
-## Calling from the Lab
+## Where the code is
 
-```sh
-docker compose --profile phones up -d --build
-```
+| Step | File to open | The function that decides |
+| --- | --- | --- |
+| 1, 8 to 13. The UE calls, answers, sends voice | `internal/ue/call.go`, `internal/ue/media.go` | `routeSet` sets the Route, `Answer` the responses |
+| 2, 7. The two passes of the P-CSCF, rewriting the SDP | `internal/pcscf/session.go` | `session` tells the way by `term`, `relaySDP` rewrites the SDP |
+| 3, 6. The S-CSCF on the caller's and the callee's side | `internal/scscf/session.go` | `session` tells the side by `orig`, `routeOriginating` uses ENUM, `routeTerminating` the Path |
+| 3, 6. The MMTel AS, a routeing B2BUA | `internal/mmtel/call.go` | `serve` takes the INVITE and sends it back |
+| 8 to 10. Preconditions | `internal/precondition` | keeps the table of `a=curr` and `a=des` |
+| 3. ENUM | `internal/sipdns/enum.go` | `ENUM` makes the SIP URI from the NAPTR |
+| 5. LIR | `internal/icscf/session.go` | `session` picks the target by the LIA |
+| 12. Relaying and latching | `internal/agw/relay.go` | `Add` makes the context |
+| Dialogs and route sets | `internal/sip/dialog.go` | `NewUACDialog` makes the route set |
 
-1. Open <http://localhost:8080>. In the card of `phone2`, set the answer policy to `manual`.
-2. In the card of `phone1`, press **Call**.
-3. In the card of `phone2`, press **Answer**. Press **Hang up** in either card.
-4. **ladder** next to the call draws its ladder, even while the call is up.
-
-- Hanging up before the answer makes the caller send CANCEL, and the callee decline with 603.
-- Do not run the `phones` and the `ue` profiles at once: two UEs of one subscriber overwrite each other's registration. The HTTP API that drives a UE is this project's own; none of it goes to the IMS.
-
-> Guide: [Watch the IMS in the Lab, "Drive the UE simulators"](../../../docs/guide/en/lab.md#drive-the-ue-simulators), and [the call guide, "Drive a UE over HTTP"](../../../docs/guide/en/call.md#drive-a-ue-over-http)
-
----
-
-## Check it in the code
-
-| Step | File to open |
-| --- | --- |
-| 1, 8 to 13. The UE calls, answers, sends voice | `internal/ue/call.go`, `internal/ue/media.go` |
-| 2, 7. The two passes of the P-CSCF, rewriting the SDP | `internal/pcscf/session.go` |
-| 3, 6. The S-CSCF on the caller's and the callee's side | `internal/scscf/session.go` |
-| 3, 6. The MMTel AS, a routeing B2BUA | `internal/mmtel/call.go` |
-| 8 to 10. Preconditions | `internal/precondition` |
-| 3. ENUM | `internal/sipdns/enum.go` |
-| 5. LIR | `internal/icscf/session.go` |
-| 12. Relaying and latching | `internal/agw/relay.go` |
-| Dialogs and route sets | `internal/sip/dialog.go` |
-
-- In `internal/scscf/session.go`, find the condition that tells originating from terminating.
-
-> Guide: ["What this project simplifies"](../../../docs/guide/en/call.md#what-this-project-simplifies)
+> Book: [From a number to the other phone](../../../docs/book/en/call.md) and [Transactions, dialogs and media negotiation in a call](../../../docs/book/en/call-signaling.md) quote and explain these functions. Guide: ["What this project simplifies"](../../../docs/guide/en/call.md#what-this-project-simplifies)
 
 ---
 
-[layout: exercise]
+## Running it yourself
 
-## Looking back
+Reading this deck needs nothing to run. For those who want to run it, these are the sections of the guide.
 
-1. How often does the Request-URI of UE 1's INVITE change before it reaches UE 2?
-2. How does the S-CSCF tell whether it serves the caller or the callee?
-3. Why is the I-CSCF not on the way of the PRACK and the BYE?
-4. Whose address is in the SDP that UE 1 receives?
-5. Which node answers 480, which answers 404, and on what grounds?
-6. Why does UE 2's 200 OK carry no SDP?
-
----
-
-[layout: answers]
-
-## Looking back: answers
-
-1. Twice. The S-CSCF turns the tel URI into a SIP URI, and the callee's S-CSCF sets UE 2's Contact.
-2. By `orig` in the URI on top of Route.
-3. It adds no Record-Route.
-4. The media relay's: the access termination of UE 1's context.
-5. The S-CSCF answers both. 480, because the LIA said DIAMETER_UNREGISTERED_SERVICE and the service of the unregistered user, the MMTel AS, did not take the call. 404, because ENUM has no record.
-6. The answer came in the reliable 183 (RFC 3262 5).
-
----
-
-## Next session
-
-- Next is SMS. It uses registration, and the way the I-CSCF finds the S-CSCF, as they are.
-- The iFCs that sent this call to the MMTel AS take the lead: they bring a short message to the IP-SM-GW.
-
-```sh
-docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
-```
-
-> The guide of the next session is [Follow a short message through the IMS](../../../docs/guide/en/sms.md).
+- How to make the call, and how to try busy, unregistered and unknown numbers: ["Make a call"](../../../docs/guide/en/call.md#make-a-call). `captures/ue2-heard.wav` holds what UE 2 heard.
+- The display filter of the capture (`sip || diameter.cmd.code == 302 || dns.qry.type == 35 || rtp || rtcp`) and how to use VoIP Calls in Wireshark: ["Open the capture"](../../../docs/guide/en/call.md#open-the-capture). The full ladder with the numbers 1 to 13: ["The sequence"](../../../docs/guide/en/call.md#the-sequence).
+- Calling from the phones of the Lab: [Watch the IMS in the Lab, "Drive the UE simulators"](../../../docs/guide/en/lab.md#drive-the-ue-simulators). Driving a UE over HTTP: [the call guide, "Drive a UE over HTTP"](../../../docs/guide/en/call.md#drive-a-ue-over-http).
+- To stop it, use the command of ["Clean up"](../../../docs/guide/en/call.md#clean-up).

@@ -1,6 +1,6 @@
 ---
 title: 音声通話の流れ
-footer: ims-practice 勉強会 5. 通話
+footer: ims-practice 5. 通話
 lang: ja
 format: visual
 ---
@@ -913,13 +913,13 @@ events:
 
 # 音声通話の流れ
 
-ims-practice 勉強会 第 5 回（中継ノードを通る通話と、その途中のプリコンディションと MMTel AS）
+（中継ノードを通る通話と、その途中のプリコンディションと MMTel AS）
 
 ---
 
 [layout: summary]
 
-## この回で分かること
+## このデッキで分かること
 
 最初の問い。UE 1 は UE 2 の IP アドレスを知っているでしょうか。知りません。知っているのは電話番号だけです。
 
@@ -931,10 +931,11 @@ ims-practice 勉強会 第 5 回（中継ノードを通る通話と、その途
 > 手順書 [音声通話の流れを追う](../../../docs/guide/ja/call.md)（`docs/guide/ja/call.md`）
 > 仕様の版は Release 18 です。TS 24.229 V18.11.0、TS 29.228 V18.0.0 と、各手順で挙げる RFC。
 > トランザクション、ダイアログ、SDP、PRACK、プリコンディションは [用語集](../../../docs/glossary.md) にあります。
+> 本 [番号から相手の電話へ](../../../docs/book/ja/call.md)、[通話のトランザクション、ダイアログ、メディアの交渉](../../../docs/book/ja/call-signaling.md)
 
 ---
 
-## 前の回から引き継ぐもの
+## 登録から引き継ぐもの
 
 通話は、登録で決まった次の 3 つを使います。
 
@@ -944,7 +945,7 @@ ims-practice 勉強会 第 5 回（中継ノードを通る通話と、その途
 | Path | S-CSCF | UE への要求を、その UE の P-CSCF へ届ける。 |
 | IP の対応付け | P-CSCF | 要求が、登録した UE から来たことを確かめる。 |
 
-- 通話の前に、2 台の UE が前の回のとおりに登録します。キャプチャの最初にその REGISTER があります。
+- 通話の前に、2 台の UE が登録のデッキのとおりに登録します。キャプチャの最初にその REGISTER があります。
 
 > 手順書 [登録の「10. S-CSCF が登録を受け付ける（200 OK）」](../../../docs/guide/ja/registration.md#10-s-cscf-が登録を受け付ける200-ok)
 
@@ -954,7 +955,7 @@ ims-practice 勉強会 第 5 回（中継ノードを通る通話と、その途
 
 ```ims-scene
 id: nodes
-lead: 1 台のノードが発信側と着信側の 2 つの立場で動きます。これがこの回のキャプチャを読む鍵です。
+lead: 1 台のノードが発信側と着信側の 2 つの立場で動きます。これがこのデッキのキャプチャを読む鍵です。
 steps:
   - id: ues
     title: UE 1（172.28.0.100）と UE 2（172.28.0.101）
@@ -980,7 +981,7 @@ steps:
     focus: [mmtel]
     text: |
       発信者と着信者の INVITE を、それぞれ受けて送り返します。
-      ここでは何も変えません。AS が何をするかは付加サービスの回で見ます。
+      ここでは何も変えません。AS が何をするかは付加サービスのデッキで見ます。
   - id: dns
     title: DNS（172.28.0.2）
     focus: [dns]
@@ -1005,49 +1006,11 @@ steps:
 | メディア中継ノード | 172.28.0.50 | RTP を中継する。P-CSCF が制御する。 |
 | MMTel AS | 172.28.0.75 | 発信者と着信者の INVITE を、それぞれ受けて送り返す。 |
 
-- 1 台のノードが、発信側と着信側の 2 つの立場で動きます。これがこの回のキャプチャを読む鍵です。実際の網では、2 つの側は別のノードで、別の網にあることも多いです。
-- ここでの MMTel AS は、INVITE を何も変えずに送り返します。AS が何をするかは付加サービスの回で見ます。
+- 1 台のノードが、発信側と着信側の 2 つの立場で動きます。これがこのデッキのキャプチャを読む鍵です。実際の網では、2 つの側は別のノードで、別の網にあることも多いです。
+- ここでの MMTel AS は、INVITE を何も変えずに送り返します。AS が何をするかは付加サービスのデッキで見ます。
 - HSS（172.28.0.10）は、I-CSCF の所在の問い合わせに Cx で、MMTel AS のサービスの設定の問い合わせに Sh で答えます。
 
 > 手順書 [「登場するノード」](../../../docs/guide/ja/call.md#登場するノード)
-
----
-
-## 実行する
-
-```sh
-docker compose up -d --build
-
-# 1 つ目の端末。UE 2 が着信を待つ。
-docker compose run --rm ue2 answer \
-  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  -password test-password-2 -wav-out /captures/ue2-heard.wav
-
-# 2 つ目の端末。UE 1 が番号で発信し、3 秒のトーンを流して切る。
-docker compose run --rm ue call -tone 3s tel:+1-202-555-0102
-```
-
-- `captures/ue2-heard.wav` に、UE 2 が聞いた音声が残ります。
-- 番号は 555-0100 から 555-0199 の範囲です。北米の番号計画（NANP）が架空の用途に取ってある番号です。
-
-> 手順書 [「発信する」](../../../docs/guide/ja/call.md#発信する)
-
----
-
-## キャプチャを開く
-
-```text
-sip || diameter.cmd.code == 302 || dns.qry.type == 35 || rtp || rtcp
-```
-
-- **Telephony > VoIP Calls** に通話が出ます。
-  - **Flow Sequence** でシーケンス図を見ます。
-  - **Play Streams** で両方向の音声を聞きます。
-- RTP がただの UDP と表示されるときは、**Analyze > Enabled Protocols** で **rtp_udp** を有効にします。
-- 手順書のシーケンス図の番号 1 から 13 が、次からのスライドの番号です。
-
-> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/call.md#キャプチャを開く) と [「シーケンス」](../../../docs/guide/ja/call.md#シーケンス)。シーケンス図の全体は手順書にあります。
 
 ---
 
@@ -1112,7 +1075,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 ```
 
 - `orig` は発信側の立場（originating）、`term` は着信側の立場（terminating）です。
-- AS はルーティングの B2BUA です（TS 24.229 5.7.5）。AS の新しい INVITE は自分の Call-ID を持つので、1 つの通話にダイアログが 3 つできます。AS がこれを作るしくみは第 7 回で読みます。
+- AS はルーティングの B2BUA です（TS 24.229 5.7.5）。AS の新しい INVITE は自分の Call-ID を持つので、1 つの通話にダイアログが 3 つできます。AS がこれを作るしくみは付加サービスのデッキで読みます。
 
 ---
 
@@ -1126,7 +1089,7 @@ P-CSCF -> UE 2: INVITE (term) // 7
 | 応答 | 8 から 11 | 183、PRACK、180、PRACK、200 OK、ACK。 |
 | 音声と切断 | 12 と 13 | RTP が中継ノードを通る。BYE で終わる。 |
 
-- この表がこの回の地図です。新しい区間に入るたびに戻ってきます。
+- この表がこのデッキの地図です。見出しの括弧の番号は、手順書のシーケンス図の番号 1 から 13 と同じです。
 
 ---
 
@@ -1195,7 +1158,7 @@ steps:
 | P-CSCF を出たあとの SDP | `c=` と `m=` が中継ノードを指す。 |
 
 - 網が信じるのは From ではなく P-Asserted-Identity です。UE が From に何を書いても関係ありません。
-- UE 1 には資源を確保するアクセス網が無いので、オファーは資源がもうあると伝えます。`-epc` を付けて起動した UE は VoLTE の UE で、PCMU より先に AMR-WB と AMR を提示します。その通話と、電話が鳴る前に資源を確保する流れは、第 9 回（VoLTE）で追います。
+- UE 1 には資源を確保するアクセス網が無いので、オファーは資源がもうあると伝えます。`-epc` を付けて起動した UE は VoLTE の UE で、PCMU より先に AMR-WB と AMR を提示します。その通話と、電話が鳴る前に資源を確保する流れは、VoLTE のデッキで追います。
 - P-CSCF と中継ノードのやり取りは、このプロジェクト独自の小さな HTTP の API です。キャプチャにも出てきます。この用途の標準のプロトコルは H.248 です。
 
 > 手順書 [1](../../../docs/guide/ja/call.md#1-ue-1-が-invite-を送る) と [2](../../../docs/guide/ja/call.md#2-p-cscf-が発信者の-s-cscf-に送る)。TS 24.229 5.1.3.1、5.1.2A.1.1、6.1.2、5.2.6.2、5.2.6.3.3。RFC 3262 4。RFC 3312。RFC 3264 5.1。
@@ -1272,9 +1235,9 @@ steps:
 
 フィルタは `dns.qry.type == 35` です。レコードは `deploy/compose/dns/e164.arpa.zone` にあります。
 
-- 番号から ENUM のドメインを手で組み立ててみます。数字を逆に並べ、1 桁ずつラベルにします。
+- ENUM のドメインは、番号の数字を逆に並べ、1 桁ずつラベルにしたものです。`+12025550102` なら、`2.0.1.0.5.5.5.2.0.2.1` に `e164.arpa` を続けます。
 - AS は発信者のサービスを Sh で HSS から読みます。既定の設定では何も変えず、新しい INVITE を送り返します。S-CSCF はその中に自分の `odi` を見つけて次の iFC へ進み、そのあとで番号を SIP URI に変えます。
-- AS の UDR と UDA は `diameter.cmd.code == 306` で見られます。Sh での読み出しは付加サービスの回で詳しく読みます。
+- AS の UDR と UDA は `diameter.cmd.code == 306` で見られます。Sh での読み出しは付加サービスのデッキで詳しく読みます。
 
 > 手順書 [3](../../../docs/guide/ja/call.md#3-s-cscf-が番号を-sip-uri-に変える)。TS 24.229 5.4.3.1、5.4.3.2、5.7.5。RFC 6050。RFC 6116。
 
@@ -1429,6 +1392,51 @@ steps:
 
 ---
 
+## 183 と PRACK の全体の形（8、9）
+
+```ims-scene
+id: shape
+view: ladder
+nodes: [ue1, pcscf, scscf, mmtel, icscf, ue2]
+lead: 183 は INVITE の道を逆にたどって I-CSCF を通り、PRACK はルートセットに沿うので I-CSCF を通りません。
+steps:
+  - id: answer
+    title: 183 が INVITE の道を逆にたどる（8）
+    only: [r183-ue2-p, r183-p-s3, r183-s-as3, r183-as-s2, r183-s-i, r183-i-s, r183-s-as2, r183-as-s1, r183-s-p1, r183-p-ue1]
+    active: r183-ue2-p
+    detail: []
+    checkpoint: true
+    text: |
+      応答は INVITE の Via をたどるので、Record-Route を付けない I-CSCF も通ります。
+      2 つの MMTel AS は、受けた 183 をそれぞれ次のダイアログに写します。
+  - id: prack
+    title: UE 1 の PRACK が発信側の AS で終わる（9）
+    show: [prack-ue1-p, prack-p-s1, prack-s-as1, pok-as-s1, pok-s-p1, pok-p-ue1]
+    active: prack-ue1-p
+    detail: []
+    checkpoint: true
+    text: |
+      PRACK はダイアログの中の要求で、ルートセットに沿って進みます。
+      ダイアログ 1 の相手は発信側の AS で、AS がすぐ 200 で答えます。
+  - id: prack-next
+    title: AS が次のダイアログで自分の PRACK を送る（9）
+    show: [prack-as-s2, prack-s-as2, pok-as-s2, pok-s-as2, prack-as-s3, prack-s-p3, prack-p-ue2, pok-ue2-p, pok-p-s3, pok-s-as3]
+    active: prack-p-ue2
+    detail: []
+    checkpoint: true
+    text: |
+      どの PRACK も I-CSCF の線に届きません。I-CSCF は Record-Route を付けず、ルートセットにいないからです。
+      ダイアログ 3 の PRACK が届くと、UE 2 は 183 を送り直すのをやめます。
+```
+
+- 183 は INVITE への応答で、INVITE のトランザクションの道、つまり Via を戻ります。だから Record-Route を付けない I-CSCF も通ります。
+- PRACK はダイアログの中の要求で、Record-Route から作ったルートセットに沿います。I-CSCF はルートセットにいないので、PRACK を受けません。
+- 別のダイアログのメッセージは別々に進むので、そのあいだの順序は決まっていません。図の段の順は一例です。
+
+> 本 [通話のトランザクション、ダイアログ、メディアの交渉](../../../docs/book/ja/call-signaling.md)
+
+---
+
 ## UE 2 が信頼性のある 183 で答える（8）
 
 ```ims-scene
@@ -1486,6 +1494,11 @@ steps:
     show: [r183-p-ue1]
     zoom: [ue1, agw, ue2, pcscf]
     text: UE 1 に見えるのは自分のコンテキストのアクセス側です。どちらの UE も中継ノードとだけやり取りします。
+  - id: ue1-sdp
+    title: UE 1 に見える SDP
+    only: [r183-p-ue1]
+    detail: [r183-p-ue1]
+    text: UE 1 の 183 の SDP は、UE 2 ではなく、コンテキスト 1 のアクセス側のターミネーションを指しています。
 ```
 
 | 見るもの | 見どころ |
@@ -1551,6 +1564,46 @@ steps:
 - 2 つのダイアログのメッセージは別々の経路を進むので、キャプチャでの順序は決まっていません。
 
 > 手順書 [9](../../../docs/guide/ja/call.md#9-ue-1-が-183-を確認するprack)。RFC 3262 3、4。RFC 3261 12.2.1.1。
+
+---
+
+## 200 OK と ACK の全体の形（10、11）
+
+```ims-scene
+id: shape-confirm
+view: ladder
+nodes: [ue1, pcscf, scscf, mmtel, icscf, ue2]
+lead: 200 OK は INVITE の道を逆にたどり、ACK はダイアログごとにルートセットに沿って進みます。
+steps:
+  - id: confirm
+    title: UE 2 の 200 OK に着信側の AS が ACK を返す（10、11）
+    only: [ok-ue2-p, ok-p-s3, ok-s-as3, ack-as-s3, ack-s-p3, ack-p-ue2]
+    active: ok-ue2-p
+    detail: []
+    checkpoint: true
+    text: |
+      その前の 180 とその PRACK は、183 と同じ道を通るので、図から省いています。
+      着信側の AS は UE 2 の 200 にすぐ ACK を返します。
+  - id: confirm-next
+    title: ダイアログ 2 の 200 OK が I-CSCF を通る（10、11）
+    show: [ok-as-s2, ok-s-i, ok-i-s, ok-s-as2, ack-as-s2, ack-s-as2]
+    active: ok-s-i
+    detail: []
+    checkpoint: true
+    text: |
+      200 OK は INVITE の道を逆にたどるので I-CSCF を通り、ACK はルートセットに沿うので通りません。
+  - id: confirm-last
+    title: 200 OK が UE 1 に届き、UE 1 が ACK を送る（10、11）
+    show: [ok-as-s1, ok-s-p1, ok-p-ue1, ack-ue1-p, ack-p-s1, ack-s-as1]
+    active: ok-p-ue1
+    detail: []
+    checkpoint: true
+    text: |
+      これでダイアログ 1 が確定します。UE 2 への ACK が UE 1 への 200 より先に来ることがあります。
+```
+
+- 着信側の AS は UE 2 の 200 にすぐ ACK を返すので、UE 2 への ACK が UE 1 への 200 より先に来ることがあります。ダイアログが違うメッセージの順序は決まっていません。図の段の順は一例です。
+- 180 とその PRACK は 183 と同じ道を通るので、この図からは省いています。
 
 ---
 
@@ -1658,6 +1711,7 @@ steps:
     title: RTP が UE 2 に届く
     checkpoint: true
     show: [rtp-agw-ue2]
+    detail: [agw-relay, rtp-agw-ue2]
     zoom: [ue1, agw, ue2, pcscf]
     text: UE どうしは直接やり取りしません。2 台の UE が別々の P-CSCF の後ろにいても、通話は同じに見えます。
   - id: latch
@@ -1702,10 +1756,49 @@ UE 1 -> relay access (context 1) -> relay core (context 1)
 
 ## 2 つのコンテキストとラッチング（12）
 
-- 1 つの通話に、中継ノードのコンテキストが 2 つあります。発信側を通る P-CSCF が 1 つ、着信側を通る P-CSCF がもう 1 つを作ります。P-CSCF はどちらの回も、自分の側だけを扱います。
+- 1 つの通話に、中継ノードのコンテキストが 2 つあります。発信側を通る P-CSCF が 1 つ、着信側を通る P-CSCF がもう 1 つを作ります。P-CSCF はどちらの通過でも、自分の側だけを扱います。
 - だから RTP は、2 つの網の IMS-AGW を通るのと同じように、中継ノードを 2 回通ります。キャプチャでも 2 つの側を見分けられます。2 台の UE が別々の P-CSCF の後ろにいても、通話は同じに見えます。
 - ラッチングは NAT の後ろの UE のためです。ホストのソフトフォンは、SDP には書けないアドレスから送ってきます。実際の網の P-CSCF と IMS-AGW も同じことをします。
 - RTCP の複合パケットには、送信の報告（UE が何も送っていない間は受信の報告）と、CNAME の入った SDES があります。RTCP の BYE で流れが終わります。
+
+---
+
+## BYE の全体の形（13）
+
+```ims-scene
+id: shape-bye
+view: ladder
+nodes: [ue1, agw, pcscf, scscf, mmtel, ue2]
+lead: BYE もダイアログの中の要求で、ダイアログごとに相手が 200 で答えます。P-CSCF は 200 が通るときにコンテキストを削除します。
+steps:
+  - id: bye
+    title: UE 1 の BYE に発信側の AS が答える（13）
+    only: [bye-ue1-p, bye-p-s1, bye-s-as1, bok-as-s1, bok-s-p1, bok-p-ue1, del1, del1-ok]
+    active: bye-ue1-p
+    detail: []
+    checkpoint: true
+    text: |
+      BYE はルートセットに沿って、ダイアログ 1 の相手の AS まで進みます。
+      P-CSCF は、200 を UE 1 に送ってから、コンテキスト 1 を削除します。
+  - id: bye-next
+    title: AS が次のダイアログで自分の BYE を送る（13）
+    show: [bye-as-s2, bye-s-as2, bok-as-s2, bok-s-as2]
+    active: bye-as-s2
+    detail: []
+    checkpoint: true
+    text: ダイアログ 2 の BYE は、2 つの AS のあいだを S-CSCF を通って進みます。
+  - id: bye-last
+    title: BYE が UE 2 に届き、最後の 200 が返る（13）
+    show: [bye-as-s3, bye-s-p3, bye-p-ue2, bok-ue2-p, bok-p-s3, bok-s-as3, del2, del2-ok]
+    active: bye-p-ue2
+    detail: []
+    checkpoint: true
+    text: |
+      最後の 200 は UE 2 から返ります。
+      P-CSCF は、着信側の通過で作ったコンテキスト 2 も、200 が通るときに削除します。
+```
+
+- AS は UE 1 の BYE に自分のダイアログで答えてから、次のダイアログに自分の BYE を送ります。だから UE 1 への 200 と UE 2 への BYE は、どちらが先に来ることもあります。
 
 ---
 
@@ -1839,7 +1932,7 @@ steps:
     text: 最初のパケットは S-CSCF から AS へ出ます。AS は受け取った応答を自分のダイアログに写すので、AS より先を探します。
 ```
 
-| 場合 | 試し方 | 終わり方 | 返すノード |
+| 場合 | この例の作り方 | 終わり方 | 返すノード |
 | --- | --- | --- | --- |
 | 話中 | UE 2 を `-reject 486` 付きで起動する。 | 486 Busy Here | UE 2 |
 | 未登録 | `tel:+12025550103` に発信する。 | 480 Temporarily Unavailable | S-CSCF |
@@ -1848,8 +1941,44 @@ steps:
 - 未登録の利用者にも、MMTel AS を呼ぶ iFC があります。LIA は DIAMETER_UNREGISTERED_SERVICE（2003）になります。I-CSCF が選んだ S-CSCF は、AS が INVITE を送り返したところで 480 を返します。
 - 存在しない番号には ENUM のレコードがありません。このプロジェクトには BGCF が無いので、S-CSCF が 404 で答えます。
 - 応答を作ったノードは、その応答を運ぶ最初のパケットの送信元で分かります。AS は受け取った応答を自分のダイアログに写すので、AS より先を探します。
+- 応答の前に発信者が切ると、UE 1 は CANCEL を送ります。CANCEL は INVITE と同じノードを 1 区間ずつ進み、各区間の INVITE は 487 Request Terminated で終わります。鳴っている間に着信側の利用者が切ると、UE 2 は 603 Decline で断ります。
 
 > 手順書 [「発信する」](../../../docs/guide/ja/call.md#発信する)、[3](../../../docs/guide/ja/call.md#3-s-cscf-が番号を-sip-uri-に変える)、[5](../../../docs/guide/ja/call.md#5-i-cscf-が着信者の所在を-hss-に問い合わせるlir-と-lia)。TS 29.228 6.1.4.1。TS 24.229 5.4.3.3。
+
+---
+
+## 未登録の着信者への INVITE の全体の形
+
+```ims-scene
+id: unregistered
+view: ladder
+nodes: [icscf, hss, scscf, mmtel]
+lead: 未登録の着信者にも MMTel AS を呼ぶ iFC があるので、INVITE は AS を通ってから、S-CSCF が 480 で終えます。
+steps:
+  - id: lookup
+    title: LIA が能力を返し、I-CSCF が S-CSCF を選ぶ
+    only: [lir-u, lia-u, inv-i-s-u, sar-u, saa-u]
+    active: lia-u
+    detail: [lia-u, saa-u]
+    checkpoint: true
+    text: |
+      LIA は DIAMETER_UNREGISTERED_SERVICE（2003）です。I-CSCF は初回の登録と同じように S-CSCF を選びます。
+      S-CSCF は UNREGISTERED_USER の SAR で、未登録の利用者のプロファイルを受け取ります。
+  - id: refuse
+    title: AS が送り返し、S-CSCF が 480 を返す
+    show: [inv-s-as-u, inv-as-s-u, s-480, r480-s-as]
+    active: r480-s-as
+    detail: [s-480, r480-s-as]
+    checkpoint: true
+    text: |
+      着信転送が無いので、AS は INVITE をそのまま送り返します。送る先の登録が無いので、S-CSCF が 480 を返します。
+      480 を運ぶ最初のパケットは S-CSCF から AS へ出ます。AS はそれを自分のダイアログに写します。
+```
+
+- 同じ未登録の着信者でも、未登録の状態のサービス（session case が TERMINATING_UNREGISTERED の iFC）が無ければ、LIA は DIAMETER_ERROR_IDENTITY_NOT_REGISTERED になり、I-CSCF が 480 を返します。
+- `deploy/compose` の試験用の加入者には、どれも未登録のときに MMTel AS を呼ぶ iFC があるので、この構成ではこのシーンの流れになります。
+
+> 手順書 [5](../../../docs/guide/ja/call.md#5-i-cscf-が着信者の所在を-hss-に問い合わせるlir-と-lia)。TS 29.228 6.1.4.1。TS 24.229 5.4.3.3。
 
 ---
 
@@ -1886,77 +2015,29 @@ steps:
 
 ---
 
-## ラボから通話をかける
+## コードの場所
 
-```sh
-docker compose --profile phones up -d --build
-```
+| 手順 | 開くファイル | 判断する関数 |
+| --- | --- | --- |
+| 1、8 から 13。UE の発信、応答、音声 | `internal/ue/call.go`、`internal/ue/media.go` | `routeSet` が Route を、`Answer` が応答を決める |
+| 2、7。P-CSCF の 2 回の通過と SDP の書き換え | `internal/pcscf/session.go` | `session` が `term` で向きを決め、`relaySDP` が SDP を書き換える |
+| 3、6。S-CSCF の発信側と着信側 | `internal/scscf/session.go` | `session` が `orig` で立場を決め、`routeOriginating` が ENUM を、`routeTerminating` が Path を使う |
+| 3、6。MMTel AS（routeing B2BUA） | `internal/mmtel/call.go` | `serve` が INVITE を受けて送り返す |
+| 8 から 10。プリコンディション | `internal/precondition` | `a=curr` と `a=des` の表を持つ |
+| 3。ENUM | `internal/sipdns/enum.go` | `ENUM` が NAPTR から SIP URI を作る |
+| 5。LIR | `internal/icscf/session.go` | `session` が LIA で送り先を決める |
+| 12。中継とラッチング | `internal/agw/relay.go` | `Add` がコンテキストを作る |
+| ダイアログとルートセット | `internal/sip/dialog.go` | `NewUACDialog` がルートセットを作る |
 
-1. <http://localhost:8080> を開きます。`phone2` のカードで、応答方針を `manual` にします。
-2. `phone1` のカードで **Call** を押します。
-3. `phone2` のカードで **Answer** を押します。どちらかで **Hang up** を押します。
-4. 通話の横の **ladder** を選ぶと、通話中でもシーケンス図が出ます。
-
-- 応答の前に切ると、発信側は CANCEL を送り、着信側は 603 で断ります。
-- `phones` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になり、互いの登録を上書きします。UE を動かす HTTP の API はこのプロジェクト独自のもので、IMS には何も流れません。
-
-> 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する) と、[通話の「HTTP で UE を操作する」](../../../docs/guide/ja/call.md#http-で-ue-を操作する)
-
----
-
-## コードで確かめる
-
-| 手順 | 開くファイル |
-| --- | --- |
-| 1、8 から 13。UE の発信、応答、音声 | `internal/ue/call.go`、`internal/ue/media.go` |
-| 2、7。P-CSCF の 2 回の通過と SDP の書き換え | `internal/pcscf/session.go` |
-| 3、6。S-CSCF の発信側と着信側 | `internal/scscf/session.go` |
-| 3、6。MMTel AS（routeing B2BUA） | `internal/mmtel/call.go` |
-| 8 から 10。プリコンディション | `internal/precondition` |
-| 3。ENUM | `internal/sipdns/enum.go` |
-| 5。LIR | `internal/icscf/session.go` |
-| 12。中継とラッチング | `internal/agw/relay.go` |
-| ダイアログとルートセット | `internal/sip/dialog.go` |
-
-- `internal/scscf/session.go` で、発信側と着信側を見分ける条件を探します。
-
-> 手順書 [「このプロジェクトで簡略化していること」](../../../docs/guide/ja/call.md#このプロジェクトで簡略化していること)
+> 本 [番号から相手の電話へ](../../../docs/book/ja/call.md) と [通話のトランザクション、ダイアログ、メディアの交渉](../../../docs/book/ja/call-signaling.md) が、これらの関数を抜き出して説明します。手順書 [「このプロジェクトで簡略化していること」](../../../docs/guide/ja/call.md#このプロジェクトで簡略化していること)
 
 ---
 
-[layout: exercise]
+## 自分で動かす場合
 
-## 振り返り
+このデッキを読むのに、構成を動かす必要はありません。自分で動かしたい人のために、手順書の節を挙げます。
 
-1. UE 1 の INVITE の Request-URI は、UE 2 に届くまでに何回変わりますか。
-2. S-CSCF は、自分が発信側か着信側かを、何で見分けますか。
-3. I-CSCF が PRACK と BYE の経路にいないのは、なぜですか。
-4. UE 1 が受け取る SDP のアドレスは、誰のものですか。
-5. 480 と 404 は、それぞれどのノードが、何を根拠に返しますか。
-6. UE 2 の 200 OK に SDP が無いのは、なぜですか。
-
----
-
-[layout: answers]
-
-## 振り返りの答え
-
-1. 2 回です。S-CSCF が tel URI を SIP URI に変え、着信側の S-CSCF が UE 2 の Contact にします。
-2. Route の先頭の URI にある `orig` で見分けます。
-3. Record-Route を付けないからです。
-4. メディア中継ノードのものです。UE 1 のコンテキストのアクセス側です。
-5. どちらも S-CSCF です。480 は、LIA が DIAMETER_UNREGISTERED_SERVICE で、未登録の利用者のサービスである MMTel AS が通話を受けなかったからです。404 は、ENUM にレコードが無いからです。
-6. 答えが信頼できる 183 で届いているからです（RFC 3262 5）。
-
----
-
-## 次の回
-
-- 次の回は SMS です。登録と、I-CSCF が S-CSCF を見つけるしくみを、そのまま使います。
-- この回で MMTel AS を呼んだ iFC が、次の回の主役です。ショートメッセージは iFC で IP-SM-GW に届きます。
-
-```sh
-docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
-```
-
-> 次の回の手順書は [SMS の流れを追う](../../../docs/guide/ja/sms.md) です。
+- 発信する手順と、話中、未登録、存在しない番号の試し方は [「発信する」](../../../docs/guide/ja/call.md#発信する) にあります。`captures/ue2-heard.wav` に、UE 2 が聞いた音声が残ります。
+- キャプチャの表示フィルタ（`sip || diameter.cmd.code == 302 || dns.qry.type == 35 || rtp || rtcp`）と、Wireshark の VoIP Calls の使い方は [「キャプチャを開く」](../../../docs/guide/ja/call.md#キャプチャを開く) に、番号 1 から 13 のシーケンス図の全体は [「シーケンス」](../../../docs/guide/ja/call.md#シーケンス) にあります。
+- ラボの電話から発信する手順は [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する) に、UE を HTTP で操作する手順は [通話の「HTTP で UE を操作する」](../../../docs/guide/ja/call.md#http-で-ue-を操作する) にあります。
+- 止めるときは [「後片付け」](../../../docs/guide/ja/call.md#後片付け) のコマンドを使います。
