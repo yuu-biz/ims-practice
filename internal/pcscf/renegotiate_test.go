@@ -359,6 +359,54 @@ func TestRejectedOfferAfterAPreviewKeepsTheAuthorisedMedia(t *testing.T) {
 	wantAuthorised(t, pcrf, "for the answered offer", movedAgain)
 }
 
+// TestAnswerAfterAPreviewIsAuthorisedOnce: the far end shows its
+// answer to a re-INVITE of the UE in a 183 that is not reliable, and
+// then answers in its 200. The 183 is no answer (RFC 3261 13.2.1), so
+// the PCRF gets nothing for it; the 200 is, and the PCRF gets the media
+// of that answer once (TS 29.214 A.1).
+func TestAnswerAfterAPreviewIsAuthorisedOnce(t *testing.T) {
+	pcrf := &fakePolicy{}
+	c := newRawINVITEWith(t, pcrf)
+	c.st.Respond(c.response(200))
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the UE got %d, want the 200 of the far end", r.StatusCode)
+	}
+	c.ack("1")
+	wantAuthorised(t, pcrf, "for the INVITE", ueMedia)
+	before := len(pcrf.mediaRequests())
+
+	ct, st := c.reinvite(t, "2", "2", moved)
+	farMedia := netip.MustParseAddrPort("192.0.2.99:6008")
+	progress := sip.NewResponse(st.Request, 183, "")
+	progress.Add("Contact", "<"+c.farContact+">")
+	progress.Add("Content-Type", "application/sdp")
+	progress.Body = sdp.Offer("3", farMedia).Bytes()
+	st.Respond(progress)
+	r := next(t, ct.Responses())
+	for r.StatusCode == 100 {
+		r = next(t, ct.Responses())
+	}
+	if r.StatusCode != 183 {
+		t.Fatalf("the UE got %d, want the 183 of the far end", r.StatusCode)
+	}
+	if n := len(pcrf.mediaRequests()); n != before {
+		t.Fatalf("the PCRF got %d service information for the 183, want none", n-before)
+	}
+	answer := sip.NewResponse(st.Request, 200, "")
+	answer.Add("Contact", "<"+c.farContact+">")
+	answer.Add("Content-Type", "application/sdp")
+	answer.Body = sdp.Offer("3", farMedia).Bytes()
+	st.Respond(answer)
+	if r := final(t, ct.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the re-INVITE got %d, want the 200 of the far end", r.StatusCode)
+	}
+	c.ack("2")
+	wantAuthorised(t, pcrf, "for the answer of the 200", moved)
+	if n := len(pcrf.mediaRequests()); n != before+1 {
+		t.Errorf("the PCRF got %d service information for the re-INVITE, want one for its 200", n-before)
+	}
+}
+
 // TestRejectedOfferAfterAReliableAnswerKeepsTheNewMedia: the far end
 // answers a re-INVITE of the UE in a reliable 183, which the UE
 // acknowledges, and then turns the offer down with 488. An answer in a
