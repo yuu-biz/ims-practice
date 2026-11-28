@@ -1,12 +1,12 @@
-# Study-session slides
+# Slides
 
 [日本語](README.ja.md)
 
-The decks for study sessions on this repository. Each deck is a text file in a small Markdown-like format. A generator of this repository, [cmd/slides](cmd/slides/main.go), lays out every slide and writes two files of it: a pptx to hand out and to edit in PowerPoint, and an HTML page to present from and to study with.
+Slides that show how the IMS works in diagrams and steps. The explanation is in the Book ([docs/book/en/](../docs/book/en/README.md)); the slides show the same questions one step at a time, on the map of the network and on ladder diagrams. Each deck is a text file in a small Markdown-like format. A generator of this repository, [cmd/slides](cmd/slides/main.go), lays out every slide and writes two files of it: a pptx to edit in PowerPoint, and an HTML page to read through on your own. The same generator also draws the figures of the Book from the scenes of the decks.
 
-A slide is either a page of text, tables and code, or a scene: a diagram of the network or of the code that the learner steps through. A scene follows a signal one hop at a time, moves in on the node that handles it, shows the values it received and what it decided, and draws the next signal that follows from it. The HTML steps through a scene; the pptx keeps the states of it that a still page can explain, with the text of the steps written out beside the diagram.
+A slide is either a page of text, tables and code, or a scene: a diagram of the network or of the code that the reader steps through. A scene follows a signal one hop at a time, moves in on the node that handles it, shows the values it received and what it decided, and draws the next signal that follows from it. The HTML steps through a scene; the pptx keeps the states of it that a still page can explain, with the text of the steps written out beside the diagram.
 
-The decks do not repeat the guides. Each slide says what to look at in the capture and links to the step of the guide in [docs/guide/](../docs/guide/), where the full ladder diagram and the explanation are.
+The decks are written to be understood by reading alone. A question that a slide asks is answered on the same slide or on the slides right after it. The steps that run the setup are in the guides in [docs/guide/](../docs/guide/), and the decks point to those sections for anyone who wants to run it. The guides also have the full ladder diagrams and the explanation of the headers to look at in the capture.
 
 | Deck | Japanese | English | Guide |
 | --- | --- | --- | --- |
@@ -24,27 +24,19 @@ The decks do not repeat the guides. Each slide says what to look at in the captu
 
 Decks 1 to 10 go from the map of the code, the map of the network and the two ways of reading the signaling through registration, the call and SMS to the supplementary services, the media that the network itself plays and mixes, the VoLTE call, and a call that leaves for another operator's network. The numbers are the recommended order: the map of the network and the deck on captures and the Lab come before registration, because every deck from there on reads a part of that map in a capture, and most of them open the Lab as well; the MRF deck comes after the supplementary services, because the MMTel AS is what drives the MRFC over Mr'; the VoLTE deck comes after them, because the VoLTE guide builds on the MMTel AS, and every VoLTE call goes through it. The deck on two networks comes last, because it repeats the flows of the decks before it across a border: the call that still visits the MMTel AS and the short messages of the SMS deck, read in the captures of both networks and of the link between them, and the conference of the MRF deck, whose URI has to reach a participant of the other network unchanged. Deck 0 comes before them all: it explains the Go that a reader of this repository meets, with excerpts of the code, for those who have not read Go before.
 
-## Running a session
+## The order of reading, and the Book
 
-Each deck is one session, held in the order of the numbers. The decks carry no speaker notes: what a presenter says about a slide is on the slide, and the answers to the exercises and to "Looking back" are on the slide after them.
+The numbers are the recommended order. The table of contents of the Book ([docs/book/en/README.md](../docs/book/en/README.md)) also gives an order of reading for the beginner, intermediate and advanced levels, and each chapter lists the scenes of the deck that go with it. Read the chapter and then step through the scenes, or see the scenes first and read the reasons in the chapter; either works.
 
-- Keep the guide of the session open next to the slides. The slides give the order of reading; the guide has the explanations and the full ladder diagrams.
-- Ask everyone to have the repository open. Best is when everyone runs the scenario; if that is hard, show the presenter's screen, or hand out the capture of the scenario from the artifacts of the CI.
-- The clause numbers are those of the editions that the guides name. Tell anyone who has another edition open that the numbers may differ.
+- Read the map of the network and the deck on captures and the Lab before registration. Every deck from there on reads a part of that map in a capture.
+- Read the decks on registration and the call before those on SMS, the supplementary services, the MRF, VoLTE and the interconnect. The later decks do not explain again how to read Path, Service-Route, the LIR, INVITE, PRACK, ACK and an iFC.
+- The MRF deck comes after the supplementary services, and the VoLTE deck after that. The MMTel AS is what drives the MRFC, and every VoLTE call goes through the MMTel AS.
+- The deck on two networks comes last. It runs the flows of the call, SMS and the conference from the decks before it across the border.
+- Deck 0, on Go, is optional. It helps those who have not read Go before to read the excerpts of the code in the decks and the Book.
 
-| Deck | Time | How the time goes |
-| --- | --- | --- |
-| 0. Go | 60 min | 25 for "Why Go" (3), running the tests and the shape of the code (10), then 35 for what you meet on every page (20) and a spec-shaped package (10). The exercises take 15 more, in pairs. For those who program in another language but have not read Go; those who read Go start with deck 1. |
-| 1. Package layout | 45 min | No signaling: the map of what is where. 3 for the top of the repository, 5 for "internal/ in layers", 10 for following one REGISTER through the code in pairs. |
-| 2. The map of the network | 45 min | No signaling either: the nodes, the interfaces between them, and the protocol on each. 10 for the nodes, 15 for the reference points, 10 for which session opens which part of the map. It comes before registration, because every session from there on reads a part of the map in a capture. |
-| 3. Captures and the Lab | 45 min | No new signaling either: the two ways of looking at it. 20 for the capture, the filter and the ladder of Wireshark, 15 for the Lab and how it builds a ladder of its own, 10 for "Looking back" and for trying the filters on a capture that is already there. Every session from here on opens a capture, and most of them the Lab. |
-| 4. Registration | 60 min | 35 for the way to the 200 OK, then 5 for a break or questions at "The UE is registered", and the rest for the subscriptions, the deregistration and the failures. The capture of the CI artifact `registration-capture` can stand in for running it. |
-| 5. Call | 60 min | 30 until the INVITE reaches UE 2 (about the slide "6 and 7"), 20 from the answer to the hang-up, the rest for the failures and "Looking back". Whoever dislikes two terminals can drive the UEs from the Lab. |
-| 6. SMS | 90 min | May be held as two sessions; then the first ends after "13 to 15. The status report", at about 45 minutes, and the second starts with the four slides on holding and alerting, from "A1 to A4", which take about 20 minutes. Reading the body by hand is a 10-minute exercise. The table of the six MESSAGEs, printed, keeps everyone on track in the capture. The CI artifact `sms-capture` holds the capture and the list of its frames. Registration and the call come first: Path, Service-Route and the LIR are not explained again. |
-| 7. Supplementary services | 80 min | The first half is how the AS works and where its settings are; the second half reads the capture service by service. May be held as two sessions, split before "Open the capture". The call and SMS come first: INVITE, PRACK, ACK and how to read an iFC are not explained again. The CI artifact `mmtel-capture` holds the capture and the list of its frames. |
-| 8. The MRF | 60 min | 20 for what an MRF is, the MRFC and the MRFP, and how the AS asks for a service; 20 for the announcement and the tone in the capture; 20 for the conference. The session on the MMTel AS comes first: every request for media starts at the AS, and the calls are the calls of that session. The CI artifact `mrf-capture` holds the capture, the list of frames and the logs of the UEs. |
-| 9. VoLTE | 90 min | The first half is the access network and IMS AKA, the second half Rx and the call. May be held as two sessions, split before "Policy control over Rx, and the VoLTE call"; end the first half at the AAR right after the registration (#786). Hold it after the session on the MMTel AS: every VoLTE call goes through the MMTel AS, and registration, the call and the three dialogs of the AS are not explained again. The CI artifact `volte-capture` holds the capture, the AMR recordings, the list of frames and the logs of the UEs. |
-| 10. Two networks | 75 min | 20 for the two networks, the IBCF and the TrGW, and the four reference points of the border; 25 for the call and the three captures side by side; 15 for the agreements and the calls that fail on them; the rest for the short messages and the conference across the border. Hold it after the sessions on the call, SMS and the supplementary services: this session runs their flows across a border and explains them again nowhere. The CI artifact `interconnect-capture` holds the captures of both networks and of the link. |
+The clause numbers are those of the editions that the guides name. Another edition may number them differently.
+
+To run it yourself, start the setup from the section of the guide that the deck points to, and open the capture. Without running anything, the CI artifacts hold the capture of each scenario: `registration-capture`, `sms-capture`, `mmtel-capture`, `mrf-capture`, `volte-capture` (with the AMR recordings and the logs of the UEs), and `interconnect-capture` (both networks and the link between them).
 
 ## Build
 
@@ -69,6 +61,35 @@ The links to the guides are relative, so they work in the files that are opened 
 ```sh
 go run ./cmd/slides -repo-url https://github.com/<owner>/<repository>/blob/<commit> build
 ```
+
+## Book
+
+The text of the Book is plain Markdown in [docs/book/](../docs/book/en/README.md), which the repository host shows as it is. The generator reads three shapes in the text:
+
+- An image that points to `figures/<deck>.<scene>.<step>.svg` is a figure. It draws that step of that scene of the deck in the same language as a whole diagram. A map is drawn whole; a ladder diagram from its first row to the last row of that step. Below the diagram go the table of the fields that the step shows in `detail`, and below that the legend of the line styles and the basis of the diagram (the behaviour of this implementation, a procedure of the specification, or an example for the explanation). The SVG uses no CSS and no script, so it opens on its own as an image.
+- A code block right below a paragraph that is only a link to a file is an excerpt of that file. As in the decks, it must equal consecutive lines of the file.
+- A link to a chapter file in the same directory is a link to a chapter.
+
+The order of the chapters is in [docs/book/book.yaml](../docs/book/book.yaml), and the `README.md` of each language is the table of contents. [docs/book/units.yaml](../docs/book/units.yaml) lists, for each unit of study, the question, the setup, the chapter, the scenes, the names of the code and the tests that the explanation cites, the clauses, and the commit of the code that was checked.
+
+```sh
+GOTOOLCHAIN=auto go run ./cmd/slides figures   # redraw the figures of the text from the decks, and delete those that no chapter uses
+GOTOOLCHAIN=auto go run ./cmd/slides check     # check the text along with the decks
+```
+
+`check` reports these in the text: a link to a file or heading that does not exist, an excerpt that is no longer in its file, a figure that differs by even one byte from what the current deck draws, a figure file that no chapter uses, a figure whose scene or step does not exist, a chapter that the table of contents does not link, a chapter file that is not in `book.yaml`, a chapter whose figures or excerpts differ between Japanese and English, and a function, type, test or scene that a unit of study names but that no longer exists. It also lists a unit as "to read again" when its code or tests have changed since its `verified` commit. That only lists it and does not fail. Read the chapter again, and if it is still right, move `verified` forward.
+
+### Make a Zenn draft
+
+This writes the Book in the shape of a Zenn book and previews it locally. What it writes is an unpublished draft (`published: false`), and it sends nothing anywhere.
+
+```sh
+GOTOOLCHAIN=auto go run ./cmd/slides -repo-url https://github.com/yuu-biz/ims-practice/blob/$(git rev-parse HEAD) zenn
+node book-images.js dist/zenn
+cd dist/zenn && npx zenn-cli@0.5.14 preview
+```
+
+`zenn` writes `config.yaml` and the chapter files to `dist/zenn/books/ims-practice-book/`, and the SVG of the figures to `dist/zenn/images/ims-practice-book/`. The title of a chapter moves into its front matter. A link to a chapter becomes a link to that chapter in the book, and a link to any other file becomes its GitHub address at the commit of `-repo-url`. Each excerpt is also checked against the file at that commit, and if it differs, nothing is written. With `-lang en`, it writes the English text to `books/ims-practice-book-en/`. Zenn does not accept SVG images, so `book-images.js` turns each figure into a PNG at twice the size with Chromium, and also draws the cover `cover.png` (500 × 700). It needs Playwright and its Chromium. The images of the preview load lazily, so scroll before you look at them.
 
 ## What is in the pptx
 
@@ -156,7 +177,7 @@ The text of a scene goes through the same checks as the text of a slide: the lea
 
 For each deck it names the slides whose text was made smaller to fit, and by how much. To read the flags of `ue`, the check builds `./cmd/ue` at the root of the repository and runs it, so a check takes longer while Go builds it.
 
-`go test ./...` at the root of the repository runs the same checks on the decks (the test `TestDecks` in `cmd/slides`), so the CI fails on them too. The tests of `internal/pptx` build every deck as well and check each part of the package: that every part has a content type and every relationship a part, and that each element the writer makes has its children in the order, and the children and attributes, that the schemas of ECMA-376 give its type. They then hand every part to `xmllint` to validate against those schemas themselves: [internal/pptx/testdata/ecma376](internal/pptx/testdata/ecma376/README.md) holds the Transitional schemas that Ecma International publishes with ECMA-376, the ones for the namespaces the writer makes, and names where each comes from. The schemas catch what a reader of the file would also refuse and the check of the order does not see, such as an attribute whose value is outside the set its type allows. A machine without `xmllint` (the package `libxml2-utils`) skips that test and runs the rest; with `PPTX_XMLLINT=xmllint` in the environment, a missing `xmllint` is a failure instead, which is how the CI runs it. `python3 scripts/check_links.py` at the root checks the links of every Markdown file of the repository, the decks included.
+`go test ./...` at the root of the repository runs the same checks on the decks and the Book (the tests `TestDecks` and `TestBook` in `cmd/slides`), so the CI fails on them too. The tests of `internal/pptx` build every deck as well and check each part of the package: that every part has a content type and every relationship a part, and that each element the writer makes has its children in the order, and the children and attributes, that the schemas of ECMA-376 give its type. They then hand every part to `xmllint` to validate against those schemas themselves: [internal/pptx/testdata/ecma376](internal/pptx/testdata/ecma376/README.md) holds the Transitional schemas that Ecma International publishes with ECMA-376, the ones for the namespaces the writer makes, and names where each comes from. The schemas catch what a reader of the file would also refuse and the check of the order does not see, such as an attribute whose value is outside the set its type allows. A machine without `xmllint` (the package `libxml2-utils`) skips that test and runs the rest; with `PPTX_XMLLINT=xmllint` in the environment, a missing `xmllint` is a failure instead, which is how the CI runs it. `python3 scripts/check_links.py` at the root checks the links of every Markdown file of the repository, the decks included.
 
 ## Write a deck
 
@@ -165,13 +186,13 @@ A deck is a text file that reads like Markdown in the repository. The format is 
 ````markdown
 ---
 title: A UE registers with the IMS
-footer: ims-practice study session 4. Registration
+footer: ims-practice 4. Registration
 lang: en
 ---
 
 # A UE registers with the IMS
 
-ims-practice study session 4 (registration with SIP Digest)
+Registration with SIP Digest
 
 ---
 
@@ -188,17 +209,15 @@ UE <-- P-CSCF <-- I-CSCF <-- S-CSCF: 401 // 6
 
 ---
 
-[layout: exercise]
+## Why there are two REGISTERs
 
-## Looking back
-
-1. Why are there two REGISTERs?
+The network answers the first REGISTER with a challenge for authentication (the nonce). In the second REGISTER, the UE answers that challenge.
 ````
 
 - **Front matter.** The file starts with `title` (the name of the deck), `footer` (the text at the foot of each slide) and `lang` (`en` or `ja`, the same as the directory), between two `---` lines. No other key is allowed.
-- **Slides.** A line `---` ends a slide. Each slide starts with its heading: `#` for the first slide, the title slide, and for a slide that opens a part of the session; `##` for every other slide. A title slide and a section slide hold only paragraphs, which become the subtitle.
+- **Slides.** A line `---` ends a slide. Each slide starts with its heading: `#` for the first slide, the title slide, and for a slide that opens a part of the deck; `##` for every other slide. A title slide and a section slide hold only paragraphs, which become the subtitle.
 - **Layout.** A line `[layout: NAME]` before the heading picks a layout other than `content`. A `two-columns` slide has one line `[column]` between its two columns.
-- **No comments.** An HTML comment `<!-- ... -->` is an error: the decks have no speaker notes. A question for the room goes on its slide with its answer, the answers to the exercises on an `answers` slide after them, and the timing in "Running a session" above.
+- **No comments.** An HTML comment `<!-- ... -->` is an error: the decks have no speaker notes. A question for the reader goes with its answer, on the same slide or on the slide right after it.
 
 ### Blocks
 
@@ -233,13 +252,11 @@ A label is plain text. A row with a label wider than the diagram, or a participa
 
 | Layout | Chosen by | What it is |
 | --- | --- | --- |
-| `title` | `#` on the first slide | The title of the session, a short rule and the subtitle, beside a band of the accent colour. |
-| `section` | `#` on any later slide | Opens a part of the session, white on the accent colour. |
+| `title` | `#` on the first slide | The title of the deck, a short rule and the subtitle, beside a band of the accent colour. |
+| `section` | `#` on any later slide | Opens a part of the deck, white on the accent colour. |
 | `content` | `##`, the default | The title with a rule under it, and the blocks from top to bottom. Tables, code and ladder diagrams take the whole width. |
 | `two-columns` | `[layout: two-columns]` | The same, with the blocks in two columns of equal width. |
-| `exercise` | `[layout: exercise]` | A content slide in ochre, with the tag "Exercise", for the exercises and "Looking back". |
-| `answers` | `[layout: answers]` | A content slide in green, with the tag "Answers", right after its exercise. |
-| `summary` | `[layout: summary]` | The blocks on a tinted panel, for "What you will know after this session". |
+| `summary` | `[layout: summary]` | The blocks on a tinted panel, for "What this deck covers". |
 
 Every slide has the footer of the deck at the bottom left, and every slide but the first its number at the bottom right. A slide whose content is too tall gets a smaller text, down to 80%; below that the check fails.
 
@@ -250,7 +267,7 @@ A deck with scenes has `format: visual` in its front matter, and between the fro
 ````markdown
 ---
 title: A UE registers with the IMS
-footer: ims-practice study session 4. Registration
+footer: ims-practice 4. Registration
 lang: en
 format: visual
 ---
@@ -362,7 +379,7 @@ How to choose and split the scenes:
 - A step about what a node decides is a `do` event at that node, with its inputs and its result as fields.
 - Where many events gather on a map, start a step with `only` to clear what the learner no longer needs.
 - Mark a checkpoint where a still page can explain what happened since the one before. A checkpoint whose text and fields do not fit on a page fails the check: mark an earlier step as a checkpoint.
-- Keep everything of the old slide that the steps do not say in the longer explanation: nothing that a learner needs is left out, and nothing goes into speaker notes.
+- Keep everything of the old slide that the steps do not say, in the longer explanation or in the text of the Book. For anything moved to another file, write where it went in the table of the migration. Nothing that a reader needs is left out, and nothing goes into speaker notes.
 
 ### Add a deck
 

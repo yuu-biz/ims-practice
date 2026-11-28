@@ -27,8 +27,8 @@ const (
 	ColorCodeLine   = "D8DEE4"
 	ColorHeaderFill = "E6EDF5"
 	ColorPanelFill  = "F2F6FA"
-	ColorExercise   = "9A6700"
-	ColorAnswers    = "1A7F37"
+	ColorOchre      = "9A6700"
+	ColorGreen      = "1A7F37"
 	ColorWhite      = "FFFFFF"
 	ColorOnAccent   = "D6E2F0"
 	ColorLifeline   = "8C959F"
@@ -130,8 +130,8 @@ var scales = []float64{1, 0.95, 0.9, 0.85, 0.8}
 
 // Words that the layouts put on a slide, by the language of the deck.
 var tagWords = map[string]map[string]string{
-	"en": {"exercise": "Exercise", "answers": "Answers", "details": "Details"},
-	"ja": {"exercise": "演習", "answers": "解答", "details": "詳しく"},
+	"en": {"details": "Details"},
+	"ja": {"details": "詳しく"},
 }
 
 // BasisWords say, under each diagram, what the diagram is drawn from.

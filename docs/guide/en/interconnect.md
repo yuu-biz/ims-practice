@@ -2,6 +2,8 @@
 
 [日本語](../ja/interconnect.md)
 
+> This guide has the steps to run the setup and see it for yourself. The explanation that is understood by reading alone, of how it works and why, is in the book: [Interconnection between networks](../../book/en/interconnect.md).
+
 This guide joins two IMS networks of two operators and follows a call, a call back and short messages in both directions between them. On the border of each network sit an IBCF, which handles the SIP, and a TrGW, which relays the media. The guide shows what each of them changes in the messages, what each network sees of the other in its capture, and what happens when the agreements of the two operators do not match.
 
 The guide follows these editions: TS 24.229 V20.1.0, TS 29.165 V20.0.0 (the II-NNI), TS 23.204 V19.1.0 and TS 24.341 V19.0.0 (SMS over IP), TS 23.040 V20.0.0, TS 32.409 V19.0.0 (performance measurements), TS 24.147 V19.0.0 (conferences), RFC 3261, RFC 3312 and RFC 3966. Clause numbers below refer to those editions.

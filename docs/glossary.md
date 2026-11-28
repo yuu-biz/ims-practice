@@ -59,6 +59,7 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | QCI | QoS Class Identifier | A number that names a QoS class in the EPC. Voice uses QCI 1, and IMS signaling uses QCI 5. | EPC の QoS クラスを表す番号。音声は QCI 1、IMS の信号は QCI 5 を使う。 |
 | GBR | Guaranteed Bit Rate | A bearer whose bit rate the network reserves. The voice bearer (QCI 1) is a GBR bearer; the signaling bearer (QCI 5) is not (TS 23.203 6.1.7). | 網がビットレートを確保する bearer。音声の bearer（QCI 1）は GBR で、信号の bearer（QCI 5）は GBR ではない（TS 23.203 6.1.7）。 |
 | VoLTE | Voice over LTE | Voice calls over IMS on 4G access. GSMA IR.92 defines the profile. | 4G のアクセスで IMS を使う音声通話。GSMA IR.92 がプロファイルを定める。 |
+| VoNR | Voice over NR | Voice calls over IMS with the NR radio and the 5GC. GSMA NG.114 defines the profile. | NR の無線と 5GC の上で IMS を使う音声通話。GSMA NG.114 がプロファイルを決める。 |
 | EPS | Evolved Packet System | The 4G system: the LTE radio access and the EPC (TS 23.401). | 4G のシステム。LTE の無線アクセスと EPC からなる（TS 23.401）。 |
 | LTE / NR | Long Term Evolution / New Radio | The radio access of 4G and that of 5G. | 4G と 5G の無線アクセス。 |
 | 5GS | 5G System | The 5G system: the NR radio access and the 5GC (TS 23.501). | 5G のシステム。NR の無線アクセスと 5GC からなる（TS 23.501）。 |
@@ -396,6 +397,7 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | OOM | Out of memory | The state in which a system has no memory left; Linux then stops a process. | システムのメモリが尽きた状態。Linux は、このときプロセスを止める。 |
 | CLI / UI | Command-line interface / User interface | A program that is used by typing commands, and the part of a program that a person uses, such as a web page. | コマンドを打って使うプログラムと、Web のページのように、人が使うプログラムの部分。 |
 | HTML / PDF / YAML | HyperText Markup Language / Portable Document Format / YAML Ain't Markup Language | The format of web pages, a format of documents to print, and a text format of configuration files. | Web のページの形式、印刷するための文書の形式、設定ファイルのテキストの形式。 |
+| SVG / PNG | Scalable Vector Graphics / Portable Network Graphics | Two image formats. An SVG (W3C) is drawn from shapes and text, and scales without loss; a PNG (W3C, ISO/IEC 15948) is a grid of pixels. The figures of the book are SVG, and the copy of the book for Zenn has them as PNG. | 2 つの画像の形式。SVG（W3C）は図形と文字で描き、拡大しても粗くならない。PNG（W3C、ISO/IEC 15948）は画素の並び。Book の図は SVG で、Zenn に書き出した Book では PNG にする。 |
 | CSS | Cascading Style Sheets | The language that gives a web page its look: sizes, colours, places. A CSS pixel is the unit of length of a web page, which the browser scales to the screen. | Web のページの見た目（大きさ、色、位置）を決める言語。CSS のピクセルは Web のページの長さの単位で、ブラウザが画面に合わせて拡大、縮小する。 |
 | EMU | English Metric Unit | The unit of length of the files of Office, such as a pptx: 914400 to an inch, 12700 to a point. | pptx など Office のファイルの長さの単位。1 インチが 914400、1 ポイントが 12700。 |
 | FAQ | Frequently asked questions | A page of questions that are often asked, with their answers. | よく聞かれる質問と、その答えを並べたページ。 |

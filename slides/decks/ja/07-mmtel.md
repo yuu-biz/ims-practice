@@ -1,6 +1,6 @@
 ---
 title: MMTel AS の付加サービス
-footer: ims-practice 勉強会 7. 付加サービス
+footer: ims-practice 7. 付加サービス
 lang: ja
 format: visual
 ---
@@ -57,7 +57,7 @@ events:
     fields:
       - 発信側（優先度 10 と 13）: SESSION_TERMINATED。通話を終える
       - 着信側（優先度 11 と 12）: SESSION_CONTINUED。AS 無しで続ける
-      - 理由: 規制を確実に効かせる
+      - 引き換え: 発信の規制は確実に効く。着信は AS の規制なしで届く
   - id: c1-s-as1
     msg: INVITE
     from: scscf
@@ -575,7 +575,7 @@ events:
     note: (C3)
     fields:
       - Reason: "`SIP;cause=408;text=\"Request Timeout\"`"
-      - いつ: この回では 180 の 5.0 秒あと
+      - いつ: タイマーが 5 秒なら、最初の 180 の 5 秒あと
   - id: cfnr-cancel-s-p
     msg: CANCEL
     from: scscf
@@ -885,15 +885,15 @@ events:
 
 # MMTel AS の付加サービス
 
-ims-practice 勉強会 第 7 回（MMTel AS、Ut/XCAP での設定、キャプチャで見るサービス）
+付加サービス（MMTel AS、Ut/XCAP での設定、キャプチャで見るサービス）
 
 ---
 
 [layout: summary]
 
-## この回で分かること
+## このデッキで分かること
 
-最初の問い。着信を転送している電話にかけると、別の電話が鳴ります。それを決めているのは、どのノードでしょうか。
+最初の問い。着信を転送している電話にかけると、別の電話が鳴ります。それを決めているのは、どのノードでしょうか。答えは着信者の MMTel AS です。S-CSCF は iFC で INVITE を AS に渡すだけで、転送先を決めるのは、HSS にある利用者の設定を読んだ AS です。
 
 - 付加サービスとは何か。どのノードで動くか。
 - S-CSCF が通話を AS に渡すしくみ。iFC、P-Served-User、ODI。
@@ -901,6 +901,7 @@ ims-practice 勉強会 第 7 回（MMTel AS、Ut/XCAP での設定、キャプ�
 - 利用者の設定がどこにあり、UE が Ut の XCAP でそれをどう変えるか。
 - サービスごとに、キャプチャで何を見るか。識別子、着信転送、規制。
 
+> 本 [アプリケーションサーバーが加えるサービス](../../../docs/book/ja/services.md)、[iFC と MMTel AS の付加サービス](../../../docs/book/ja/mmtel.md)
 > 手順書 [MMTel AS の付加サービス](../../../docs/guide/ja/mmtel.md)（`docs/guide/ja/mmtel.md`）
 > 仕様の版は手順書の冒頭にあります。TS 24.229 V20.1.0、TS 24.604 V19.0.0、TS 24.607 V19.1.0、TS 24.611 V19.0.0、TS 24.623 V19.0.0、TS 29.364 V19.1.0、GSMA IR.92 v24.0 などです。
 
@@ -968,7 +969,7 @@ steps:
 ```ims-scene
 id: nodes
 nodes: [ue1, ue2, ue3, pcscf, icscf, scscf, hss, as1, as2]
-lead: MMTel AS は 1 台です。この回の図では受け持つ利用者ごとに分けて、2 か所に描きます。
+lead: MMTel AS は 1 台です。このデッキの図では受け持つ利用者ごとに分けて、2 か所に描きます。
 steps:
   - id: ues
     title: UE 1、UE 2、UE 3
@@ -1037,7 +1038,7 @@ steps:
     show: [scscf-default]
     focus: [scscf]
     zoom: [scscf, hss, as1]
-    text: 発信側の条件は通話を終え、着信側の条件は AS 無しで続けます。規制を確実に効かせるためです。
+    text: 発信側の条件は通話を終え、着信側の条件は AS 無しで続けます。発信の規制は守られ、着信の規制はそのあいだ効きません。
 ```
 
 | 優先度 | 一致する要求 | DefaultHandling |
@@ -1157,7 +1158,7 @@ steps:
     focus: [scscf]
     zoom: [scscf, hss, as1]
     checkpoint: true
-    text: S-CSCF は一致した条件の次から照らし合わせを続けます。SMS の回の IP-SM-GW は何も送り返しませんでしたが、MMTel AS は送り返します。
+    text: S-CSCF は一致した条件の次から照らし合わせを続けます。SMS のデッキの IP-SM-GW は何も送り返しませんでしたが、MMTel AS は送り返します。
   - id: icscf
     title: I-CSCF が UE 2 の S-CSCF を探す
     only: [c2-s-i, lir, lia, c2-i-s]
@@ -1177,6 +1178,13 @@ steps:
     text: |
       3 つのダイアログはそれぞれ自分の Call-ID、タグ、CSeq を持ちます。
       プロキシではなく B2BUA なのは、CFNR、To を変える転送、From を匿名にする OIR、音声ガイダンス、会議が、どれも B2BUA を必要とするからです。
+  - id: whole
+    title: 1 つの通話が AS を 2 回通る
+    only: [c1-ue-p, c1-p-s, c1-s-as1, c2-as1-s, c2-s-i, c2-i-s, c2-s-as2, c3-as2-s, c3-s-p, c3-p-ue2]
+    active: c3-p-ue2
+    detail: []
+    checkpoint: true
+    text: UE 1 の発信側のサービスと UE 2 の着信側のサービスのために、INVITE は S-CSCF と AS のあいだを 2 往復します。
 ```
 
 ```text
@@ -1189,7 +1197,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 ```
 
 - AS は routeing B2BUA です。受けた INVITE に UA として答え、自分の Call-ID で新しい INVITE を送ります。
-- 新しい INVITE は ODI を持って S-CSCF に戻り、S-CSCF は次の条件から続けます。SMS の回の IP-SM-GW は何も送り返しませんでしたが、MMTel AS は送り返します。
+- 新しい INVITE は ODI を持って S-CSCF に戻り、S-CSCF は次の条件から続けます。SMS のデッキの IP-SM-GW は何も送り返しませんでしたが、MMTel AS は送り返します。
 - プロキシではなく B2BUA なのはなぜでしょうか。CFNR、To を変える転送、From を匿名にする OIR、音声ガイダンス、会議が、どれも B2BUA を必要とするからです。
 
 > 手順書 [「オリジナルダイアログ識別子」](../../../docs/guide/ja/mmtel.md#オリジナルダイアログ識別子) と [「プロキシではなく B2BUA」](../../../docs/guide/ja/mmtel.md#プロキシではなく-b2bua1-つの通話に-3-つのダイアログ)。TS 24.229 5.7.5、5.7.5.2.1。
@@ -1206,7 +1214,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 | PRACK と ACK | ダイアログごとに進む。ACK が 200 より先に UE 2 に届くことがある。 |
 | BYE | AS が答え、同じ Reason を付けた新しい BYE を次に送る。 |
 
-フィルタは `sip.P-Charging-Vector contains "icid-value=..."` です。`...` には、UE 1 の P-CSCF が S-CSCF に送る INVITE から写した値を入れます。
+フィルタは `sip.P-Charging-Vector contains "icid-value=..."` です。`...` は、UE 1 の P-CSCF が S-CSCF に送る INVITE の icid-value です。
 
 - このヘッダは P-CSCF で止まります。UE は付けず、P-CSCF は UE に送る要求と応答のすべてから消します。ims0 ブリッジのキャプチャには UE との区間も入っていますが、このフィルタでは出てきません。
 - Wireshark の **VoIP Calls** は、ダイアログを 1 つずつ別の通話として並べます。1 つの通話が、一見 3 つに見えます。
@@ -1354,50 +1362,7 @@ func (n nonces) challenge(h http.Header, realm string, offered []Algorithm, stal
 - 最初のチャレンジは、ホームドメインで `algorithms`（SHA-256、MD5 の順）を示します。利用者によらないので、AS は利用者について何も読まずに送り、どの XUI でも同じになります。どのチャレンジも同じ nonce を使います。
 - 認証できなかった資格情報のあとは、`realm` と `offered` が利用者の資格情報のものになります。運用者がほかの realm や MD5 だけで与えたのでなければ、同じです。
 - 資格情報は HSS の repository data です。Service-Indication は `Ut-Digest-Credential` です。入っているのはパスワードではなく HA1 の値です（`internal/xcap/credential.go` のコメント）。
-- WWW-Authenticate は SIP Digest と同じ形なので、コードは `internal/sip` の `Challenge` をそのまま使います。登録の回の 401 と比べてみます。
-
----
-
-## 実行する
-
-```sh
-docker compose up -d --build
-docker compose run --rm ue2 xcap \
-  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  -password test-password-2 set cfu on tel:+12025550103
-
-# UE 3 が着信を待つ
-docker compose run --rm ue3 answer -impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
-  -impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org -password test-password-3
-docker compose run --rm ue call tel:+12025550102
-```
-
-- UE 1 のログに `"msg":"call progress","status":181` と `"msg":"call answered"` が出ます。
-- 止めるときは `set cfu off` です。`ue xcap` は登録を必要としません。ほかのコマンドは `get`、`set SERVICE on|off [TARGET]`、`oir restricted|not-restricted`、`noreply SECONDS` です。
-- `ue2` のサービスはアドレスが決まっているので、ほかの `ue2` のコンテナが動いている間は `ue2 xcap` を実行できません。
-
-> 手順書 [「動かしてみる」](../../../docs/guide/ja/mmtel.md#動かしてみる)。全部のサービスを、`scripts/` にある付加サービスの e2e のスクリプトが順に行います。
-
----
-
-## キャプチャを開く
-
-```text
-(sip && !(sip.CSeq.method in {"REGISTER", "SUBSCRIBE", "NOTIFY", "MESSAGE"})) || (http && ip.addr == 172.28.0.75) || diameter.cmd.code in {301, 302, 306, 307}
-```
-
-- 通話、Ut、AS の Sh の読み出しと更新、LIR と SAR が残ります。
-- **Telephony > VoIP Calls** は、ダイアログを 1 つずつ別の通話として並べます。
-- e2e のスクリプトは、すべてのサービスを 1 つのキャプチャに残します。表示フィルタで 1 つのサービスに絞ります。
-
-| サービス | きっかけ | キャプチャで見るもの |
-| --- | --- | --- |
-| OIR | 発信者の既定が非通知 | 匿名の From、`Privacy: id` |
-| CFU、CFB、CFNR、CFNL | 着信、486、無応答、未登録 | 181、History-Info、`cause=` |
-| BAIC、ACR、BAOC | 着信、匿名の着信、発信 | 183 で音声ガイダンス、そのあと 603 か 433 |
-
-> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/mmtel.md#キャプチャを開く)
+- WWW-Authenticate は SIP Digest と同じ形なので、コードは `internal/sip` の `Challenge` をそのまま使います。登録のデッキの 401 と同じ形です。
 
 ---
 
@@ -1464,7 +1429,7 @@ steps:
 | 200 OK | P-Asserted-Identity に UE 2。これが TIP。 |
 
 - 既定の文書では、AS は通話を何も変えません。それでも、どの INVITE も AS を 2 回通ります。どの利用者も既定で TIP を持ち、P-CSCF が P-Called-Party-ID を P-Asserted-Identity にします。
-- 手順書のフレーム番号はスクリプトを 1 回動かしたときのものなので、手元のキャプチャとは違います。
+- 手順書のフレーム番号は、スクリプトを 1 回動かしたときのものです。
 
 > 手順書 [「AS を通る通常の通話」](../../../docs/guide/ja/mmtel.md#as-を通る通常の通話)。TS 24.229 5.4.3.2 step 5、5.7.5.2.1、5.2.6.4.4 step 1。TS 29.364 7.2.0。TS 24.608 4.5.2.4。
 
@@ -1662,7 +1627,7 @@ steps:
     show: [cfnr-181, cfnr-181-ue1, cfnr-c4]
     active: cfnr-c4
     detail: [cfnr-181, cfnr-c4]
-    text: 181 から先は CFU と同じで、図は同じ区間を省いています。キャプチャで 180 から CANCEL までの時間を測ってみます。
+    text: 181 から先は CFU と同じで、図は同じ区間を省いています。CANCEL は最初の 180 から、タイマーの長さだけあとに出ます。
 ```
 
 | 場合 | 見どころ |
@@ -1674,7 +1639,7 @@ steps:
 
 フィルタは `sip.Method == "CANCEL" && sip.Reason` と `sip.Status-Code == 199` です。
 
-- NoReplyTimer が無ければ、事業者の既定の 20 秒になります。キャプチャで 180 から CANCEL までの時間を測ってみます。
+- NoReplyTimer が無ければ、事業者の既定の 20 秒になります。どちらでも、180 から CANCEL までの時間がタイマーの長さです。`noreply 10` にすれば 10 秒、`noreply 5` なら 5 秒です。
 - UE 1 の AS は UE 1 との初期ダイアログを 1 つのまま保つので、UE 1 は 181 と UE 3 の応答を同じ初期ダイアログで受けます。
 
 > 手順書 [「CFNR」](../../../docs/guide/ja/mmtel.md#cfnr誰も応答しない)。TS 24.604 4.5.2.6.3 item 2、4.8.1。RFC 3326 2。RFC 6228。
@@ -1835,12 +1800,7 @@ steps:
   - 着信者の UE が `Alert-Info: <urn:alert:service:call-waiting>` の 180 を送ります。
   - AS はそれを渡すか、事業者の設定で Alert-Info を取り除きます。
 - HOLD は `a=sendonly` の re-INVITE です。AS はもう一方の側にそのまま渡します。
-- `ue serve` は、通話中に 2 本目の着信を受けられます。その Alert-Info で呼び出し、`POST /answer` で 1 本目を保留にして、待っている着信に出ます。CW は `scripts/e2e-mrf.sh` がキャプチャで見せます。1 つのプロセスの試験でも確かめています。
-
-```sh
-go test -run 'TestCommunicationWaiting|TestHoldThroughTheIMS' -v ./internal/mmtel
-go test -run TestServeTwoCalls -v ./internal/ue
-```
+- `ue serve` は、通話中に 2 本目の着信を受けられます。その Alert-Info で呼び出し、`POST /answer` で 1 本目を保留にして、待っている着信に出ます。CW は `scripts/e2e-mrf.sh` がキャプチャで見せます。1 つのプロセスの試験 `TestCommunicationWaiting`、`TestHoldThroughTheIMS`、`TestServeTwoCalls` でも確かめています。
 
 - `ue serve` は 3 本目の着信に 486 で答えます。ラボの **Hold** のボタンも HOLD を送ります。
 
@@ -1874,36 +1834,14 @@ go test -run TestServeTwoCalls -v ./internal/ue
 | simservs | 一部の条件と serv-cap が無い。国は国番号で決め、国番号 1 の国々は 1 つになる。 |
 | CSCF と HSS | History-Info の非通知を掛けない。公開サービス識別子と ORIGINATING_UNREGISTERED が無い。 |
 
-```sh
-grep -rn "SIMPLIFIED:" internal/mmtel internal/xcap internal/simservs internal/config/xcap.go cmd/ue/xcap.go
-```
-
-- 出力を手順書の表と 1 つずつ突き合わせます。CSCF と HSS の項目は `internal/scscf`、`internal/icscf`、`internal/hss` にあります。
+- どの項目にも、コードに `SIMPLIFIED:` で始まるコメントがあります。CSCF と HSS の項目は `internal/scscf`、`internal/icscf`、`internal/hss` にあります。
 - nonce count を確かめないのは、複数のインスタンスで動かすための代わりです。数を覚えるには、どのインスタンスも共有する Store が要ります。
 
 > 手順書 [「このプロジェクトで簡略化していること」](../../../docs/guide/ja/mmtel.md#このプロジェクトで簡略化していること)。項目ごとの仕様の条項と理由は手順書の表にあります。
 
 ---
 
-## ラボで設定する
-
-```sh
-docker compose --profile phones up -d --build
-```
-
-1. `phone2` のカードで **Supplementary services (Ut/XCAP)** を開きます。どのサービスも最初は `off` です。
-2. **CFU (unconditional)** を選び、転送先を書いて **On** を押します。
-3. 一覧に `CFU (unconditional): on to …` と出て、ETag が 1 つ増えます。
-4. **Off** で止めます。転送先は消えずに残ります。
-
-- ラボのシーケンス図には XCAP も Sh も出ません。どちらも SIP の要求には属さないからです。キャプチャには、80 番の HTTP と 3868 番の Diameter として残ります。
-- ラボは 1 つの通話のダイアログをすべて 1 つのシーケンス図に描き、MMTel AS の列も置きます。`phones` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になります。
-
-> 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
-
----
-
-## コードで確かめる
+## コードの場所
 
 | 見たもの | 開く場所 |
 | --- | --- |
@@ -1916,73 +1854,62 @@ docker compose --profile phones up -d --build
 | P-Served-User、ODI、iFC | `internal/scscf/services.go`、`internal/ifc` |
 | HSS の設定と Ut のパスワード | `internal/hss` の `servicedata.go`、`sh.go`、`deploy/compose/hss.yaml` |
 
-- `internal/mmtel/network_test.go` は、すべてのサービスを IMS 全体を通して 1 つのプロセスで動かします。`internal/mmtel/diversion.go` で cause の値を探し、キャプチャの `cause=302` と照らし合わせます。
+- 判断を読むなら、`internal/scscf/services.go` の `invokeApplicationServers`（iFC を順に照らす）、`internal/mmtel/sessioncase.go` の `terminating`（サービスの順）、`internal/xcap/handler.go` の `change`（If-Match と 412）です。
+- `internal/mmtel/network_test.go` は、すべてのサービスを IMS 全体を通して 1 つのプロセスで動かします。cause の値は `internal/mmtel/diversion.go` の定数で、CFU はキャプチャの `cause=302` になります。
 
-> 手順書 [「コードの場所」](../../../docs/guide/ja/mmtel.md#コードの場所)
-
----
-
-[layout: exercise]
-
-## 演習
-
-1. CFNR を設定し、`noreply 5` を `noreply 10` に変えて発信します。180 から CANCEL までの時間を測ります。
-2. 転送した通話の icid-value で絞り込み、ダイアログの数を数えます。
-3. `boic on` にして、UE 1 から UE 2 に発信します。通話は規制されるでしょうか。
-4. `hss.yaml` で、発信側の条件の DefaultHandling だけが SESSION_TERMINATED なのはなぜかを説明します。
-5. XCAP の 2 回目の GET の `Authorization` を読み、どちらのアルゴリズムで答えたかを確かめます。
-
-1 と 3 では、「実行する」のスライドの形で、UE 1 か UE 2 として `ue xcap` を実行します。
+> 本 [iFC と MMTel AS の付加サービス](../../../docs/book/ja/mmtel.md)。手順書 [「コードの場所」](../../../docs/guide/ja/mmtel.md#コードの場所)
 
 ---
 
-[layout: answers]
+## 自分で動かす場合（通話と Ut）
 
-## 演習の答え
-
-1. 10 秒ほどです。タイマーは最初の 180 で始まります。
-2. C1 から C6 までの 6 つです。
-3. 規制されません。UE 2 の番号の国番号は 1 で、ホーム網と同じだからです。
-4. 規制を確実に効かせるためです。AS が答えないときに AS を通さず通話を続けると、規制をすり抜けてしまいます。
-5. SHA-256 です。最初のチャレンジです。
-
----
-
-[layout: exercise]
-
-## 振り返り
-
-1. S-CSCF は、INVITE を MMTel AS に送ることを、どうやって知りますか。
-2. AS は、その INVITE が発信側のものか着信側のものかを、何で知りますか。
-3. 1 回の通話に Call-ID が 3 つあるのは、なぜですか。
-4. AS が利用者の設定の写しを持たないのは、なぜですか。
-5. 2 人が同時に設定を変えたとき、どちらかの PUT が 412 になるのは、なぜですか。
-6. CFU と CFNR で、UE 2 の電話が鳴るのはどちらですか。
-
----
-
-[layout: answers]
-
-## 振り返りの答え
-
-1. 登録のときの SAA で届いた iFC のうち、優先度 10 から 13 の条件に INVITE が一致するからです。
-2. P-Served-User の `sescase` と `orig-cdiv` で知ります。
-3. 利用者ごとに AS が経路にいて、B2BUA の AS が新しいダイアログを作るからです。
-4. どのインスタンスでもどの通話でも受けられるようにし、AS を複数台で動かせるようにするためです。設定は HSS にだけあります。
-5. PUT は、読んだ版の ETag を If-Match に入れて送ります。先に書いた人が Sequence Number を進めたので、版が合いません。AS が If-Match で気づくか、間に合わなければ HSS が PUR を断ります。
-6. CFNR です。CFU は INVITE が届いた時点で転送するので、UE 2 は鳴りません。
-
----
-
-## 次の回
-
-- 次は MRF の回です。通話を断る前の音声ガイダンス、着信側が選ぶ呼び出し音、2 つ目の着信、3 人の会議を扱います。どれを頼むのもこの回の AS で、会議ではフォーカスにもなります。
-- その次が VoLTE の回です。VoLTE の通話も、この回の MMTel AS を通ります。
+ここから先は、構成を動かしたい人のための案内です。読むだけなら要りません。
 
 ```sh
+docker compose up -d --build
+docker compose run --rm ue2 xcap \
+  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-2 set cfu on tel:+12025550103
+
+# UE 3 が着信を待つ
+docker compose run --rm ue3 answer -impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org -password test-password-3
+docker compose run --rm ue call tel:+12025550102
+```
+
+- UE 1 のログに `"msg":"call progress","status":181` と `"msg":"call answered"` が出ます。
+- 止めるときは `set cfu off` です。`ue xcap` は登録を必要としません。ほかのコマンドは `get`、`set SERVICE on|off [TARGET]`、`oir restricted|not-restricted`、`noreply SECONDS` です。
+- `ue2` のサービスはアドレスが決まっているので、ほかの `ue2` のコンテナが動いている間は `ue2 xcap` を実行できません。
+
+> 手順書 [「動かしてみる」](../../../docs/guide/ja/mmtel.md#動かしてみる)。全部のサービスを、`scripts/` にある付加サービスの e2e のスクリプトが順に行います。
+
+---
+
+## 自分で動かす場合（キャプチャとラボ）
+
+```text
+(sip && !(sip.CSeq.method in {"REGISTER", "SUBSCRIBE", "NOTIFY", "MESSAGE"})) || (http && ip.addr == 172.28.0.75) || diameter.cmd.code in {301, 302, 306, 307}
+```
+
+- 通話、Ut、AS の Sh の読み出しと更新、LIR と SAR が残ります。**Telephony > VoIP Calls** は、ダイアログを 1 つずつ別の通話として並べます。e2e のスクリプトは、すべてのサービスを 1 つのキャプチャに残します。
+- ラボは `docker compose --profile phones up -d --build` で動かします。`phone2` のカードの **Supplementary services (Ut/XCAP)** で、どのサービスも最初は `off` です。**CFU (unconditional)** を **On** にすると `CFU (unconditional): on to …` と出て、ETag が 1 つ増えます。
+- `phones` と `ue` のプロファイルを同時に動かさないでください。同じ加入者の UE が 2 台になります。
+
+> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/mmtel.md#キャプチャを開く)、[ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
+
+---
+
+## 自分で動かす場合（試験と後片付け）
+
+```sh
+go test -run 'TestCommunicationWaiting|TestHoldThroughTheIMS' -v ./internal/mmtel
+go test -run TestServeTwoCalls -v ./internal/ue
+grep -rn "SIMPLIFIED:" internal/mmtel internal/xcap internal/simservs internal/config/xcap.go cmd/ue/xcap.go
 docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
 ```
 
-- このコマンドは `ue` と `phones` の両方のプロファイルを止め、イメージも消します。手順書の「後片付け」はすべてのプロファイルを止め、イメージを残します。次の回をビルドし直さずに始めるなら、そちらを使います。
+- 最初の 2 行は、CW と HOLD を 1 つのプロセスの中の IMS で確かめる試験です。3 行目は、簡略化した箇所のコメントを一覧します。
+- 最後の行は `ue` と `phones` の両方のプロファイルを止め、イメージも消します。手順書の「後片付け」はすべてのプロファイルを止め、イメージを残します。
 
 > 手順書の一覧は [docs/guide/](../../../docs/guide/) にあります。

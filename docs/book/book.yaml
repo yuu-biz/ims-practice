@@ -1,0 +1,37 @@
+# The book: its name on Zenn, its title and summary in each language,
+# and its chapters in order. A chapter is docs/book/<language>/<name>.md,
+# with the same name in every language.
+slug: ims-practice-book
+title:
+  ja: IMS の仕組みを実装から読む
+  en: Reading IMS through an implementation
+summary:
+  ja: 3GPP の IMS を学習用に実装したリポジトリを題材に、登録、通話、付加サービス、SMS、MRF、VoLTE、網間接続の仕組みと、仕様を踏まえた設計の判断を、図と短いコードで説明します。読むだけで分かるように書いています。
+  en: Registration, calls, supplementary services, SMS, the MRF, VoLTE and interconnection in IMS, and the design decisions that the specifications leave open, explained with figures and short excerpts of a learning implementation of 3GPP IMS. It is written to be read, with nothing to run.
+topics: [ims, sip, volte, diameter, 3gpp]
+chapters:
+  - preface
+  - overview
+  - observing
+  - registration
+  - call
+  - services
+  - access-and-borders
+  - registration-two-registers
+  - registration-routes
+  - registration-stale-deregistration
+  - registration-lifecycle
+  - call-signaling
+  - mmtel
+  - sms
+  - mrf
+  - volte
+  - interconnect
+  - design-registration-order
+  - design-shared-state
+  - design-as-unavailable
+  - design-sms-duplicates
+  - design-media-rollback
+  - design-maintenance
+  - go-reading
+  - reproduce

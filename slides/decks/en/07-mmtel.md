@@ -1,6 +1,6 @@
 ---
 title: Supplementary services with the MMTel AS
-footer: ims-practice study session 7. Supplementary services
+footer: ims-practice 7. Supplementary services
 lang: en
 format: visual
 ---
@@ -57,7 +57,7 @@ events:
     fields:
       - Originating (priorities 10 and 13): SESSION_TERMINATED. The call ends
       - Terminating (priorities 11 and 12): SESSION_CONTINUED. It goes on without the AS
-      - Why: So that barring holds
+      - In exchange: Outgoing barring always holds. Incoming calls arrive without the barring of the AS
   - id: c1-s-as1
     msg: INVITE
     from: scscf
@@ -575,7 +575,7 @@ events:
     note: (C3)
     fields:
       - Reason: "`SIP;cause=408;text=\"Request Timeout\"`"
-      - When: 5.0 s after the 180 in this run
+      - When: with a 5 s timer, 5 s after the first 180
   - id: cfnr-cancel-s-p
     msg: CANCEL
     from: scscf
@@ -885,15 +885,15 @@ events:
 
 # Supplementary services with the MMTel AS
 
-ims-practice study session 7 (the MMTel AS, its settings over Ut/XCAP, and the services in the capture)
+Supplementary services (the MMTel AS, its settings over Ut/XCAP, and the services in the capture)
 
 ---
 
 [layout: summary]
 
-## What you will know after this session
+## What this deck covers
 
-To begin: you call a phone that forwards its calls, and another phone rings. Which node decides that?
+To begin: you call a phone that forwards its calls, and another phone rings. Which node decides that? The callee's MMTel AS. The S-CSCF only hands the INVITE to the AS with an iFC; the AS reads the user's settings from the HSS and chooses the target.
 
 - What a supplementary service is, and which node runs it.
 - How the S-CSCF hands a call to the AS: iFCs, P-Served-User, ODI.
@@ -901,6 +901,7 @@ To begin: you call a phone that forwards its calls, and another phone rings. Whi
 - Where a user's settings are, and how the UE changes them over Ut with XCAP.
 - What to look at in the capture for each service: identities, forwarding, barring.
 
+> Book: [What application servers add](../../../docs/book/en/services.md), [iFC and the supplementary services of the MMTel AS](../../../docs/book/en/mmtel.md)
 > Guide: [Supplementary services with the MMTel AS](../../../docs/guide/en/mmtel.md) (`docs/guide/en/mmtel.md`)
 > The editions are named at the top of the guide, among them TS 24.229 V20.1.0, TS 24.604 V19.0.0, TS 24.607 V19.1.0, TS 24.611 V19.0.0, TS 24.623 V19.0.0, TS 29.364 V19.1.0 and GSMA IR.92 v24.0.
 
@@ -968,7 +969,7 @@ steps:
 ```ims-scene
 id: nodes
 nodes: [ue1, ue2, ue3, pcscf, icscf, scscf, hss, as1, as2]
-lead: There is one MMTel AS. The diagrams of this session draw it twice, once for each user it serves.
+lead: There is one MMTel AS. The diagrams of this deck draw it twice, once for each user it serves.
 steps:
   - id: ues
     title: UE 1, UE 2, UE 3
@@ -1037,7 +1038,7 @@ steps:
     show: [scscf-default]
     focus: [scscf]
     zoom: [scscf, hss, as1]
-    text: An originating criterion ends the call; a terminating one goes on without the AS. That is so that barring holds.
+    text: An originating criterion ends the call; a terminating one goes on without the AS. Outgoing barring holds; incoming barring does not, while the AS is down.
 ```
 
 | Priority | Matches | DefaultHandling |
@@ -1157,7 +1158,7 @@ steps:
     focus: [scscf]
     zoom: [scscf, hss, as1]
     checkpoint: true
-    text: The S-CSCF goes on matching after the criterion that matched. The IP-SM-GW of the SMS session sent nothing back; the MMTel AS does.
+    text: The S-CSCF goes on matching after the criterion that matched. The IP-SM-GW of the SMS deck sends nothing back; the MMTel AS does.
   - id: icscf
     title: The I-CSCF finds UE 2's S-CSCF
     only: [c2-s-i, lir, lia, c2-i-s]
@@ -1177,6 +1178,13 @@ steps:
     text: |
       Each of the three dialogs has its own Call-ID, tags and CSeq.
       A B2BUA and not a proxy: CFNR, a diversion that changes To, an OIR that makes From anonymous, the announcements and the conferences all need one.
+  - id: whole
+    title: One call passes the AS twice
+    only: [c1-ue-p, c1-p-s, c1-s-as1, c2-as1-s, c2-s-i, c2-i-s, c2-s-as2, c3-as2-s, c3-s-p, c3-p-ue2]
+    active: c3-p-ue2
+    detail: []
+    checkpoint: true
+    text: The INVITE goes from the S-CSCF to the AS and back twice, for the originating services of UE 1 and the terminating services of UE 2.
 ```
 
 ```text
@@ -1189,7 +1197,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 ```
 
 - The AS is a routeing B2BUA. It answers the INVITE as a UA and sends a new one, with a Call-ID of its own.
-- The new INVITE comes back to the S-CSCF with the ODI, and the S-CSCF goes on with the next criterion. The IP-SM-GW of the SMS session sent nothing back; the MMTel AS does.
+- The new INVITE comes back to the S-CSCF with the ODI, and the S-CSCF goes on with the next criterion. The IP-SM-GW of the SMS deck sends nothing back; the MMTel AS does.
 - Why a B2BUA and not a proxy: CFNR, a diversion that changes To, an OIR that makes From anonymous, the announcements and the conferences all need one.
 
 > Guide: ["The original dialog identifier"](../../../docs/guide/en/mmtel.md#the-original-dialog-identifier) and ["A B2BUA, not a proxy"](../../../docs/guide/en/mmtel.md#a-b2bua-not-a-proxy-one-call-three-dialogs). TS 24.229 5.7.5, 5.7.5.2.1.
@@ -1206,7 +1214,7 @@ Route: <sip:mmtel.…:5060;lr>,<sip:scscf.…:5060;lr;odi=...>
 | PRACK and ACK | They go dialog by dialog. The ACK can reach UE 2 before the 200 reaches UE 1. |
 | BYE | The AS answers it, and sends a new BYE with the same Reason on the next dialog. |
 
-The filter is `sip.P-Charging-Vector contains "icid-value=..."`, with the value for `...`: copy it from the INVITE that UE 1's P-CSCF sends to the S-CSCF.
+The filter is `sip.P-Charging-Vector contains "icid-value=..."`, where `...` is the icid-value of the INVITE that UE 1's P-CSCF sends to the S-CSCF.
 
 - The header stops at the P-CSCF. The UE sends none, and the P-CSCF removes it from every request and response it sends to a UE. The capture of the ims0 bridge has the legs to and from the UEs too, but the filter leaves them out.
 - Wireshark's **VoIP Calls** lists each dialog as a call of its own, so one call looks like three at first sight.
@@ -1354,50 +1362,7 @@ func (n nonces) challenge(h http.Header, realm string, offered []Algorithm, stal
 - The first challenge offers `algorithms`, SHA-256 then MD5, in the home domain. It names no user, so the AS sends it before it reads anything of the user, and it is the same for every XUI. All the challenges share one nonce.
 - After credentials that did not authenticate, `realm` and `offered` are those of the user's credential, the same unless the operator provisioned it in another realm or for MD5 alone.
 - The credential is repository data in the HSS, with Service-Indication `Ut-Digest-Credential`. It holds HA1 values, not the password (the comment in `internal/xcap/credential.go`).
-- WWW-Authenticate has the form of SIP Digest, so the code uses the `Challenge` of `internal/sip` as it is: compare it with the 401 of registration.
-
----
-
-## Run it
-
-```sh
-docker compose up -d --build
-docker compose run --rm ue2 xcap \
-  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  -password test-password-2 set cfu on tel:+12025550103
-
-# UE 3 waits for a call
-docker compose run --rm ue3 answer -impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
-  -impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org -password test-password-3
-docker compose run --rm ue call tel:+12025550102
-```
-
-- UE 1 logs `"msg":"call progress","status":181` and then `"msg":"call answered"`.
-- `set cfu off` switches it off again. `ue xcap` needs no registration. Its other commands are `get`, `set SERVICE on|off [TARGET]`, `oir restricted|not-restricted` and `noreply SECONDS`.
-- The `ue2` service has a fixed address, so `ue2 xcap` cannot run while another container of `ue2` does.
-
-> Guide: ["Run it"](../../../docs/guide/en/mmtel.md#run-it). The e2e script of the supplementary services in `scripts/` runs every service in turn.
-
----
-
-## Open the capture
-
-```text
-(sip && !(sip.CSeq.method in {"REGISTER", "SUBSCRIBE", "NOTIFY", "MESSAGE"})) || (http && ip.addr == 172.28.0.75) || diameter.cmd.code in {301, 302, 306, 307}
-```
-
-- It keeps the calls, Ut, the Sh reads and updates of the AS, and the LIRs and SARs.
-- **Telephony > VoIP Calls** lists each dialog as a call of its own.
-- The e2e script leaves every service in one capture. Narrow it to one service with a display filter.
-
-| Service | Trigger | What the capture shows |
-| --- | --- | --- |
-| OIR | The caller restricts by default | An anonymous From, `Privacy: id` |
-| CFU, CFB, CFNR, CFNL | A call, 486, no answer, not registered | 181, History-Info, `cause=` |
-| BAIC, ACR, BAOC | A call, an anonymous call, an outgoing call | An announcement in a 183, then 603 or 433 |
-
-> Guide: ["Open the capture"](../../../docs/guide/en/mmtel.md#open-the-capture)
+- WWW-Authenticate has the form of SIP Digest, so the code uses the `Challenge` of `internal/sip` as it is: it has the form of the 401 of the registration deck.
 
 ---
 
@@ -1464,7 +1429,7 @@ steps:
 | 200 OK | UE 2 in P-Asserted-Identity: TIP. |
 
 - With the default document the AS changes nothing, but every INVITE passes an AS twice. Every user has TIP by default: the P-CSCF puts P-Called-Party-ID into P-Asserted-Identity.
-- The frame numbers in the guide come from one run of the script, so they differ from the capture at hand.
+- The frame numbers in the guide come from one run of the script.
 
 > Guide: ["A plain call through the AS"](../../../docs/guide/en/mmtel.md#a-plain-call-through-the-as). TS 24.229 5.4.3.2 step 5, 5.7.5.2.1, 5.2.6.4.4 step 1. TS 29.364 7.2.0. TS 24.608 4.5.2.4.
 
@@ -1662,7 +1627,7 @@ steps:
     show: [cfnr-181, cfnr-181-ue1, cfnr-c4]
     active: cfnr-c4
     detail: [cfnr-181, cfnr-c4]
-    text: From the 181 on it goes as with CFU, and the diagram leaves out the same hops. Measure the time from the 180 to the CANCEL in the capture.
+    text: From the 181 on it goes as with CFU, and the diagram leaves out the same hops. The CANCEL comes as long after the first 180 as the timer runs.
 ```
 
 | Case | What to see |
@@ -1674,7 +1639,7 @@ steps:
 
 The filters are `sip.Method == "CANCEL" && sip.Reason` and `sip.Status-Code == 199`.
 
-- Without a NoReplyTimer, the operator's default of 20 seconds applies. Measure the time from the 180 to the CANCEL in the capture.
+- Without a NoReplyTimer, the operator's default of 20 seconds applies. Either way, the time from the 180 to the CANCEL is the length of the timer: 10 s with `noreply 10`, 5 s with `noreply 5`.
 - UE 1's AS keeps its one early dialog with UE 1, so UE 1 gets the 181 and UE 3's responses on the same early dialog.
 
 > Guide: ["CFNR"](../../../docs/guide/en/mmtel.md#cfnr-nobody-answers). TS 24.604 4.5.2.6.3 item 2, 4.8.1. RFC 3326 2. RFC 6228.
@@ -1835,12 +1800,7 @@ steps:
   - The callee's UE sends a 180 with `Alert-Info: <urn:alert:service:call-waiting>`.
   - The AS passes it on, or takes the Alert-Info out by the operator's setting.
 - HOLD is a re-INVITE with `a=sendonly`. The AS passes it on to the other leg as it came.
-- `ue serve` takes a second call while it has one: it rings with that Alert-Info, and `POST /answer` holds the first call and takes the waiting one. `scripts/e2e-mrf.sh` shows CW in the capture, and in-process tests check it.
-
-```sh
-go test -run 'TestCommunicationWaiting|TestHoldThroughTheIMS' -v ./internal/mmtel
-go test -run TestServeTwoCalls -v ./internal/ue
-```
+- `ue serve` takes a second call while it has one: it rings with that Alert-Info, and `POST /answer` holds the first call and takes the waiting one. `scripts/e2e-mrf.sh` shows CW in the capture, and the in-process tests `TestCommunicationWaiting`, `TestHoldThroughTheIMS` and `TestServeTwoCalls` check it.
 
 - `ue serve` answers a third call with 486. The **Hold** button of the Lab sends HOLD too.
 
@@ -1874,36 +1834,14 @@ go test -run TestServeTwoCalls -v ./internal/ue
 | simservs | Some conditions and the serv-cap are missing. A country is its country code, so the countries under 1 count as one. |
 | CSCFs and HSS | No privacy on History-Info entries. No public service identities, no ORIGINATING_UNREGISTERED. |
 
-```sh
-grep -rn "SIMPLIFIED:" internal/mmtel internal/xcap internal/simservs internal/config/xcap.go cmd/ue/xcap.go
-```
-
-- Match the output with the table of the guide. The items of the CSCFs and the HSS are in `internal/scscf`, `internal/icscf` and `internal/hss`.
+- Each item has a comment that starts with `SIMPLIFIED:` in the code. The items of the CSCFs and the HSS are in `internal/scscf`, `internal/icscf` and `internal/hss`.
 - The nonce count is the price of running several instances: keeping the counts would need a Store that every instance shares.
 
 > Guide: ["What this project simplifies"](../../../docs/guide/en/mmtel.md#what-this-project-simplifies). The table there gives the clause and the reason of each item.
 
 ---
 
-## Set it from the Lab
-
-```sh
-docker compose --profile phones up -d --build
-```
-
-1. On the card of `phone2`, open **Supplementary services (Ut/XCAP)**. Every service starts as `off`.
-2. Choose **CFU (unconditional)**, type a target and press **On**.
-3. The list shows `CFU (unconditional): on to …`, and the ETag goes up by one.
-4. **Off** switches it off. The target stays.
-
-- The ladders show neither XCAP nor Sh: neither belongs to a SIP request. The capture has them, as HTTP on port 80 and Diameter on port 3868.
-- The Lab draws all the dialogs of a call in one ladder, with a column for the MMTel AS. Do not run the `phones` and `ue` profiles at once: a subscriber would have two UEs.
-
-> Guide: ["Drive the UE simulators" in Watch the IMS in the Lab](../../../docs/guide/en/lab.md#drive-the-ue-simulators)
-
----
-
-## Check it in the code
+## Where the code is
 
 | What you saw | Where to look |
 | --- | --- |
@@ -1916,73 +1854,62 @@ docker compose --profile phones up -d --build
 | P-Served-User, the ODI, the iFCs | `internal/scscf/services.go`, `internal/ifc` |
 | The settings and the Ut passwords in the HSS | `servicedata.go`, `sh.go` in `internal/hss`, `deploy/compose/hss.yaml` |
 
-- `internal/mmtel/network_test.go` runs every service through the whole IMS in one process. Find the cause values in `internal/mmtel/diversion.go` and match them with the `cause=302` of the capture.
+- The decisions are in `invokeApplicationServers` of `internal/scscf/services.go` (the iFCs in turn), `terminating` of `internal/mmtel/sessioncase.go` (the order of the services) and `change` of `internal/xcap/handler.go` (If-Match and 412).
+- `internal/mmtel/network_test.go` runs every service through the whole IMS in one process. The cause values are constants in `internal/mmtel/diversion.go`; CFU gives the `cause=302` of the capture.
 
-> Guide: ["Where the code is"](../../../docs/guide/en/mmtel.md#where-the-code-is)
-
----
-
-[layout: exercise]
-
-## Exercises
-
-1. Set CFNR, change `noreply 5` to `noreply 10`, and call. Measure the time from the 180 to the CANCEL.
-2. Filter a diverted call by its icid-value and count its dialogs.
-3. Set `boic on` and call UE 2 from UE 1. Is the call barred?
-4. Explain why in `hss.yaml` only the originating criteria have SESSION_TERMINATED.
-5. Read the `Authorization` of the second XCAP GET. Which algorithm did the UE answer with?
-
-For 1 and 3, run `ue xcap` as UE 1 or UE 2, in the form of the slide "Run it".
+> Book: [iFC and the supplementary services of the MMTel AS](../../../docs/book/en/mmtel.md). Guide: ["Where the code is"](../../../docs/guide/en/mmtel.md#where-the-code-is)
 
 ---
 
-[layout: answers]
+## Run it yourself: calls and Ut
 
-## Exercises: answers
-
-1. About 10 seconds. The timer starts with the first 180.
-2. Six, C1 to C6.
-3. No. UE 2's number has the country code 1, the same as the home network.
-4. So that barring holds. If a call went on without the AS when the AS did not answer, it would pass the barring by.
-5. SHA-256, the first challenge.
-
----
-
-[layout: exercise]
-
-## Looking back
-
-1. How does the S-CSCF know that it sends an INVITE to the MMTel AS?
-2. How does the AS know whether the INVITE is originating or terminating?
-3. Why does one call have three Call-IDs?
-4. Why does the AS keep no copy of the user's settings?
-5. When two change the settings at once, why does one PUT get 412?
-6. With CFU and with CFNR, in which does UE 2's phone ring?
-
----
-
-[layout: answers]
-
-## Looking back: answers
-
-1. The INVITE matches a criterion of priority 10 to 13 of the iFCs that came in the SAA at registration.
-2. From `sescase` and `orig-cdiv` in P-Served-User.
-3. Each user has an AS on the path, and the AS, a B2BUA, makes a new dialog.
-4. So that any instance can take any call, and the AS can run as several instances. The settings are only in the HSS.
-5. The PUT carries in If-Match the ETag of the version it read. The first writer moved the Sequence Number on, so the versions differ: the AS sees it from If-Match, or, if the write came too late for that, the HSS refuses the PUR.
-6. With CFNR. CFU diverts when the INVITE arrives, so UE 2 never rings.
-
----
-
-## Next session
-
-- Next is the MRF session: the announcement before a rejection, the alerting tone the callee chooses, the waiting call and a conference of three. The AS of this session is what asks for all of it, and it is the conference focus.
-- The VoLTE session follows. VoLTE calls go through the MMTel AS of this session too.
+What follows is for readers who want to run the setup. Reading does not need it.
 
 ```sh
+docker compose up -d --build
+docker compose run --rm ue2 xcap \
+  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
+  -password test-password-2 set cfu on tel:+12025550103
+
+# UE 3 waits for a call
+docker compose run --rm ue3 answer -impi 001010000000003@ims.mnc001.mcc001.3gppnetwork.org \
+  -impu sip:+12025550103@ims.mnc001.mcc001.3gppnetwork.org -password test-password-3
+docker compose run --rm ue call tel:+12025550102
+```
+
+- UE 1 logs `"msg":"call progress","status":181` and then `"msg":"call answered"`.
+- `set cfu off` switches it off again. `ue xcap` needs no registration. Its other commands are `get`, `set SERVICE on|off [TARGET]`, `oir restricted|not-restricted` and `noreply SECONDS`.
+- The `ue2` service has a fixed address, so `ue2 xcap` cannot run while another container of `ue2` does.
+
+> Guide: ["Run it"](../../../docs/guide/en/mmtel.md#run-it). The e2e script of the supplementary services in `scripts/` runs every service in turn.
+
+---
+
+## Run it yourself: the capture and the Lab
+
+```text
+(sip && !(sip.CSeq.method in {"REGISTER", "SUBSCRIBE", "NOTIFY", "MESSAGE"})) || (http && ip.addr == 172.28.0.75) || diameter.cmd.code in {301, 302, 306, 307}
+```
+
+- It keeps the calls, Ut, the Sh reads and updates of the AS, and the LIRs and SARs. **Telephony > VoIP Calls** lists each dialog as a call of its own. The e2e script leaves every service in one capture.
+- `docker compose --profile phones up -d --build` runs the Lab. In **Supplementary services (Ut/XCAP)** on the card of `phone2`, every service starts as `off`. **On** for **CFU (unconditional)** shows `CFU (unconditional): on to …`, and the ETag goes up by one.
+- Do not run the `phones` and `ue` profiles at once: a subscriber would have two UEs.
+
+> Guide: ["Open the capture"](../../../docs/guide/en/mmtel.md#open-the-capture), ["Drive the UE simulators" in Watch the IMS in the Lab](../../../docs/guide/en/lab.md#drive-the-ue-simulators)
+
+---
+
+## Run it yourself: tests and clean-up
+
+```sh
+go test -run 'TestCommunicationWaiting|TestHoldThroughTheIMS' -v ./internal/mmtel
+go test -run TestServeTwoCalls -v ./internal/ue
+grep -rn "SIMPLIFIED:" internal/mmtel internal/xcap internal/simservs internal/config/xcap.go cmd/ue/xcap.go
 docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
 ```
 
-- This stops the `ue` and the `phones` profiles and deletes the images as well. The guide's "Clean up" stops every profile and keeps the images; use it to start the next session without a new build.
+- The first two lines are the tests that check CW and HOLD in an IMS in one process. The third lists the comments of the simplified places.
+- The last line stops the `ue` and the `phones` profiles and deletes the images as well. The guide's "Clean up" stops every profile and keeps the images.
 
 > The guides are listed in [docs/guide/](../../../docs/guide/).

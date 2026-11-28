@@ -2,6 +2,8 @@
 
 [日本語](../ja/call.md)
 
+> This guide has the steps to run the setup and see it for yourself. The explanation that is understood by reading alone, of how it works and why, is in the book: [From a number to the other phone](../../book/en/call.md), [Transactions, dialogs and media negotiation in a call](../../book/en/call-signaling.md).
+
 This guide makes one call from UE 1 to UE 2 by telephone number and walks through every message in the capture: how the number becomes a SIP address, how each CSCF finds the next one, how the two UEs agree on the media, and how the voice flows through the media relay.
 
 The guide follows 3GPP Release 18 (TS 24.229 V18.11.0, TS 29.228 V18.0.0) and the RFCs named in each step.

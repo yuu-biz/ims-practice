@@ -1,6 +1,6 @@
 ---
 title: The package layout of this repository
-footer: ims-practice study session 1. Package layout
+footer: ims-practice 1. Package layout
 lang: en
 format: visual
 ---
@@ -67,20 +67,21 @@ events:
 
 # The package layout of this repository
 
-ims-practice study session 1 (where each node and each specification lives in the code)
+(where each node and each specification lives in the code)
 
 ---
 
 [layout: summary]
 
-## What you will know after this session
+## What this deck covers
 
 - There are only three executables, and one of them is every IMS node.
 - Which package holds which node.
 - Which package holds which specification.
 - Where to start reading the code.
 
-> The signaling comes in the next sessions. This one makes sure you can find the file to open then.
+> The signaling is read in the decks on registration and calls and in the chapters of the book. This deck shows where the files to open then are.
+> Book: [What IMS does](../../../docs/book/en/overview.md)
 > The overview is in [README.md](../../../README.md), the abbreviations in the [glossary](../../../docs/glossary.md).
 
 ---
@@ -90,7 +91,7 @@ ims-practice study session 1 (where each node and each specification lives in th
 | Place | What is there |
 | --- | --- |
 | `cmd/` | The entry points of the executables: `ims`, `ue` and `oss`. |
-| `internal/` | All of the implementation. The subject of this session. |
+| `internal/` | All of the implementation. The subject of this deck. |
 | `deploy/compose/` | One configuration file per node, and the DNS zones. |
 | `compose.yaml` | Puts the nodes on one Docker network. |
 | `docs/` | The guides (`docs/guide/`) and the glossary. |
@@ -262,6 +263,7 @@ steps:
 | `reginfo`, `ifc` | The XML of the reg event, the initial filter criteria | RFC 3680, TS 29.228 |
 
 - The identifiers are the terms of the specifications, such as `cx.ServerAssignmentRequest`. In `cx` and `sh` each AVP is a field of a Go struct, in the order of the specification.
+- The shape of a message and the decision to send it are in different packages: `cx` lists the AVPs of the UAR in the order of the specification, and `icscf` decides to send the UAR.
 
 ---
 
@@ -273,7 +275,7 @@ steps:
 | `config` | Turns the YAML configuration into validated values, and refuses a wrong one at start-up. |
 | `hep`, `hepagent` | Send copies of the signaling to the Lab (HEP3). |
 | `g711`, `wav` | G.711 μ-law and WAV: the audio of the UE simulator. |
-| `epc`, `policy`, `rx`, `milenage`, `aka`, `amr`, `rtcp`, `precondition` | Parts of the VoLTE call. Not covered in this session. |
+| `epc`, `policy`, `rx`, `milenage`, `aka`, `amr`, `rtcp`, `precondition` | Parts of the VoLTE call. Not covered in this deck. |
 | `nas`, `fivegc`, `n5`, `nhss`, `sbi` and more | Parts that no role starts. Only their own tests use them. |
 
 - No command of `cmd/` imports the parts that no role starts: `go list -deps ./cmd/...` does not list them.
@@ -377,7 +379,8 @@ Only the places where a stub stands for a real node, or where one part has two w
 grep -rn "SIMPLIFIED:" internal cmd
 ```
 
-- The top of `internal/scscf/scscf.go` has all three.
+- `internal/scscf/scscf.go` has all three. The package comment is at the top; the clause numbers and `SIMPLIFIED:` are in the comments of the functions.
+- The number of `SIMPLIFIED:` comments changes whenever the code changes, so this deck does not give it. The `grep` above lists them as they are now.
 
 > Guide: [Follow a UE registering with the IMS, "What this project simplifies"](../../../docs/guide/en/registration.md#what-this-project-simplifies)
 
@@ -418,18 +421,18 @@ steps:
 ```
 
 
-| Step | Node | File to open | What to find |
+| Step | Node | File | What is there |
 | --- | --- | --- | --- |
-| 1 | UE | `internal/ue/ue.go` | Where the REGISTER is built |
-| 2 | P-CSCF | `internal/pcscf/pcscf.go`, `internal/sipdns/locate.go` | Where Path is added, where DNS gives the I-CSCF |
-| 3 | I-CSCF | `internal/icscf/icscf.go` | Where the UAR is sent |
-| 4 | S-CSCF | `internal/scscf/scscf.go` | Where MAR and SAR are sent, where 401 and 200 are returned |
-| 5 | HSS | `internal/hss/hss.go` | Where UAR, MAR and SAR are answered |
+| 1 | UE | `internal/ue/ue.go` | Where the REGISTER is built (`newREGISTER`) |
+| 2 | P-CSCF | `internal/pcscf/pcscf.go`, `internal/sipdns/locate.go` | Where Path is added, where DNS gives the I-CSCF (`register`, `pathURI`, `Locate`) |
+| 3 | I-CSCF | `internal/icscf/icscf.go` | Where the UAR is sent (`register`) |
+| 4 | S-CSCF | `internal/scscf/scscf.go` | Where MAR and SAR are sent, where 401 and 200 are returned (`challenge` sends the MAR and the 401, `accept` the SAR and the 200) |
+| 5 | HSS | `internal/hss/hss.go` | Where UAR, MAR and SAR are answered (`userAuthorization`, `multimediaAuth`, `serverAssignment`) |
 
 - The shapes of the messages are in `internal/cx/messages.go`.
-- In pairs: find what the last column names, then read the clause number in the comment next to it.
+- The comment next to each of these functions gives the clause of its step.
 
-> The session on registration reads the same flow in a capture. Its guide is [Follow a UE registering with the IMS](../../../docs/guide/en/registration.md).
+> The deck on registration reads the same flow in a capture. Its guide is [Follow a UE registering with the IMS](../../../docs/guide/en/registration.md).
 
 ---
 
@@ -438,6 +441,7 @@ steps:
 - The tests of `internal/ue` run the whole IMS inside one process and check registration and calls.
 - The tests of `internal/ipsmgw` do the same for SMS.
 - The `scripts/e2e-*.sh` scripts, one per scenario, run the Compose setup and check that the capture holds the expected messages.
+- To run them yourself, run this command at the root of the repository. Reading needs none of it.
 
 ```sh
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/src" -v ims-practice-gomod:/go/pkg/mod \
@@ -446,32 +450,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/src" -v ims-practice-gomod:/go/pkg/
 
 ---
 
-[layout: exercise]
-
-## Looking back
-
-1. What do you change to run the S-CSCF and the I-CSCF in one node?
-2. Which package lists the AVPs of the UAR? Which package sends the UAR?
-3. How many `SIMPLIFIED:` comments are there today?
-4. Which direction is right: the P-CSCF code uses `sip`, or `sip` uses `pcscf`?
-
----
-
-[layout: answers]
-
-## Looking back: answers
-
-1. List both in `roles` in the configuration file. The code does not change.
-2. `cx` lists them; `icscf` sends the UAR.
-3. Count them with the `grep` of "Three handles for reading the code". The number changes as the code changes.
-4. `pcscf` uses `sip`, never the other way round.
-
----
-
-## Next session, and where to read more
-
-- Next is the map of the network: the nodes, the interfaces between them, and which session opens each part.
-- Before the session on registration, try [Capture signaling and open it in Wireshark](../../../docs/guide/en/capture.md) once.
+## Where to read more
 
 | Document | Place |
 | --- | --- |

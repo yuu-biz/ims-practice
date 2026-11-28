@@ -1,6 +1,6 @@
 ---
 title: Reading a capture, and the Lab
-footer: ims-practice study session 3. Captures and the Lab
+footer: ims-practice 3. Captures and the Lab
 lang: en
 format: visual
 ---
@@ -81,30 +81,104 @@ events:
     fields:
       - icid-value: the same in all three dialogs
       - Dialogs: 3
+  # A transaction per leg, and a dialog from end to end (an example made up to explain)
+  - id: tx-inv-ue-p
+    msg: INVITE
+    from: ue-a
+    to: pcscf
+    proto: SIP
+    note: (first leg)
+    fields:
+      - Top Via: "UE 1's `branch=z9hG4bK-a`"
+      - Call-ID: "`c1`"
+      - From and To: "`tag=f1` in From. No tag in To yet"
+  - id: tx-inv-p-s
+    msg: INVITE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (second leg)
+    fields:
+      - Top Via: "`branch=z9hG4bK-b`, added by the P-CSCF, over the Via of UE 1"
+      - Call-ID: "still `c1`"
+  - id: tx-inv-s-as
+    msg: INVITE
+    from: scscf
+    to: as-o
+    proto: SIP
+    note: (third leg)
+    fields:
+      - Top Via: "`branch=z9hG4bK-c`, added by the S-CSCF"
+      - Call-ID: "still `c1`"
+  - id: tx-ok-as-s
+    msg: 200 OK
+    from: as-o
+    to: scscf
+    proto: SIP
+    fields:
+      - Via: "three: `-c`, `-b`, `-a`"
+      - To: "`tag=t1`, added by the AS"
+      - The transaction it matches: "the top branch `-c`, and INVITE as the method of CSeq"
+  - id: tx-ok-s-p
+    msg: 200 OK
+    from: scscf
+    to: pcscf
+    proto: SIP
+    fields:
+      - Via: "`-b` and `-a`: the S-CSCF took its own off"
+  - id: tx-ok-p-ue
+    msg: 200 OK
+    from: pcscf
+    to: ue-a
+    proto: SIP
+    fields:
+      - Via: "`-a` alone"
+      - Dialog: "Call-ID `c1`, with the tags `f1` and `t1`"
+  - id: tx-ack-ue-p
+    msg: ACK
+    from: ue-a
+    to: pcscf
+    proto: SIP
+    fields:
+      - Top Via: "a new `branch=z9hG4bK-d`"
+      - Transaction: the ACK to a 2xx is not part of the INVITE transaction
+      - Dialog: "the same: Call-ID `c1`, the tags `f1` and `t1`"
+  - id: tx-ack-p-s
+    msg: ACK
+    from: pcscf
+    to: scscf
+    proto: SIP
+  - id: tx-ack-s-as
+    msg: ACK
+    from: scscf
+    to: as-o
+    proto: SIP
 ```
 
 ---
 
 # Reading a capture, and the Lab
 
-ims-practice study session 3 (where the capture comes from, how to filter it, and what the Lab draws beside it)
+(where the capture comes from, how to filter it, and what the Lab draws beside it)
 
 ---
 
 [layout: summary]
 
-## What you will know after this session
+## What this deck covers
 
 To begin: both tools show the same signaling. Why open a capture at all, when the Lab draws the ladder for you?
+The answer: the capture is the packets that crossed the bridge. The Lab builds its ladder from the copies the nodes send, and infers which SIP request a Cx or Rx message was for. A capture is what checks an inference, and what shows what the ladder leaves out: RTP, HTTP, and what the HSS sends on its own, such as an RTR.
 
 - Where the capture file comes from, and what is in it.
-- How a display filter is put together, and where the filter of each session is written down.
+- How a display filter is put together, and where the filter of each guide is written down.
 - How to get a ladder out of Wireshark, and how to hear the audio.
 - What the Lab builds, and what it only infers.
 - The one message the Lab shows that the capture does not have.
 
+> Book: [Watching the signalling](../../../docs/book/en/observing.md)
 > Guides: [Capture signaling and open it in Wireshark](../../../docs/guide/en/capture.md) (`docs/guide/en/capture.md`) and [Watch the IMS in the Lab](../../../docs/guide/en/lab.md) (`docs/guide/en/lab.md`)
-> No part of the IMS is explained here. Every session from here on reads a capture, and most of them open the Lab as well.
+> No part of the IMS is explained here. The other decks and the chapters of the book all read a capture, and most of them use the ladder of the Lab as well.
 
 ---
 
@@ -129,7 +203,7 @@ steps:
     title: A new file at each start
     show: [writes]
     focus: [capture, pcap]
-    text: The file is named after the time of the start. In session 10 there are three bridges, each with its capture and its file.
+    text: The file is named after the time of the start. In the setup of two networks there are three bridges, each with its capture and its file.
 ```
 
 
@@ -146,33 +220,16 @@ steps:
 - Every node talks over one Docker network, so one file holds the whole conversation between them.
 - The capture container starts first and the nodes after it, so their first messages are in the file.
 - Each start of that container writes a new file, named after its start time.
-- Session 10 adds a second network and the link between it and this one. Each of the three bridges then has a capture container and a file of its own.
+- The setup of two networks adds a second network and the link between it and this one. Each of the three bridges then has a capture container and a file of its own.
+- The files stay in `captures/` until they are deleted. A file can be opened while the capture still runs.
 
-```sh
-docker compose up -d --build
-```
-
-> Guide: ["Start the system"](../../../docs/guide/en/capture.md#start-the-system) and ["Open the capture file"](../../../docs/guide/en/capture.md#open-the-capture-file)
-
----
-
-## Open it in Wireshark
-
-1. Open the newest file in `captures/` with **File > Open**.
-2. Type the filter of the session in the display filter bar and press Enter.
-3. For the ladder, select **Statistics > Flow Graph** and tick **Limit to display filter**.
-
-- Wireshark opens the file while the capture still runs. **View > Reload** brings in the packets that came since.
-- To see packets as they happen, stream the capture into Wireshark: `scripts/capture-live.sh` in Git Bash, `scripts/capture-live.ps1` in PowerShell 7.4 or later.
-- The files stay in `captures/` until you delete them, so the capture of a session can be read again later.
-
-> Guide: ["Open the capture file"](../../../docs/guide/en/capture.md#open-the-capture-file) and ["Watch the traffic live"](../../../docs/guide/en/capture.md#watch-the-traffic-live)
+> Guide: ["Start the system"](../../../docs/guide/en/capture.md#start-the-system), ["Open the capture file"](../../../docs/guide/en/capture.md#open-the-capture-file), ["Watch the traffic live"](../../../docs/guide/en/capture.md#watch-the-traffic-live) and ["Stop the system"](../../../docs/guide/en/capture.md#stop-the-system)
 
 ---
 
 ## The display filter
 
-This is the filter of the session on registration.
+This is the filter of the guide on registration.
 
 ```text
 sip || diameter.cmd.code >= 300 || dns.qry.type == 35 || dns.qry.type == 33
@@ -204,11 +261,8 @@ The filter is `diameter`.
 | DWR and DWA | A side that has heard nothing for about 30 seconds asks whether its peer is alive. |
 | DPR and DPA | The node that stops says goodbye before it closes the connection. |
 
-```sh
-docker compose stop scscf
-```
-
-- The S-CSCF sends a DPR with Disconnect-Cause `REBOOTING`, and the HSS answers with a DPA. `docker compose start scscf` brings a new CER and CEA.
+- The CERs of the seven connections are in the file right after the start, before any UE does anything.
+- When the S-CSCF stops, it sends a DPR with Disconnect-Cause `REBOOTING`, and the HSS answers with a DPA. A new start brings a new CER and CEA.
 
 > Guide: ["What you see when the nodes start"](../../../docs/guide/en/capture.md#what-you-see-when-the-nodes-start), with the table of all seven connections. RFC 6733. RFC 3539 3.4.1.
 
@@ -251,23 +305,10 @@ steps:
 - A node can send a copy of every SIP and Diameter message it sends or receives to the Lab, which listens on UDP port 9060. The copies use HEP version 3.
 - A node sends them when its configuration has a `hep` section. The UE simulator sends them with `-hep lab:9060`. Without either, nothing is sent.
 - The copies are in the capture too, as UDP packets to port 9060. Wireshark has no HEP dissector of its own, so hide them with `not udp.port == 9060`.
-- Those copies are all the Lab knows. It asks no node for its state, and no node waits for an answer from it.
+- Those copies are all the Lab knows. It asks no node for its state, and no node waits for an answer from it. The Lab is not part of the IMS and not on the path of any call, so a node starts and runs without it.
+- The HTTP API of the Lab and the control API of the UE simulator follow no specification and are this project's own. What the ladder draws is the signaling of the IMS.
 
-> Guide: ["Copies for the Lab (HEP)"](../../../docs/guide/en/capture.md#copies-for-the-lab-hep)
-
----
-
-## Open the Lab
-
-```sh
-docker compose up -d --build
-```
-
-- Open <http://localhost:8080>. The dot next to the title says `live` while the page receives updates from the Lab's server.
-- The Lab is published on the host's loopback address only. It asks for no password, and anyone who reaches it can read what the HSS holds, drive the UEs and detach a UE from the access network.
-- The Lab is not part of the IMS, and it is not on the path of any call. A node starts and runs even when the Lab is not there.
-
-> Guide: ["Open the Lab"](../../../docs/guide/en/lab.md#open-the-lab)
+> Guide: ["Copies for the Lab (HEP)"](../../../docs/guide/en/capture.md#copies-for-the-lab-hep) and ["These APIs are this project's own"](../../../docs/guide/en/lab.md#these-apis-are-this-projects-own)
 
 ---
 
@@ -286,7 +327,9 @@ docker compose up -d --build
 - Select an arrow of a ladder to see the whole message and the clauses of the specifications that describe it.
 - **Copy as text** under a ladder writes it out as monospace text, in the form of the ladder diagrams of the guides.
 
-> Guide: ["What each panel shows"](../../../docs/guide/en/lab.md#what-each-panel-shows) and ["Copy the ladder as text"](../../../docs/guide/en/lab.md#copy-the-ladder-as-text)
+- The Lab is published on the host's loopback address only. It asks for no password, and anyone who reaches it can read what the HSS holds and drive the UEs.
+
+> Guide: ["Open the Lab"](../../../docs/guide/en/lab.md#open-the-lab), ["What each panel shows"](../../../docs/guide/en/lab.md#what-each-panel-shows), ["Copy the ladder as text"](../../../docs/guide/en/lab.md#copy-the-ladder-as-text) and ["Drive the UE simulators"](../../../docs/guide/en/lab.md#drive-the-ue-simulators)
 
 ---
 
@@ -358,6 +401,53 @@ steps:
 
 ---
 
+## Transactions and dialogs in a capture
+
+```ims-scene
+id: transactions
+view: ladder
+nodes: [ue-a, pcscf, scscf, as-o]
+basis: illustration
+lead: A transaction lasts one leg; a dialog runs from end to end. The branch of the Via tells the leg, and the Call-ID with the two tags tells the dialog.
+steps:
+  - id: first
+    title: The INVITE of the first leg
+    show: [tx-inv-ue-p]
+    text: UE 1 sends it with a branch in its own Via. This INVITE and its responses are the transaction of the first leg.
+  - id: hops
+    title: A new transaction at each hop
+    show: [tx-inv-p-s, tx-inv-s-as]
+    active: tx-inv-s-as
+    detail: [tx-inv-p-s, tx-inv-s-as]
+    checkpoint: true
+    text: |
+      The P-CSCF and the S-CSCF each put a Via of their own, with a new branch, on top. Each leg is a transaction of its own.
+      The Call-ID does not change, because a proxy makes no dialog.
+  - id: answer
+    title: The 200 OK follows the Vias back
+    show: [tx-ok-as-s, tx-ok-s-p, tx-ok-p-ue]
+    active: tx-ok-p-ue
+    detail: [tx-ok-as-s, tx-ok-p-ue]
+    checkpoint: true
+    text: |
+      A node that receives the response finds its transaction by the top branch and the method of CSeq, takes its own Via off and sends it back.
+      The tag that the AS put in To settles the dialog between UE 1 and the AS.
+  - id: ack
+    title: The ACK is another transaction in the same dialog
+    show: [tx-ack-ue-p, tx-ack-p-s, tx-ack-s-as]
+    active: tx-ack-ue-p
+    detail: [tx-ack-ue-p]
+    text: The ACK to a 2xx goes with a new branch and is not part of the INVITE transaction. Its Call-ID and tags are the same, so it is a request of the same dialog.
+```
+
+- The branches, the Call-ID and the tags of the figure are long values written short, as an example. That a branch starts with `z9hG4bK` is as in real messages (RFC 3261 8.1.1.7). The 100 Trying, the 183, the PRACK and the 180 are left out of the picture.
+- The transaction of each leg is in RFC 3261 17, the Via that a proxy adds in 16.6 step 8, the Via it takes off a response in 16.7 step 3, the match of a response to its transaction in 17.1.3, and the dialog ID in 12.
+- In a capture, `sip.Call-ID == "<Call-ID>"` keeps one dialog, and `sip.CSeq.method` a method. Beyond the MMTel AS is another dialog, which the AS starts with a new Call-ID.
+
+> Book: [Watching the signalling](../../../docs/book/en/observing.md)
+
+---
+
 ## One call, several dialogs
 
 ```ims-scene
@@ -412,57 +502,3 @@ steps:
 - The other way round, the capture has what no ladder draws, such as the RTR the HSS sends when a registered subscriber is deleted. The HSS sends it on its own, not for a SIP request, so the Lab ties it to nothing.
 
 > Guide: ["How the ladder is built"](../../../docs/guide/en/lab.md#how-the-ladder-is-built) and ["The network cancels a registration"](../../../docs/guide/en/lab.md#the-network-cancels-a-registration)
-
----
-
-## Drive the UE simulators
-
-```sh
-docker compose --profile phones up -d --build
-```
-
-1. On the card of `phone2`, set the answer policy to `manual`. The UE then rings until you answer.
-2. On the card of `phone1`, press **Call**. The card of `phone2` shows an incoming call. Press **Answer**.
-3. Select **ladder** next to the call. It is drawn while the call goes on.
-
-- `phone1`, `phone2` and `phone3` use subscribers 1, 2 and 3, the same as `ue`, `ue2` and `ue3`. Run one of the two profiles at a time.
-- The HTTP API of the Lab and the control API of the UE simulator follow no specification and are this project's own. What the ladder draws is the signaling of the IMS.
-
-> Guide: ["Drive the UE simulators"](../../../docs/guide/en/lab.md#drive-the-ue-simulators) and ["These APIs are this project's own"](../../../docs/guide/en/lab.md#these-apis-are-this-projects-own)
-
----
-
-[layout: exercise]
-
-## Looking back
-
-1. Where does the capture file come from, and why does it hold the first message of every node?
-2. Which filter keeps one node, and which one hides the copies that go to the Lab?
-3. A Cx request and a REGISTER are in one ladder. What put them together?
-4. A call through the MMTel AS has three Call-IDs. What makes the Lab draw one call?
-5. Which message does the Lab show that the capture has not, and why?
-
----
-
-[layout: answers]
-
-## Looking back: answers
-
-1. From the capture container, which runs tcpdump on the Docker bridge. It starts before the nodes.
-2. `ip.addr == 172.28.0.70` keeps both directions of one node, and `not udp.port == 9060` hides the copies.
-3. The rule of the procedures: the same node, the same user, at most 2 seconds apart. The Lab inferred it, and the details of the arrow say so.
-4. One icid-value in P-Charging-Vector, which the caller's P-CSCF put in and each AS kept.
-5. A message from a node to itself, such as the S-CSCF to itself when it serves both sides of a call. It never leaves the container, so the bridge never sees it.
-
----
-
-## Next session
-
-- Next is registration, the first flow read in a capture. It is also the first ladder to open in the Lab.
-- Before then, start the system once, open the newest file in `captures/` with the filter `diameter`, and find the seven CERs.
-
-```sh
-docker compose up -d --build
-```
-
-> The guide of the next session is [Follow a UE registering with the IMS](../../../docs/guide/en/registration.md). To stop the system, see ["Stop the system"](../../../docs/guide/en/capture.md#stop-the-system).

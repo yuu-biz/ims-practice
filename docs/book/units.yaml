@@ -1,0 +1,1114 @@
+# What each part of the book explains, and what the explanation rests on:
+# the chapter, the scenes of the decks, the code and the tests it quotes
+# or reads, and the clauses it states. "go run ./cmd/slides check" in
+# slides/ checks that each of them exists, and lists the units whose code
+# or tests changed since the commit in "verified": their chapter is read
+# again, and "verified" moves on once it still holds.
+#
+# evidence: code (the author read it), test (the author ran it),
+# capture (the author looked at one), illustration (an example made up
+# to explain the idea).
+units:
+  - id: registration-two-registers
+    question:
+      ja: なぜ REGISTER を 2 回送るのか
+      en: Why does a UE send REGISTER twice
+    setup: deploy/compose, a softphone that registers with SIP Digest; P-CSCF, I-CSCF, S-CSCF, HSS
+    chapter: registration-two-registers
+    scenes: [04-registration/overview, 04-registration/select, 04-registration/challenge, 04-registration/second-register, 04-registration/accept]
+    code:
+      - internal/icscf/icscf.go:register
+      - internal/icscf/icscf.go:choose
+      - internal/hss/hss.go:userAuthorization
+      - internal/hss/hss.go:multimediaAuth
+      - internal/scscf/scscf.go:challenge
+      - internal/scscf/scscf.go:check
+      - internal/scscf/scscf.go:accept
+      - internal/scscf/store.go:Challenge
+    tests:
+      - internal/scscf/scscf_test.go:TestRegistrationWithSIPDigest
+      - internal/scscf/scscf_test.go:TestWrongPasswordIsForbidden
+      - internal/scscf/scscf_test.go:TestAnswerOnAnotherCallIDIsForbidden
+      - internal/scscf/challenge_deadline_test.go:TestRegistrationRejectsExpiredChallengeBeforeSweep
+      - internal/icscf/icscf_test.go:TestFirstRegistrationChoosesAnSCSCFByCapability
+      - internal/ue/ue_test.go:TestRegisterRefreshAndDeregisterThroughTheWholeIMS
+    standards:
+      - TS 24.229 V18.11.0 5.4.1.2.1, 5.4.1.2.1B, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3B, 5.2.2.3, Table 7.8.1
+      - TS 29.228 V18.0.0 6.1.1, 6.1.1.1, 6.3, 6.7
+      - RFC 7616 3.4.2, 3.5
+      - RFC 8760 2.3
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: registration-routes
+    question:
+      ja: Path と Service-Route は誰が何のために使うのか
+      en: Who uses Path and Service-Route, and for what
+    setup: deploy/compose, a softphone that registers with SIP Digest; the UE, the P-CSCF and the S-CSCF
+    chapter: registration-routes
+    scenes: [04-registration/routes]
+    code:
+      - internal/pcscf/pcscf.go:pathURI
+      - internal/scscf/scscf.go:bindingResponse
+      - internal/scscf/session.go:routeTerminating
+      - internal/ue/call.go:routeSet
+    tests:
+      - internal/scscf/session_test.go:TestTerminatingCallFollowsThePath
+      - internal/pcscf/session_test.go:TestOriginatingCallGoesThroughTheRelay
+    standards:
+      - TS 24.229 V18.11.0 5.1.2A.1.1, 5.2.2.1, 5.2.6.3.3, 5.4.1.2.2F, 5.4.3.3
+      - RFC 3327 5.3, 5.4
+      - RFC 3608 6.1
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: registration-stale-deregistration
+    question:
+      ja: 遅れて届いた解除が、新しい登録を消さないのはなぜか
+      en: Why does a late deregistration not remove a newer registration
+    setup: deploy/compose, a softphone that registers with SIP Digest; one binding per private identity at the S-CSCF
+    chapter: registration-stale-deregistration
+    scenes: [04-registration/registration-order]
+    code:
+      - internal/scscf/store.go:Registration
+      - internal/scscf/scscf.go:outOfOrder
+      - internal/scscf/scscf.go:refuseOutOfOrder
+      - internal/scscf/scscf.go:accept
+      - internal/scscf/scscf.go:deregister
+      - internal/scscf/scscf.go:register
+      - internal/scscf/scscf.go:registration
+    tests:
+      - internal/scscf/scscf_test.go:TestRegisterOutOfOrderLeavesTheBindingAlone
+      - internal/scscf/registration_deadline_test.go:TestRegisterAfterTheBindingExpiredStartsAfresh
+      - internal/sip/stack_test.go:TestServerTransactionAbsorbsRetransmissions
+    standards:
+      - RFC 3261 10.3 steps 6 and 7, 17.1.2, 17.2
+      - TS 24.229 V18.11.0 5.4.1.2.2A
+    evidence: [code, test, illustration]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: registration
+    question:
+      ja: 登録で何が決まるのか
+      en: What does registration settle
+    setup: deploy/compose, a softphone that registers with SIP Digest; P-CSCF, I-CSCF, S-CSCF, HSS
+    chapter: registration
+    scenes: [04-registration/overview]
+    code:
+      - internal/scscf/scscf.go:bindingResponse
+    tests:
+      - internal/scscf/scscf_test.go:TestRegistrationWithSIPDigest
+      - internal/ue/ue_test.go:TestRegisterRefreshAndDeregisterThroughTheWholeIMS
+    standards:
+      - TS 24.229 V18.11.0 5.1.1.4.1, 5.4.1.2.2F
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: registration-subscriptions
+    question:
+      ja: 誰が登録の状態を購読し、NOTIFY は何を伝えるのか
+      en: Who subscribes to the registration state, and what does a NOTIFY say
+    setup: deploy/compose, a softphone that registers with SIP Digest; the P-CSCF, the UE and the IP-SM-GW subscribe to the reg event at the S-CSCF
+    chapter: registration-lifecycle
+    scenes: [04-registration/pcscf-subscribe, 04-registration/ue-subscribe]
+    code:
+      - internal/scscf/regevent.go:authorizedSubscriber
+      - internal/scscf/regevent.go:endRegistration
+      - internal/scscf/scscf.go:accept
+      - internal/pcscf/regevent.go:removedByTheNetwork
+    tests:
+      - internal/scscf/regevent_test.go:TestRegEventFollowsTheRegistration
+      - internal/scscf/regevent_test.go:TestRegEventSubscriptionsThatAreRefused
+      - internal/pcscf/regevent_test.go:TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation
+      - internal/pcscf/regevent_test.go:TestRemovedByTheNetwork
+    standards:
+      - TS 24.229 V18.11.0 5.1.1.3, 5.1.1.4.1, 5.2.3, 5.2.5.2, 5.2.6.4.5, 5.4.2.1.1, 5.4.2.1.2
+      - TS 29.228 V18.0.0 6.1.4
+      - RFC 3680 4.4, 4.5
+      - RFC 6665 4.4.1
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: registration-third-party
+    question:
+      ja: S-CSCF はなぜアプリケーションサーバーにも REGISTER を送り、IP-SM-GW はそれで何をするのか
+      en: Why does the S-CSCF send a REGISTER to the application server too, and what does the IP-SM-GW do with it
+    setup: deploy/compose; the iFC of every REGISTER names the IP-SM-GW with SESSION_CONTINUED
+    chapter: registration-lifecycle
+    scenes: [04-registration/third-party]
+    code:
+      - internal/scscf/thirdparty.go:notifyApplicationServers
+      - internal/scscf/thirdparty.go:thirdPartyRegister
+      - internal/ipsmgw/regevent.go:takesShortMessages
+      - internal/ipsmgw/regevent.go:updateHSS
+    tests:
+      - internal/scscf/services_test.go:TestThirdPartyRegister
+      - internal/ipsmgw/regevent_test.go:TestThirdPartyRegisterSubscribesToTheRegistrationState
+      - internal/ipsmgw/regevent_test.go:TestContactWithoutTheFeatureTag
+    standards:
+      - TS 24.229 V18.11.0 5.4.1.5, 5.4.1.7, 5.4.1.7A
+      - TS 24.341 5.3.2.2, 5.3.3.2
+      - TS 29.328 6.1.2
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: registration-ends
+    question:
+      ja: 登録はどう終わり、終わり方で NOTIFY と Cx と UE の動きはどう変わるのか
+      en: How does a registration end, and how do the NOTIFY, the Cx messages and the UE differ by the way it ends
+    setup: deploy/compose, a softphone that registers with SIP Digest; deregistration over the IP association, expiry, removal of the subscription from the HSS, a wrong password
+    chapter: registration-lifecycle
+    scenes: [04-registration/deregister, 04-registration/failures]
+    code:
+      - internal/pcscf/pcscf.go:register
+      - internal/icscf/icscf.go:register
+      - internal/scscf/scscf.go:register
+      - internal/scscf/scscf.go:deregister
+      - internal/scscf/scscf.go:registrationExpired
+      - internal/scscf/scscf.go:registration
+      - internal/scscf/aka.go:reregister
+      - internal/scscf/scscf.go:deregistrationEvents
+      - internal/scscf/scscf.go:registrationTermination
+      - internal/ue/phone.go:Serve
+    tests:
+      - internal/scscf/scscf_test.go:TestRegistrationWithSIPDigest
+      - internal/scscf/scscf_test.go:TestDeregisteringAnUnregisteredUserGets481
+      - internal/scscf/scscf_test.go:TestDeregistrationWithoutAnSAA
+      - internal/scscf/scscf_test.go:TestRegistrationExpires
+      - internal/scscf/scscf_test.go:TestFailedReauthenticationKeepsTheRegistrationExpiry
+      - internal/scscf/regevent_test.go:TestRegEventReportsAnExpiredContact
+      - internal/scscf/regevent_test.go:TestRegistrationTerminationByTheHSS
+      - internal/scscf/regevent_test.go:TestRegistrationTerminationReasons
+      - internal/ue/regevent_test.go:TestRegEventReportsTheExpiryThroughTheWholeIMS
+      - internal/ue/regevent_test.go:TestRemovedSubscriptionIsDeregisteredThroughTheWholeIMS
+      - internal/scscf/registration_deadline_test.go:TestRegisterAfterTheBindingExpiredStartsAfresh
+      - internal/scscf/registration_deadline_test.go:TestDeregisterAfterTheBindingExpiredGets481
+      - internal/scscf/registration_deadline_test.go:TestProtectedRegisterAfterTheBindingExpiredIsRefused
+      - internal/scscf/registration_deadline_test.go:TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration
+    standards:
+      - TS 24.229 V18.11.0 5.1.1.6.1, 5.1.1.7, 5.2.2.3, 5.3.1.3, 5.4.1.2.3A, 5.4.1.2.3B, 5.4.1.4.1, 5.4.1.5, 5.4.2.1.2
+      - TS 29.228 V18.0.0 6.1.1, 6.1.1.1, 6.1.2, 6.1.2.1, 6.1.3, A.4.4.2
+      - TS 23.228 5.3.1
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: registration-binding-query
+    question:
+      ja: Contact の無い REGISTER は何を返し、何を変えないのか
+      en: What does a REGISTER without a Contact return, and what does it leave alone
+    setup: deploy/compose, a softphone that registers with SIP Digest; the S-CSCF
+    chapter: registration-lifecycle
+    scenes: []
+    code:
+      - internal/scscf/scscf.go:accept
+      - internal/scscf/scscf.go:answerQuery
+    tests:
+      - internal/scscf/scscf_test.go:TestRegisterWithoutContactFetchesTheBinding
+    standards:
+      - RFC 3261 10.2.3, 10.3 step 8
+      - TS 24.229 V18.11.0 5.1.1.4.1
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: registration-lab-view
+    question:
+      ja: ラボは登録をどう組み立てて見せるのか
+      en: How does the Lab build and show a registration
+    setup: deploy/compose with the Lab; the nodes send copies of their messages over HEP
+    chapter: registration-lifecycle
+    scenes: []
+    code:
+      - internal/lab/registrations.go:isThirdPartyRegister
+      - internal/lab/registrations.go:registrationsFromRegisterOK
+      - internal/lab/registrations.go:registrationsFromNotify
+    tests:
+      - internal/lab/registrations_test.go:TestRegistration
+      - internal/lab/registrations_test.go:TestThirdPartyRegisterIsNoRegistrationOfTheUE
+    standards:
+      - TS 24.229 V18.11.0 5.4.1.7
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: services-as-invocation
+    question:
+      ja: S-CSCF はどうやって要求を AS に渡し、AS が送り返した要求をどう続けるのか
+      en: How does the S-CSCF hand a request to an AS, and go on with the request that the AS sends back
+    setup: deploy/compose; the iFCs of hss.yaml; the MMTel AS, the IP-SM-GW and the MRF (MRFC and MRFP)
+    chapter: services
+    scenes: [07-mmtel/where, 07-mmtel/ifc, 07-mmtel/odi, 08-mrf/roles]
+    code:
+      - internal/scscf/services.go:invokeApplicationServers
+      - internal/scscf/services.go:invoke
+      - internal/scscf/services.go:fromApplicationServer
+    tests:
+      - internal/scscf/services_test.go:TestPServedUser
+      - internal/scscf/services_test.go:TestRequestBackFromAProxyAS
+      - internal/scscf/services_test.go:TestTerminatingApplicationServer
+      - internal/mmtel/network_test.go:TestPlainCallThroughTheAS
+      - internal/mmtel/charging_network_test.go:TestOneICIDThroughTheIMS
+    standards:
+      - TS 24.229 V20.1.0 5.4.3.2, 5.4.3.3, 5.4.3.4, 5.7.2, 5.7.5
+      - TS 29.228 Annex E, B.2.3
+      - TS 23.228 V20.1.0 4.7
+      - GSMA IR.92 v24.0 2.3
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: mmtel-ifc-session-case
+    question:
+      ja: iFC の条件と session case で、AS が動かすサービスとその順はどう決まるのか
+      en: How do the conditions of the iFCs and the session case decide which services the AS runs, and in which order
+    setup: deploy/compose; UE 1 calls, UE 2 is the served user, UE 3 the target of diversions; one MMTel AS
+    chapter: mmtel
+    scenes: [07-mmtel/ifc, 07-mmtel/sescase, 07-mmtel/odi, 07-mmtel/normal, 07-mmtel/oir, 07-mmtel/cfu, 07-mmtel/cfb, 07-mmtel/cfnl, 07-mmtel/barring, 07-mmtel/cw-hold]
+    code:
+      - internal/ifc/ifc.go:matches
+      - internal/scscf/services.go:retargeted
+      - internal/mmtel/call.go:serve
+      - internal/mmtel/sessioncase.go:terminating
+      - internal/simservs/evaluate.go:international
+    tests:
+      - internal/scscf/services_test.go:TestPServedUser
+      - internal/scscf/services_test.go:TestDefaultHandling
+      - internal/scscf/services_test.go:TestTerminatingApplicationServer
+      - internal/mmtel/relay_test.go:TestINVITEWithoutAServedUser
+      - internal/mmtel/network_test.go:TestCFUSetOverUt
+      - internal/mmtel/network_test.go:TestCFBThroughTheIMS
+      - internal/mmtel/network_test.go:TestCFNLThroughTheIMS
+      - internal/mmtel/network_test.go:TestBarringThroughTheIMS
+      - internal/mmtel/network_test.go:TestHoldThroughTheIMS
+      - internal/simservs/evaluate_test.go:TestEvaluateOutgoingBarring
+    standards:
+      - TS 24.229 V20.1.0 5.4.3.2 steps 3 and 5, 5.4.3.3 steps 2A, 3, 4 and 12, 5.7.5
+      - TS 24.604 V19.0.0 4.5.2.6.1, 4.5.2.6.3, 4.5.2.6.4, Annex C
+      - TS 24.607 V19.1.0 4.5.2.4
+      - TS 24.611 V19.0.0 4.6.7, 4.9.1.4
+      - TS 24.615 V19.0.0 4.5.5.2.3, 4.5.5.3.2
+      - TS 29.228 6.1.4.1 step 3
+      - GSMA IR.92 v24.0 2.3.4
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: mmtel-cfnr-timer
+    question:
+      ja: CFNR で CANCEL が出る時刻は何で決まるのか
+      en: What decides when the CANCEL of CFNR goes out
+    setup: deploy/compose; UE 2 has CFNR to UE 3 and lets UE 1's call ring
+    chapter: mmtel
+    scenes: [07-mmtel/cfnr]
+    code:
+      - internal/mmtel/call.go:attempt
+      - internal/mmtel/diversion.go:noReplyTimer
+      - internal/simservs/mmtelservices.go:NoReplyTimer
+    tests:
+      - internal/mmtel/diversion_test.go:TestCommunicationForwardingNoReply
+      - internal/mmtel/diversion_test.go:TestNoReplyTimerOnlyWithARule
+      - internal/mmtel/network_test.go:TestCFNRThroughTheIMS
+    standards:
+      - TS 24.604 V19.0.0 4.5.2.6.3 item 2, 4.8.1, 4.9.1.1A
+      - RFC 3326 2
+      - RFC 6228
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: mmtel-ut-conditional-update
+    question:
+      ja: 2 人が同じ設定の文書を同時に変えると何が起きるのか
+      en: What happens when two parties change the same settings document at once
+    setup: deploy/compose; UE 2 changes its simservs document over Ut; the document is Sh repository data in the HSS
+    chapter: mmtel
+    scenes: [07-mmtel/document, 07-mmtel/ut]
+    code:
+      - internal/xcap/handler.go:change
+      - internal/xcap/handler.go:precondition
+    tests:
+      - internal/xcap/handler_test.go:TestConcurrentWritersRetry
+      - internal/xcap/handler_test.go:TestWriterBetweenReadAndWrite
+      - internal/xcap/digest_test.go:TestChallengeOrder
+    standards:
+      - RFC 4825 7.11
+      - RFC 7616 3.3
+      - TS 24.623 V19.0.0 5.3.2.2
+      - TS 29.328 V20.0.0 6.1.2.1
+      - TS 29.364 V19.1.0 7.2
+      - GSMA IR.92 v24.0 2.3.2 Note 3
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: mrf-early-media-announcement
+    question:
+      ja: AS はどうやって応答の前に音声を流し、再生の始まりを決めるのか
+      en: How does the AS play audio before the answer, and choose when the play starts
+    setup: deploy/compose; UE 1 bars its outgoing calls and calls UE 2; mmtel.yaml names the MRFC and the announcement notice
+    chapter: mrf
+    scenes: [08-mrf/roles, 08-mrf/early, 08-mrf/announce]
+    code:
+      - internal/mmtel/mrf.go:announcementURI
+      - internal/mmtel/mrf.go:reserveMedia
+      - internal/mmtel/announcement.go:announce
+      - internal/mmtel/announcement.go:earlyMediaOffer
+    tests:
+      - internal/mmtel/mrf_network_test.go:TestAnnouncementBeforeBarring
+      - internal/mmtel/mrf_network_test.go:TestBarringWithoutPCMU
+    standards:
+      - TS 24.229 V20.1.0 5.8.2.2.1, 5.8.3.2.1
+      - TS 24.628 V19.0.0 4.2.4, 4.7.2.1, Annex G
+      - TS 24.611 V19.0.0 4.5.2.4.1
+      - TS 23.333 V19.0.0 6.2.9
+      - RFC 4240 3, 5
+      - RFC 5009
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: mrf-customized-alerting-tone
+    question:
+      ja: 着信者が選んだ呼び出し音は、誰がいつ頼み、どう発信者に届くのか
+      en: Who asks for the tone the callee chose, when, and how does it reach the caller
+    setup: deploy/compose; subscriber 2 has the CAT cat1 from the OAM; UE 1 uses preconditions
+    chapter: mrf
+    scenes: [08-mrf/cat]
+    code:
+      - internal/mmtel/cat.go:startAlertingTone
+      - internal/mmtel/mrf.go:reserveMedia
+    tests:
+      - internal/mmtel/cat_test.go:TestGatewayModelOrder
+      - internal/mmtel/cat_test.go:TestNoToneForAWaitingCall
+      - internal/mmtel/cat_test.go:TestAnnouncementForAWaitingCall
+      - internal/mmtel/mrf_network_test.go:TestCustomizedAlertingTone
+      - internal/mmtel/mrf_network_test.go:TestCustomizedAlertingToneWithPreconditions
+      - internal/mmtel/mrf_network_test.go:TestLocalRingbackWithoutCAT
+    standards:
+      - TS 24.182 V19.0.0 4.5.2, 4.5.5.3.7, 4.6.11, 4.8
+      - TS 24.628 V19.0.0 4.7.2.1, Annex G
+      - TS 24.615 V19.0.0 4.5.5.2.3, 4.5.5.3.2
+      - RFC 4796
+      - RFC 5009
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: mrf-conference-lifetime
+    question:
+      ja: 会議の資源はいつ作られていつ消え、戻ってきた参加者の INVITE はどう見分けられるのか
+      en: When are the resources of a conference made and released, and how is the INVITE of a party that comes back told apart
+    setup: deploy/compose with the phones profile; phone1 merges its calls with phone2 and phone3; the MMTel AS is the focus
+    chapter: mrf
+    scenes: [08-mrf/psi, 08-mrf/mix, 08-mrf/rejoin]
+    code:
+      - internal/mmtel/call.go:serve
+      - internal/mmtel/conference.go:joinConference
+      - internal/mmtel/conference.go:left
+      - internal/mmtel/conference.go:end
+    tests:
+      - internal/mmtel/conference_network_test.go:TestThreeWayConference
+      - internal/mmtel/conference_network_test.go:TestRejoinWithTheConferenceURI
+      - internal/mmtel/conference_test.go:TestJoinWithTheConferenceURI
+    standards:
+      - TS 24.147 V19.0.0 4, 5.3.1.3.3, 5.3.1.4.1, 5.3.2.4.1, 5.3.2.7
+      - TS 23.228 V20.1.0 4.3.6, 5.4.12.3
+      - TS 23.003 13.5
+      - TS 23.333 V19.0.0 6.2.9
+      - RFC 4575 5.7, 8.2
+      - RFC 7647 5
+      - GSMA IR.92 v24.0 2.3.3
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: design-registration-order
+    question:
+      ja: 初回、更新、解除、遅れた要求、認証の時間切れを、どの識別子と状態で分け、それぞれ何を変えてよいか。読む、比べる、書くを、複数の台のあいだで 1 つの手順にするものは何か
+      en: How do the identifiers and the state tell an initial registration, a refresh, a deregistration, a late request and an authentication that ran out apart, what may each change, and what makes reading, comparing and writing one step across instances
+    setup: deploy/compose, a softphone that registers with SIP Digest, one binding per private identity; deploy/redundancy for the shared store, and two S-CSCF instances on one store in the Go tests
+    chapter: design-registration-order
+    scenes: [04-registration/registration-order, 00-go/locks]
+    code:
+      - internal/scscf/store.go:Challenge
+      - internal/scscf/store.go:Registration
+      - internal/scscf/scscf.go:register
+      - internal/scscf/scscf.go:putChallenge
+      - internal/scscf/scscf.go:regAwaitAuthExpired
+      - internal/scscf/scscf.go:endRegAwaitAuth
+      - internal/scscf/scscf.go:tellAuthenticationTimeout
+      - internal/scscf/scscf.go:registrationExpired
+      - internal/scscf/scscf.go:outOfOrder
+      - internal/scscf/scscf.go:accept
+      - internal/scscf/scscf.go:deregister
+      - internal/scscf/scscf.go:registration
+      - internal/scscf/aka.go:reregister
+      - internal/kvstore/scscfstore/scscfstore.go:RegistrationOf
+      - internal/kvstore/kvlock/kvlock.go:Lock
+      - internal/kvstore/kvlock/kvlock.go:acquire
+      - internal/kvstore/kvlock/kvlock.go:release
+    tests:
+      - internal/scscf/scscf_test.go:TestRegisterOutOfOrderLeavesTheBindingAlone
+      - internal/sip/stack_test.go:TestServerTransactionAbsorbsRetransmissions
+      - internal/scscf/challenge_deadline_test.go:TestRegistrationRejectsExpiredChallengeBeforeSweep
+      - internal/scscf/challenge_deadline_test.go:TestExpiredChallengeKeepsTheRegistration
+      - internal/scscf/challenge_deadline_test.go:TestIMSAKARejectsExpiredChallengeBeforeSweep
+      - internal/kvstore/scscfstore/challenge_deadline_test.go:TestAChallengePastItsExpiresIsNotAnswered
+      - internal/kvstore/scscfstore/instances_test.go:TestARegistrationRefreshedBeforeItsExpiryIsHandled
+      - internal/scscf/session_test.go:TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact
+      - internal/scscf/registration_deadline_test.go:TestRegisterAfterTheBindingExpiredStartsAfresh
+      - internal/scscf/registration_deadline_test.go:TestDeregisterAfterTheBindingExpiredGets481
+      - internal/scscf/registration_deadline_test.go:TestProtectedRegisterAfterTheBindingExpiredIsRefused
+      - internal/scscf/registration_deadline_test.go:TestTheExpiryOfAReplacedBindingLeavesTheNewRegistration
+      - internal/scscf/scscf_test.go:TestRegAwaitAuthExpiry
+      - internal/scscf/scscf_test.go:TestTheSAROfAnAuthenticationTimeoutIsSentAgain
+      - internal/scscf/scscf_test.go:TestTheSAROfAnAuthenticationTimeoutAfterARefusal
+      - internal/scscf/scscf_test.go:TestTheSAROfAnAuthenticationTimeoutStopsWithTheChallenge
+      - internal/scscf/scscf_test.go:TestFailedReauthenticationKeepsTheRegistrationExpiry
+      - internal/scscf/scscf_test.go:TestUsersDoNotWaitForEachOther
+      - internal/scscf/instances_test.go:TestAnotherInstanceNamesTheAssignedSCSCF
+      - internal/scscf/storefailure_test.go:TestRegisterWhenTheLockFails
+      - internal/scscf/storefailure_test.go:TestMemoryStoreForgetsAChallengePastItsKeepUntil
+      - internal/kvstore/kvlock/kvlock_test.go:TestOnlyOneInstanceHoldsTheLock
+      - internal/kvstore/kvlock/kvlock_test.go:TestMutualExclusion
+      - internal/kvstore/kvlock/kvlock_test.go:TestStoppedHolder
+    standards:
+      - RFC 3261 10.3 (the paragraph before the steps, steps 6 and 7), 17.2.2
+      - TS 24.229 V18.11.0 3.1, 5.2.2.2, 5.4.1.2.1, 5.4.1.2.2, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3A, 5.4.1.2.3B, 5.4.1.4.1, Table 7.8.1
+      - TS 29.228 V18.0.0 6.1.2.1, 6.3.1
+    evidence: [code, test, illustration]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: design-shared-state
+    question:
+      ja: 状態を共有した台は、登録、新しい要求、処理中の呼、止まったプロセスの残りのうち、何を引き継げて、何を引き継げないか
+      en: Of the registration, a new request, a call in progress and what a stopped process left, what can instances that share their state take over, and what can they not
+    setup: deploy/redundancy, one Valkey server and one instance of each role in Compose; two instances of a role on one store in the Go tests
+    chapter: design-shared-state
+    scenes: [01-packages/state]
+    code:
+      - internal/scscf/store.go:Store
+      - internal/scscf/expiry.go:handleExpiry
+      - internal/scscf/scscf.go:assignedName
+      - internal/scscf/scscf.go:storeFailed
+      - internal/ims/route.go:Targets
+      - internal/diameter/peergroup.go:Request
+      - internal/diameter/peergroup.go:serving
+      - internal/mmtel/mmtel.go:uri
+      - internal/mmtel/store.go:CallRecord
+      - internal/mmtel/hooks.go:KeepDialogs
+      - internal/mmtel/conference.go:otherSide
+      - internal/ibcf/recovery.go:ReleaseLeftovers
+      - internal/ibcf/recovery.go:byeInLeftover
+    tests:
+      - internal/scscf/instances_test.go:TestAnotherInstanceNamesTheAssignedSCSCF
+      - internal/kvstore/scscfstore/instances_test.go:TestTwoInstancesHandleARegistrationExpiryOnce
+      - internal/kvstore/scscfstore/instances_test.go:TestAnotherInstanceTakesOverAnExpiryThatWasNotHandled
+      - internal/kvstore/scscfstore/instances_test.go:TestAnExpiryWhoseClaimRunsOutWhileItIsHandled
+      - internal/sip/nexttarget_test.go:TestRequestGoesToTheNextTargetWhenTheFirstIsSilent
+      - internal/sip/nexttarget_test.go:TestRequestGoesToTheNextTargetAfterA503
+      - internal/diameter/peergroup_test.go:TestPeerGroupFailsOverWhenThePeerDoesNotAnswer
+      - internal/diameter/peergroup_test.go:TestPeerGroupKeepsToTheDestinationHost
+      - internal/mmtel/focusrelay_test.go:TestFocusInviteWithReplacesThroughTheAS
+      - internal/mmtel/relay_test.go:TestRecordFollowsTheDialogs
+      - internal/mmtel/storefailure_test.go:TestACallThatCannotBeStored
+      - internal/mmtel/storefailure_test.go:TestAnINVITEWhoseReplacesCannotBeRead
+      - internal/sip/ua_test.go:TestRequestForAnUnknownDialogGets481
+      - internal/ibcf/network_test.go:TestRestartedInstanceEndsTheCallsItLeft
+      - internal/ibcf/storefailure_test.go:TestAnInstanceThatCannotReadItsCallsDoesNotStart
+      - internal/scscf/storefailure_test.go:TestRegisterWhenTheLockFails
+      - internal/scscf/storefailure_test.go:TestInitialRequestsWhenTheStoreFails
+      - internal/scscf/storefailure_test.go:TestRefreshWhenTheStoreFails
+      - internal/scscf/storefailure_test.go:TestAnExpiryIsClaimedAgainWhenTheStoreFails
+    standards:
+      - RFC 3261 12.2.1.2, 12.2.2, 16.12
+      - RFC 3263 4.3
+      - RFC 6733 5.5.4
+      - TS 24.229 V18.11.0 5.7.5, 5.7.5.1, 5.10.2.2, 5.10.2.4, 5.10.3.2, 5.10.3.4
+      - TS 29.228 V18.0.0 6.4, 8.1.2
+      - TS 29.229 V18.1.0 5.5
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: design-media-rollback
+    question:
+      ja: メディアの再交渉が失敗したとき、どの状態へ戻し、呼を続けるか終えるか
+      en: When a media renegotiation fails, which state does the media relay go back to, and does the call go on or end
+    setup: deploy/compose, the P-CSCF as IMS-ALG with its media relay over the control API; the IBCF with its TrGW in deploy/interconnect
+    chapter: design-media-rollback
+    scenes: []
+    code:
+      - internal/pcscf/dialog.go:RelayContext
+      - internal/pcscf/session.go:subsequent
+      - internal/pcscf/session.go:renegotiate
+      - internal/pcscf/session.go:goBack
+      - internal/pcscf/dialog.go:relatching
+      - internal/pcscf/session.go:notRelayed
+      - internal/pcscf/session.go:mediaGone
+      - internal/pcscf/setup.go:authorize
+      - internal/agw/api.go:ErrRejected
+      - internal/ims/route.go:Finish
+      - internal/ibcf/call.go:Unanswered
+      - internal/ibcf/call.go:goBack
+      - internal/ibcf/call.go:callStays
+      - internal/sip/indialog.go:lost
+    tests:
+      - internal/pcscf/rollback_test.go:TestRejectedOfferPutsTheRelayBack
+      - internal/pcscf/rollback_test.go:TestCancelledReInvitePutsTheRelayBack
+      - internal/pcscf/rollback_test.go:TestRejectedOfferGoesBackToTheLastOfferAndAnswer
+      - internal/pcscf/rollback_test.go:TestRejectedOfferEndsTheCallWhenTheRelayDoesNotGoBack
+      - internal/pcscf/rollback_test.go:TestRejectedOfferAfterAPreviewPutsBothSidesBack
+      - internal/pcscf/latch_test.go:TestRejectedOfferAsksTheAccessTerminationToLatchBack
+      - internal/pcscf/renegotiate_test.go:TestRejectedOfferAfterAPreviewKeepsTheAuthorisedMedia
+      - internal/pcscf/renegotiate_test.go:TestAnswerAfterAPreviewIsAuthorisedOnce
+      - internal/pcscf/renegotiate_test.go:TestRejectedOfferAfterAReliableAnswerKeepsTheNewMedia
+      - internal/pcscf/refusedoffer_test.go:TestRefusedOfferWithinTheDialogIsRejected
+      - internal/pcscf/refusedoffer_test.go:TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt
+      - internal/pcscf/refusedanswer_test.go:TestRefusedAnswerWithinTheDialogReleasesTheCall
+      - internal/ibcf/rollback_test.go:TestRejectedOfferPutsTheTrGWBack
+      - internal/ibcf/rollback_test.go:TestRejectedOfferEndsTheCallWhenTheTrGWDoesNotGoBack
+      - internal/ibcf/rollback_test.go:TestCancelledReInvitePutsTheTrGWBack
+      - internal/ibcf/rollback_test.go:TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer
+      - internal/ibcf/rollback_test.go:TestRejectedOfferAfterAReliableAnswerKeepsIt
+      - internal/sip/indialog_test.go:TestA481WithinTheDialogEndsTheCall
+      - internal/sip/reinviteprack_test.go:TestPRACKOfAReINVITEThatGets481EndsTheCall
+    standards:
+      - RFC 3261 12.2.1.2, 13.2.1, 14.1, 21.5.1
+      - RFC 3262 4, 5
+      - RFC 3264 8.3.1
+      - RFC 3311 5.3
+      - RFC 6141 3.3, 3.4
+      - TS 24.229 V18.11.0 5.2.8.1.2, 5.10.2.4, 5.10.3.4, 6.1.4.2, 6.7.2.1
+      - TS 29.214 V20.0.0 4.4.2, A.1
+    evidence: [code, test, illustration]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: design-maintenance
+    question:
+      ja: 保守で外すとき、正常に止めるとき、プロセスが消えるとき、保存先を失うとき、どの仕事を断り、どれを終えるか
+      en: Taken out for maintenance, stopped in order, lost with its process, or left without its store, which work does a node refuse and which does it finish
+    setup: deploy/compose with one node per role and the state in each process; deploy/redundancy with the state in a shared Valkey store; the maintenance API of each node and the OAM
+    chapter: design-maintenance
+    scenes: []
+    code:
+      - internal/maintenance/state.go:ManagedFunction
+      - internal/maintenance/state.go:ShutDown
+      - internal/scscf/scscf.go:OnRequest
+      - internal/scscf/maintenance.go:carriesOn
+      - internal/scscf/maintenance.go:Function
+      - internal/pcscf/pcscf.go:register
+      - internal/pcscf/maintenance.go:refusal
+      - internal/icscf/maintenance.go:refuse
+      - internal/hss/maintenance.go:Function
+      - internal/mmtel/maintenance.go:Function
+      - internal/smsc/maintenance.go:Function
+      - internal/agw/maintenance.go:Function
+      - internal/diameter/peergroup.go:Request
+      - internal/ibcf/recovery.go:ReleaseLeftovers
+      - cmd/ims/main.go:stopNode
+    tests:
+      - internal/maintenance/state_test.go:TestShutDownWaitsForTheLastUserToQuit
+      - internal/maintenance/state_test.go:TestShutDownWithoutUsersLocksAtOnce
+      - internal/maintenance/state_test.go:TestShutDownDeadlineLocksWithUsersLeft
+      - internal/scscf/maintenance_test.go:TestAShutDownSCSCFRefusesOnlyWhatIsNew
+      - internal/scscf/maintenance_test.go:TestAShutDownWaitsForTheTransactionsInProgress
+      - internal/pcscf/maintenance_test.go:TestAShutDownPCSCFRefusesOnlyTheRegistrations
+      - internal/icscf/maintenance_test.go:TestAShutDownICSCFRefusesEveryRequest
+      - internal/hss/maintenance_test.go:TestPeerGroupMovesToTheSecondHSSWhenTheFirstIsDrained
+      - internal/hss/maintenance_test.go:TestShutDownWaitsForTheRequestsItTook
+      - internal/mmtel/maintenance_test.go:TestAShutDownASRefusesANewCall
+      - internal/mmtel/maintenance_test.go:TestAShutDownASServesTheDiversionOfACallInProgress
+      - internal/mmtel/maintenance_test.go:TestAShutDownWaitsForTheCallsOfTheAS
+      - internal/smsc/maintenance_test.go:TestAShutDownSCFinishesTheAttemptInHandAndLeavesTheQueue
+      - internal/smsc/maintenance_test.go:TestALockedSCLeavesEveryDeliveryToAnInstanceInService
+      - internal/agw/maintenance_test.go:TestAShutDownRelayMakesNoContext
+      - internal/agw/maintenance_test.go:TestTheDrainWaitsForTheContextsOfTheRelay
+      - internal/agw/maintenance_test.go:TestTheContextsOfAnEarlierProcessCountAsUsers
+      - cmd/ims/stop_test.go:TestAnExpiryThatComesWhileANodeStopsGoesToAnotherInstance
+      - internal/ibcf/network_test.go:TestRestartedInstanceEndsTheCallsItLeft
+      - internal/ibcf/storefailure_test.go:TestACallGoesOnWhenItsRecordCannotBeWritten
+      - internal/ibcf/storefailure_test.go:TestAnInstanceThatCannotReadItsCallsDoesNotStart
+      - internal/scscf/storefailure_test.go:TestRegisterWhenTheStoreFails
+      - internal/pcscf/storefailure_test.go:TestRegisterWhenTheStoreFails
+      - internal/pcscf/storefailure_test.go:TestInviteWhenTheStoreFails
+      - internal/hss/storefailure_test.go:TestRequestsWhoseSubscriberCannotBeRead
+    standards:
+      - TS 28.622 5.3.1, 5.3.3
+      - ITU-T X.731 7.1.3
+      - TS 32.600 4.2.1.3
+      - RFC 3261 12.2.1.2, 12.2.2, 16.7 step 6, 21.5.4
+      - RFC 3263 4.3
+      - RFC 6733 2.1, 5.4, 5.4.3, 5.5.4, 7.1.3
+      - TS 24.229 V18.11.0 5.1.1.2.1, 5.2.2.1, 5.10.2.4, 5.10.3.4
+      - TS 29.334 5.17.3.2
+      - TS 23.333 8.30
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: overview-nodes-and-paths
+    question:
+      ja: IMS のノードはそれぞれ何を受け持ち、信号と声はどこを通るのか
+      en: What does each IMS node take care of, and where do the signalling and the voice go
+    setup: deploy/compose, softphone UEs that register with SIP Digest; UE 1 registers and calls UE 2 through the P-CSCF, the I-CSCF, the S-CSCF, the HSS, the MMTel AS and the media relay
+    chapter: overview
+    scenes: [02-network/jobs, 02-network/sip-points, 02-network/diameter-points, 04-registration/overview, 05-call/overview, 05-call/media]
+    code: []
+    tests:
+      - internal/ue/ue_test.go:TestRegisterRefreshAndDeregisterThroughTheWholeIMS
+      - internal/ue/call_test.go:TestCallThroughTheWholeIMS
+    standards:
+      - TS 23.228 V20.1.0 4.7
+      - TS 24.229 V18.11.0 5.7.5
+      - TS 24.623 V19.0.0
+      - TS 29.333, TS 29.334
+      - RFC 3263, RFC 6116
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: overview-roles-by-configuration
+    question:
+      ja: 役割を設定で選ぶとはどういうことで、台数を増やすときに何を意味するのか
+      en: What does choosing a role by configuration mean, and what does it mean for running several instances
+    setup: deploy/compose, one cmd/ims node per role; the redundant setup of deploy/redundancy for the shared store
+    chapter: overview
+    scenes: [01-packages/one-binary, 01-packages/state]
+    code:
+      - internal/config/config.go:knownRoles
+      - internal/config/config.go:Config
+      - cmd/ims/main.go:run
+      - internal/scscf/store.go:Store
+    tests:
+      - internal/config/config_test.go:TestParseCombinedRoles
+      - internal/config/config_test.go:TestParseRejects
+    standards:
+      - TS 23.228 V20.1.0
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: observing-observed-and-inferred
+    question:
+      ja: キャプチャとラボのシーケンス図は、それぞれ何を観測し、何を推定しているのか
+      en: What does a capture observe, and what does the ladder of the Lab observe and what does it infer
+    setup: deploy/compose; the capture container on the bridge ims0, and the Lab receiving HEP copies on UDP 9060
+    chapter: observing
+    scenes: [03-captures/one-file, 03-captures/copies, 03-captures/one-arrow, 03-captures/infer, 03-captures/dialogs]
+    code:
+      - internal/lab/causes.go:callIDOf
+      - internal/lab/causes.go:causeWindow
+      - internal/lab/message.go:direction
+      - internal/lab/store.go:joinCall
+    tests:
+      - internal/lab/causes_test.go:TestCxMessagesGetTheCallIDOfTheirCause
+      - internal/lab/causes_test.go:TestCxLinkDoesNotDependOnArrivalOrder
+      - internal/lab/causes_test.go:TestRxSessionsGetTheCallIDOfTheirCause
+      - internal/lab/calls_test.go:TestCallThroughTheASIsOneCall
+    standards:
+      - TS 24.229 V18.11.0 5.7.5, 5.7.5.1, 5.2.6.3.3
+      - RFC 3539 3.4.1
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: observing-transactions-and-dialogs
+    question:
+      ja: キャプチャの中で、トランザクションとダイアログをどう見分けるのか
+      en: How are transactions and dialogs told apart in a capture
+    setup: an illustration with short values; UE 1, the P-CSCF, the S-CSCF and the originating MMTel AS of deploy/compose
+    chapter: observing
+    scenes: [03-captures/transactions]
+    code:
+      - internal/sip/stack.go:clientKey
+      - internal/sip/stack.go:serverKey
+      - internal/sip/dialog.go:DialogID
+    tests: []
+    standards:
+      - RFC 3261 8.1.1.7, 12, 16.6, 16.7, 17, 17.1.3, 17.2.3
+    evidence: [code, illustration]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: go-reading-excerpts
+    question:
+      ja: コードの抜き出しに出てくる Go の書き方は、それぞれ何を意味するのか
+      en: What does each form of Go in the excerpts of code mean
+    setup: the Go code of the repository, Go 1.27.4 as in go.mod
+    chapter: go-reading
+    scenes: [00-go/interfaces, 00-go/goroutines, 00-go/locks, 00-go/terms]
+    code:
+      - internal/scscf/scscf.go:HSS
+      - internal/pcscf/session.go:Relay
+      - internal/diameter/peer.go:Request
+      - internal/diameter/peer.go:Connect
+      - internal/scscf/scscf.go:lockFailed
+      - internal/ims/locks.go:UserLocker
+      - internal/ims/expiry.go:DueIndex
+      - internal/rtp/rtp.go:Marshal
+      - internal/sms/rp.go:ParseRP
+      - internal/sms/rp.go:RPAck
+    tests:
+      - internal/sms/rp_test.go:TestRPMessages
+      - internal/sms/rp_test.go:Example
+      - internal/rtp/rtp_test.go:TestRoundTrip
+    standards:
+      - RFC 3550 5.1
+      - TS 24.011 table 7.7
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: call-route
+    question:
+      ja: 電話番号しか知らない UE の INVITE は、どうやって相手の UE に届くのか
+      en: How does the INVITE of a UE that knows only a number reach the other UE
+    setup: deploy/compose, two softphones that registered with SIP Digest; P-CSCF, S-CSCF, MMTel AS, DNS with ENUM, I-CSCF, HSS
+    chapter: call
+    scenes: [05-call/overview, 05-call/orig-pcscf, 05-call/orig-scscf, 05-call/entry, 05-call/term, 05-call/shape-confirm]
+    code:
+      - internal/pcscf/session.go:session
+      - internal/scscf/session.go:session
+      - internal/scscf/session.go:routeOriginating
+      - internal/scscf/session.go:routeTerminating
+      - internal/scscf/services.go:invoke
+      - internal/sipdns/enum.go:ENUM
+      - internal/icscf/session.go:session
+    tests:
+      - internal/ue/call_test.go:TestCallThroughTheWholeIMS
+      - internal/scscf/session_test.go:TestOriginatingCallToATelURIGoesToTheICSCF
+      - internal/scscf/session_test.go:TestOriginatingCallToANumberWithoutENUMGets404
+      - internal/scscf/session_test.go:TestTerminatingCallFollowsThePath
+      - internal/icscf/icscf_test.go:TestCallToARegisteredCalleeGoesToItsSCSCF
+      - internal/mmtel/relay_test.go:TestCallThroughTheAS
+    standards:
+      - TS 24.229 V18.11.0 5.2.6.2, 5.2.6.3.3, 5.2.6.4.3, 5.3.2.1, 5.4.3.1, 5.4.3.2 steps 4C, 5, 9 and 10, 5.4.3.3
+      - TS 29.228 V18.0.0 6.1.4
+      - RFC 6116
+      - RFC 3261 18.1.1
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: call-media-path
+    question:
+      ja: 音声はなぜ信号と違う道を通り、誰がその道を作るのか
+      en: Why does the voice take another way than the signalling, and who makes that way
+    setup: deploy/compose; one P-CSCF that serves both UEs and controls the media relay (IMS-AGW) over the project's HTTP API
+    chapter: call
+    scenes: [05-call/media, 05-call/shape-bye]
+    code:
+      - internal/pcscf/setup.go:addContext
+      - internal/pcscf/session.go:relaySDP
+    tests:
+      - internal/pcscf/session_test.go:TestOriginatingCallGoesThroughTheRelay
+      - internal/agw/agw_test.go:TestRelayLatchesAndForwards
+    standards:
+      - RFC 3550 5.1
+      - RFC 3551 4.5.14
+      - RFC 3261 15.1.1
+      - TS 24.229 V18.11.0 5.1.5
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: call-dialogs
+    question:
+      ja: 1 回の通話のトランザクションとダイアログは、どのノードを通り、どのノードが何を持つのか
+      en: Which nodes do the transactions and the dialogs of one call pass, and which node keeps what
+    setup: deploy/compose; the MMTel AS as a routeing B2BUA on both sides, which gives one call three dialogs
+    chapter: call-signaling
+    scenes: [05-call/shape, 05-call/shape-confirm, 05-call/prack]
+    code:
+      - internal/sip/dialog.go:NewUACDialog
+      - internal/scscf/services.go:invoke
+      - internal/scscf/store.go:OriginalDialog
+      - internal/pcscf/dialog.go:Dialog
+    tests:
+      - internal/sip/dialog_test.go:TestUACDialogFromAProvisionalResponse
+      - internal/mmtel/relay_test.go:TestCallThroughTheAS
+    standards:
+      - RFC 3261 12, 12.1.2, 12.2.1.1, 17
+      - TS 24.229 V18.11.0 5.4.3.4, 5.7.5
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: call-offer-answer
+    question:
+      ja: 信頼性のある 183 と PRACK と SDP で、メディアはどう決まり、P-CSCF はどこを書き換えるのか
+      en: How do the reliable 183, the PRACK and the SDP settle the media, and where does the P-CSCF rewrite it
+    setup: deploy/compose; both UEs support 100rel and preconditions and have their resources; the P-CSCF points every SDP at the media relay
+    chapter: call-signaling
+    scenes: [05-call/shape, 05-call/answer, 05-call/confirm]
+    code:
+      - internal/sip/uas.go:progress
+      - internal/ue/call.go:Answer
+      - internal/pcscf/session.go:relaySDP
+      - internal/pcscf/dialog.go:relatching
+    tests:
+      - internal/sip/prack_test.go:TestUASRetransmitsAReliableProvisionalUntilThePRACK
+      - internal/sip/prack_test.go:TestUASRejectsTheINVITEWithoutAPRACK
+      - internal/ue/call_test.go:TestAnswerInTheReliable183
+      - internal/pcscf/session_test.go:TestOriginatingCallGoesThroughTheRelay
+      - internal/pcscf/latch_test.go:TestOfferThatMovesTheUEAsksTheAccessTerminationToLatchAgain
+      - internal/pcscf/latch_test.go:TestOfferThatLeavesTheUEWhereItIsAsksForNoRelatch
+    standards:
+      - RFC 3262 3, 4, 5
+      - RFC 3264 5.1, 6.1
+      - RFC 3261 13.2.1
+      - RFC 3312 6
+      - TS 24.229 V18.11.0 6.7.2.1
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: call-failures-release
+    question:
+      ja: 通話が失敗するときと終わるときに、どのノードが応答を決め、何を解放するのか
+      en: When a call fails or ends, which node decides the response, and what is freed
+    setup: deploy/compose; busy, unregistered (with the TERMINATING_UNREGISTERED iFC of the MMTel AS, and without one), unknown and ENUM-less numbers, CANCEL before the answer, BYE after it
+    chapter: call-signaling
+    scenes: [05-call/failures, 05-call/unregistered, 05-call/unknown-number, 05-call/shape-bye, 05-call/bye]
+    code:
+      - internal/b2bua/call.go:Attempt
+      - internal/icscf/session.go:session
+      - internal/scscf/unregistered.go:routeUnregistered
+      - internal/scscf/session.go:routeOriginating
+      - internal/hss/hss.go:locationInfo
+      - internal/pcscf/setup.go:forward
+      - internal/pcscf/session.go:byeEndsDialog
+    tests:
+      - internal/ue/call_test.go:TestBusyCallee
+      - internal/ue/call_test.go:TestCallToAnUnregisteredCallee
+      - internal/ue/call_test.go:TestCallerGivesUpOnACalleeThatDoesNotAnswer
+      - internal/mmtel/relay_test.go:TestCancelThroughTheAS
+      - internal/icscf/icscf_test.go:TestCallToAnUnregisteredCalleeGets480
+      - internal/icscf/icscf_test.go:TestCallToAnUnknownCalleeGets404
+      - internal/scscf/unregistered_test.go:TestUnregisteredCalleeServices
+      - internal/scscf/session_test.go:TestOriginatingCallToANumberWithoutENUMGets404
+      - internal/pcscf/session_test.go:TestOriginatingCallGoesThroughTheRelay
+      - internal/pcscf/session_test.go:TestBYEThatIsRejectedKeepsTheMedia
+      - internal/pcscf/session_test.go:TestBYEAnswered481EndsTheMedia
+    standards:
+      - RFC 3261 9.1, 9.2, 12.2.2, 13.3.1.1, 15.1.1, 15.1.2, 16.6 step 11, 16.7 step 2, 16.8, 16.10
+      - RFC 3326 2
+      - TS 24.229 V18.11.0 5.1.5, 5.3.2.1, 5.4.3.3
+      - TS 29.228 V18.0.0 6.1.4.1
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: access-and-borders
+    question:
+      ja: 携帯のアクセス網と別の事業者の網は、登録と通話に何を加えるのか
+      en: What do a mobile access network and another operator's network add to registration and calls
+    setup: deploy/compose with the profile volte (two VoLTE UEs and the EPC stub), and deploy/interconnect (a second network and the link between the two)
+    chapter: access-and-borders
+    scenes: [09-volte/nodes, 09-volte/answer, 09-volte/media, 10-interconnect/networks, 10-interconnect/legs, 10-interconnect/media]
+    code:
+      - internal/ue/access.go:AccessNetwork
+      - internal/policy/policy.go:PolicyControl
+    tests:
+      - internal/ue/volte_epc_test.go:TestVoLTECallOverTheEPCStub
+      - internal/ue/volte_epc_test.go:TestNetworkEndsTheCallWhenItTakesTheBearer
+      - internal/ue/aka_ims_test.go:TestIMSAKAThroughTheWholeIMS
+      - internal/ibcf/network_test.go:TestCallAcrossTheBorder
+      - internal/ibcf/network_test.go:TestMismatchedProfiles
+      - internal/ibcf/network_test.go:TestRequestFromNoPeerIsDiscarded
+    standards:
+      - GSMA IR.92 v24.0
+      - TS 29.165 V20.0.0
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: volte-registration
+    question:
+      ja: VoLTE の端末は、P-CSCF をどう見つけ、IMS-AKA で網とどう確かめ合うのか
+      en: How does a VoLTE phone find its P-CSCF, and how do it and the network prove themselves to each other with IMS AKA
+    setup: deploy/compose with the profile volte; volte10 attaches to the EPC stub and registers with IMS AKA through the P-CSCF, I-CSCF, S-CSCF and HSS
+    chapter: volte
+    scenes: [09-volte/attach, 09-volte/challenge, 09-volte/answer]
+    code:
+      - cmd/ue/main.go:openUE
+      - internal/ue/access_epc.go:Attach
+      - internal/scscf/scscf.go:register
+      - internal/scscf/aka.go:registerAKA
+      - internal/scscf/aka.go:challengeAKA
+      - internal/aka/aka.go:NewAuthenticationVector
+      - internal/aka/usim.go:Authenticate
+      - internal/pcscf/secagree.go:receiveSecAgree
+      - internal/pcscf/secagree.go:challenged
+      - internal/pcscf/secagree.go:answerSecAgree
+    tests:
+      - internal/scscf/aka_test.go:TestRegistrationWithIMSAKA
+      - internal/scscf/aka_test.go:TestIMSAKAResynchronisation
+      - internal/scscf/aka_test.go:TestIMSAKANetworkAuthenticationFailure
+      - internal/pcscf/secagree_test.go:TestIMSAKASecurityAgreement
+      - internal/aka/aka_test.go:TestUSIMAcceptsTheNetworksVector
+      - internal/aka/aka_test.go:TestResynchronisation
+      - internal/epc/epc_test.go:TestAttachGivesTheAddressAndTheP_CSCFs
+      - internal/ue/aka_ims_test.go:TestIMSAKAThroughTheWholeIMS
+    standards:
+      - TS 24.229 V20.1.0 5.1.1.1A, 5.1.1.4.2, 5.1.1.6.2, 5.2.2.2, 5.4.1.1, 5.4.1.2.1A, 5.4.1.2.2, 5.4.1.2.2F, L.2.2.1
+      - TS 29.229 6.3.9
+      - TS 33.203 V20.0.0 6.2, 6.3, 7.1, 7.2
+      - TS 33.102 V19.1.0 6.3.2, 6.3.3, C.2
+      - TS 24.008 10.5.6.3
+      - RFC 3310 3.2, 3.3
+      - RFC 3329
+      - GSMA IR.92 v24.0 4.4.1, 4.5
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: volte-call
+    question:
+      ja: VoLTE の通話で、網は音声の資源をいつ用意し、着信側はいつ鳴り、網はどう通話を終えるのか
+      en: In a VoLTE call, when does the network set up the voice resources, when does the callee ring, and how does the network end the call
+    setup: deploy/compose with the profile volte; volte10 calls volte12 through the MMTel AS, and the P-CSCF talks Rx to the PCRF of the EPC stub
+    chapter: volte
+    scenes: [09-volte/signalling-path, 09-volte/media, 09-volte/precondition, 09-volte/release]
+    code:
+      - internal/pcscf/setup.go:authorize
+      - internal/epc/pcrf.go:aaRequest
+      - internal/precondition/table.go:Met
+      - internal/pcscf/release.go:PolicyEvent
+      - internal/pcscf/release.go:sendBYEs
+    tests:
+      - internal/ue/volte_epc_test.go:TestVoLTECallOverTheEPCStub
+      - internal/ue/volte_epc_test.go:TestNetworkEndsTheCallWhenItTakesTheBearer
+      - internal/pcscf/policy_test.go:TestUEWithoutIPCANSessionRegistersWithoutPolicyControl
+      - internal/pcscf/policy_test.go:TestTerminatingCallHasItsMediaAuthorised
+      - internal/epc/epc_test.go:TestTheMediaOfACallGetAVoiceBearer
+      - internal/precondition/precondition_test.go:TestVoLTEFlow
+      - internal/pcscf/release_test.go:TestReleasedBearerEndsTheCallWithBYEs
+    standards:
+      - TS 29.214 V20.0.0 4.4.1, 4.4.4, 4.4.5, 4.4.6.1, 4.4.6.2, A.1, A.4
+      - TS 29.213 6.2
+      - TS 24.229 V20.1.0 5.1.3.1, 5.2.8.1.1, 5.2.8.1.2, 6.1.2, L.2.2.5.1B
+      - TS 24.301 V20.1.0 6.4.4.2
+      - RFC 3312 6, 7
+      - GSMA IR.92 v24.0 2.4.1, 2.4.2.3, 2.4.3.1, 2.4.3.2, 3.2.4, 3.2.5
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: interconnect-call
+    question:
+      ja: 通話はどう別の事業者の網へ出ていき、相手網には何が見えるのか
+      en: How does a call leave for another operator's network, and what does that network see
+    setup: deploy/interconnect; UE A1 of network A calls UE B1 of network B through the MMTel AS, IBCF-A, IBCF-B and the two TrGWs
+    chapter: interconnect
+    scenes: [10-interconnect/refpoints, 10-interconnect/exit, 10-interconnect/entry, 10-interconnect/media, 10-interconnect/four-dialogs, 10-interconnect/dialogs]
+    code:
+      - internal/scscf/session.go:routeOriginating
+      - internal/scscf/session.go:exitIBCF
+      - internal/ibcf/ibcf.go:prepare
+      - internal/interconnect/border.go:ExitRequest
+      - internal/interconnect/border.go:EntryRequest
+      - internal/icscf/session.go:telURIOf
+    tests:
+      - internal/scscf/session_test.go:TestOriginatingCallToAnotherNetworkLeavesThroughTheIBCF
+      - internal/scscf/session_test.go:TestHomeNetworkCallsStayInside
+      - internal/icscf/icscf_test.go:TestCallToANumberInASIPURIGoesOnAsATelURI
+      - internal/ibcf/network_test.go:TestCallAcrossTheBorder
+      - internal/ibcf/network_test.go:TestTrustedPeerGetsTheAssertedIdentity
+    standards:
+      - TS 24.229 V20.1.0 4.4, 4.4.1, 5.3.2.1, 5.4.3.2, 5.10.2, 5.10.2.2, 5.10.3, 5.10.3.2, 5.10.4, 5.10.5, 5.10.6, 6.7.1.4.1
+      - TS 29.165 V20.0.0 3.2, 5.1, 5.2.1, 7.1, 8.1
+      - RFC 3261 16.6, 18.1.1
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: interconnect-agreement
+    question:
+      ja: 事業者どうしの取り決めが食い違ったときと、取り決めの外から要求が来たとき、境界はどう振る舞うのか
+      en: How does the border behave when the agreements of two operators do not match, and when a request comes from outside every agreement
+    setup: deploy/interconnect with the profiles network-b-no-message.yaml, network-a-amr-wb-only.yaml and network-b-local-numbers.yaml, and a host at 172.28.2.99 on the link
+    chapter: interconnect
+    scenes: [10-interconnect/mismatch, 10-interconnect/screen]
+    code:
+      - internal/interconnect/screen.go:ScreenMethod
+      - internal/interconnect/number.go:NormalizeNumber
+      - internal/interconnect/codec.go:FilterCodecs
+      - internal/ibcf/ibcf.go:Screen
+    tests:
+      - internal/ibcf/network_test.go:TestMismatchedProfiles
+      - internal/ibcf/network_test.go:TestRequestFromNoPeerIsDiscarded
+      - internal/interconnect/screen_test.go:TestScreenMethod
+      - internal/interconnect/codec_test.go:TestFilterCodecs
+      - internal/interconnect/number_test.go:TestNormalizeNumber
+    standards:
+      - TS 24.229 V20.1.0 5.10.1
+      - TS 29.165 V20.0.0 7.1, 8.1, Table 6.1, Table 6.1.3.1, Annex C
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: interconnect-sms-conference-restart
+    question:
+      ja: ショートメッセージと会議はどう境界を越え、IBCF の台が起動し直すと呼はどうなるのか
+      en: How do short messages and a conference cross the border, and what happens to the calls when an IBCF instance starts again
+    setup: deploy/interconnect; UE A1 sends a short message to UE B1, the MMTel AS of network A invites UE B1 as a focus, and IBCF-A restarts with and without a store
+    chapter: interconnect
+    scenes: [10-interconnect/sms, 10-interconnect/sms-b, 10-interconnect/conference]
+    code:
+      - internal/ibcf/recovery.go:ReleaseLeftovers
+      - internal/ibcf/recovery.go:byeInLeftover
+    tests:
+      - internal/ibcf/network_test.go:TestMessageAcrossTheBorder
+      - internal/ibcf/focus_test.go:TestConferenceFocusAcrossTheBorder
+      - internal/ibcf/network_test.go:TestRestartedInstanceEndsTheCallsItLeft
+    standards:
+      - TS 23.204 V19.1.0 6.3a, 6.4, 6.4a
+      - TS 23.040 V20.0.0 9.2.3.15
+      - TS 24.147 V19.0.0 5.3.1.2, 5.3.1.3.2
+      - TS 24.229 V20.1.0 5.10.2.2, 5.10.3.2, 5.10.5
+      - RFC 3261 12.2.2
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: sms-acknowledgements
+    question:
+      ja: SIP の 202 と 200、RP-ACK、status report は、それぞれ何が届いたことを伝えるのか
+      en: What does each of the SIP 202 and 200, an RP-ACK and the status report say has arrived
+    setup: deploy/compose, UE 1 sends to UE 2 and asks for a status report; UE 1, UE 2, the IP-SM-GW, the SC and the HSS, with the CSCFs left out of the figure
+    chapter: sms
+    scenes: [06-sms/overview, 06-sms/sc-accept, 06-sms/delivery-report, 06-sms/status-report]
+    code:
+      - internal/ipsmgw/message.go:message
+      - internal/ipsmgw/message.go:submit
+      - internal/ipsmgw/servicecentre.go:failedMessageOutcomes
+      - internal/ipsmgw/servicecentre.go:outcomeOfReport
+      - internal/smsc/submit.go:checkRecipient
+      - internal/ue/sms.go:statusReportIsFor
+      - internal/sms/rp.go:ParseRP
+      - internal/sms/rp.go:ParseTPDU
+    tests:
+      - internal/ipsmgw/chain_test.go:TestShortMessageThroughTheServiceCentre
+      - internal/ipsmgw/network_test.go:TestShortMessageThroughTheIMS
+      - internal/ipsmgw/network_test.go:TestShortMessagesThatFail
+      - internal/ipsmgw/network_test.go:TestDeliveryReportThroughAnotherIPSMGW
+      - internal/ipsmgw/sgd_test.go:TestMTForwardShortMessageFailures
+      - internal/smsc/smsc_test.go:TestRefusals
+      - internal/smsc/smsc_test.go:TestStatusReport
+    standards:
+      - RFC 3428 7
+      - TS 24.341 V19.0.0 5.3.1.2, 5.3.1.3, 5.3.2.3, 5.3.3.4.1, 5.3.3.4.3, 5.3.3.4.4
+      - TS 24.011 V20.0.0 7.3.1.2, 8.2, Table 8.4
+      - TS 23.040 V20.0.0 8.2.2, 9.2.2.2, 9.2.3, 9.2.3.15
+      - TS 23.038 V20.0.0 6.1.2.1.1
+      - TS 29.338 V19.3.0 6.2.1
+      - TS 29.311 6.1.4.4.1
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: sms-routing
+    question:
+      ja: S-CSCF はどの要求を IP-SM-GW に渡し、SC は受信者を受け持つ IP-SM-GW をどう知るのか
+      en: Which requests does the S-CSCF pass to the IP-SM-GW, and how does the SC learn which IP-SM-GW serves the recipient
+    setup: deploy/compose, the iFCs of deploy/compose/hss.yaml; the S-CSCF, the IP-SM-GW, the SC and the HSS
+    chapter: sms
+    scenes: [06-sms/ifc, 06-sms/register, 06-sms/sc-deliver]
+    code:
+      - internal/ifc/ifc.go:matches
+      - internal/ipsmgw/regevent.go:takesShortMessages
+      - internal/ipsmgw/regevent.go:updateHSS
+      - internal/hss/s6c.go:servingNode
+      - internal/hss/s6c.go:sendRoutingInfoForSM
+      - internal/ipsmgw/sgd.go:mtForwardShortMessage
+    tests:
+      - internal/ifc/ifc_test.go:TestSMSCriteria
+      - internal/ue/sms_ims_test.go:TestShortMessageThroughTheWholeIMS
+      - internal/ue/sms_ims_test.go:TestShortMessageToAUEWithoutSMSOverIP
+      - internal/ipsmgw/regevent_test.go:TestContactWithoutTheFeatureTag
+      - internal/ipsmgw/network_test.go:TestRegistrationWithoutTheFeatureTag
+    standards:
+      - TS 29.228 V20.0.0 B.2.2, B.2.3
+      - TS 23.218 5.2.3 NOTE 5
+      - TS 24.229 V20.1.0 5.4.1.7, 5.4.3.2, 5.7.1.1, 5.7.3
+      - TS 24.341 V19.0.0 5.3.2.2, 5.3.3, 5.3.3.2
+      - TS 29.328 V20.0.0 6.1.2, 7.6.16
+      - TS 23.040 V20.0.0 4.1, 8.1.1
+      - TS 29.338 V19.3.0 5.2.1.3, 6.3.1.2
+      - RFC 3841 7.2.4
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a
+  - id: sms-holding
+    question:
+      ja: 受信者が受け取れないとき、SC と HSS は何を覚え、何が送り直しと預かりの終わりを決めるのか
+      en: When the recipient cannot take a short message, what do the SC and the HSS keep, and what decides the resend and the end of the wait
+    setup: deploy/compose, UE 2 that takes no short message or has no memory left; the IP-SM-GW, the SC and the HSS
+    chapter: sms
+    scenes: [06-sms/absent, 06-sms/alert, 06-sms/memory, 06-sms/memory-back, 06-sms/retry]
+    code:
+      - internal/hss/store.go:addMessageWaiting
+      - internal/hss/store.go:readyForShortMessages
+      - internal/hss/store.go:shortMessageDelivered
+      - internal/ipsmgw/sgd.go:setNotReachable
+      - internal/ipsmgw/message.go:memoryAvailable
+      - internal/smsc/deliver.go:deliveryFailure
+      - internal/smsc/deliver.go:reportDelivered
+      - internal/smsc/deliver.go:attemptHead
+    tests:
+      - internal/ipsmgw/chain_test.go:TestAbsentUserIsAlertedThroughTheServiceCentre
+      - internal/ipsmgw/chain_test.go:TestAbsentUserWhoRegistersAgainIsAlertedThroughTheServiceCentre
+      - internal/ipsmgw/chain_test.go:TestMemoryFullIsAlertedThroughTheServiceCentre
+      - internal/ipsmgw/chain_test.go:TestARetryAfterAFullMemoryClearsTheFlag
+      - internal/ipsmgw/ipsmgw_test.go:TestMemoryAvailableThatTheHSSRefuses
+      - internal/hss/s6c_test.go:TestReportSMDeliveryStatusKeepsTheSCAddress
+      - internal/hss/s6c_test.go:TestSendRoutingInfoLeavesOutANodeMarkedNotReachable
+      - internal/hss/s6c_test.go:TestReadyForShortMessages
+      - internal/hss/s6c_test.go:TestRegistrationAlertsTheServiceCentre
+      - internal/smsc/smsc_test.go:TestDeliveryFailures
+      - internal/smsc/smsc_test.go:TestValidityPeriodExpires
+    standards:
+      - TS 23.040 V20.0.0 3.2.6, 3.2.7 NOTE 5, 6.1, 9.2.3.15, 10.1, 11.2
+      - TS 23.204 V19.1.0 6.5b, 6.6
+      - TS 24.341 V19.0.0 5.3.3.4.2
+      - TS 24.011 V20.0.0 7.3.2
+      - TS 29.311 6.1.4.4.1
+      - TS 29.338 V19.3.0 5.2.2, 5.2.3, 5.2.3.1, 5.3.3.8, 7.3.3
+    evidence: [code, test]
+    verified: a0ab0be520201b74062f5e9818346c6817913e0a

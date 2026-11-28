@@ -12,6 +12,8 @@ ims-practice は 3GPP の IMS（IP Multimedia Subsystem）を学習用に実装�
 - それぞれのメッセージが 3GPP 仕様のどこで規定されているか。
 - 仕様の記述をコードでどう実装しているか。
 
+動かさずに読むだけで学ぶには、[本](docs/book/ja/README.md)から始めます。図と短いコードで、入門、中級、上級の順に説明します。
+
 ## 現在の状態
 
 UE シミュレータは SIP Digest で登録し、電話番号で別の UE に発信できます。呼は P-CSCF、S-CSCF、I-CSCF、ENUM、メディア中継ノードを通ります。SIP、Diameter、DNS、RTP のパケットは、すべてキャプチャで見られます。http://localhost:8080 のラボは、HEP の写しから呼と登録ごとのシーケンス図を描きます。HSS の加入者の一覧の表示と、UE シミュレータ `phone1`、`phone2`、`phone3` の操作もできます。UE どうしで SMS over IP のショートメッセージを送り合えます。MMTel AS は、識別子の通知、着信転送、規制などの付加サービスを提供し、UE はそれを Ut で設定します。VoLTE の UE は EPC のスタブに attach し、IMS-AKA で登録し、プリコンディションを使って AMR-WB で通話します。P-CSCF は通話ごとのメディアを Rx で PCRF に許可させます。
@@ -69,6 +71,8 @@ docker compose run --rm ue register -deregister-after 5s
 
 ## ドキュメント
 
+- [本](docs/book/ja/README.md)。読むだけで仕組みと設計の判断が分かるように書いた本文。入門、中級、上級の読む順。
+- [スライド](slides/README.ja.md)。本と同じ問いを、図と段階で見せる。
 - [手順書](docs/guide/ja/README.md)。読む順、最初のコマンド、片付け、プロファイル、UE ごとの加入者。
 - [用語集](docs/glossary.md)。IMS で使う略語の英語と日本語の説明。
 - [開発の進め方](CONTRIBUTING.md)。コミットのルールと、開発の記録の一覧。

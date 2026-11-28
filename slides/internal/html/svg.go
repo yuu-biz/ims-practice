@@ -180,6 +180,13 @@ func legend(b *strings.Builder, lang string, diagram *layout.Diagram) {
 // keeps the diagrams as pictures that scale with the page.
 func elementsSVG(b *strings.Builder, elements []layout.Element, width, height float64) {
 	fmt.Fprintf(b, `<svg class="shapes" viewBox="0 0 %s %s" role="img">`, num(width), num(height+2))
+	drawElements(b, elements)
+	b.WriteString("</svg>")
+}
+
+// drawElements writes placed elements as SVG shapes whose look is in
+// their attributes, so that they need no style sheet.
+func drawElements(b *strings.Builder, elements []layout.Element) {
 	var draw func([]layout.Element)
 	draw = func(list []layout.Element) {
 		for _, e := range list {
@@ -187,11 +194,14 @@ func elementsSVG(b *strings.Builder, elements []layout.Element, width, height fl
 			case *layout.Group:
 				draw(e.Elements)
 			case *layout.Rect:
-				fmt.Fprintf(b, `<rect x="%s" y="%s" width="%s" height="%s" fill="#%s"%s/>`, num(e.X), num(e.Y), num(e.W), num(e.H), e.Fill, stroke(e.Line))
+				fmt.Fprintf(b, `<rect x="%s" y="%s" width="%s" height="%s" fill="#%s"%s%s/>`, num(e.X), num(e.Y), num(e.W), num(e.H), e.Fill, corner(e.Round), outline(e.Line, 0, e.Dash))
 			case *layout.Line:
 				dash := ""
-				if e.Dash {
+				switch {
+				case e.Dash:
 					dash = fmt.Sprintf(` stroke-dasharray="%s %s"`, num(4*e.Width), num(3*e.Width))
+				case e.Dot:
+					dash = fmt.Sprintf(` stroke-dasharray="%s %s" stroke-linecap="round"`, num(0.1), num(2.5*e.Width))
 				}
 				fmt.Fprintf(b, `<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="#%s" stroke-width="%s"%s/>`, num(e.X1), num(e.Y1), num(e.X2), num(e.Y2), e.Color, num(e.Width), dash)
 				head := func(x1, y1, x2, y2 float64) {
@@ -208,18 +218,38 @@ func elementsSVG(b *strings.Builder, elements []layout.Element, width, height fl
 				if e.HeadStart {
 					head(e.X2, e.Y2, e.X1, e.Y1)
 				}
+			case *layout.Table:
+				y := e.Y
+				for _, row := range e.Rows {
+					x := e.X
+					for i, cell := range row.Cells {
+						w := e.Columns[i]
+						fill := "none"
+						if row.Header {
+							fill = "#" + layout.ColorHeaderFill
+						}
+						fmt.Fprintf(b, `<rect x="%s" y="%s" width="%s" height="%s" fill="%s" stroke="#%s" stroke-width="0.75"/>`, num(x), num(y), num(w), num(row.Height), fill, layout.ColorRule)
+						paragraphText(b, cell, x+e.Padding.X, y+e.Padding.Y, w-2*e.Padding.X, "start")
+						x += w
+					}
+					y += row.Height
+				}
 			case *layout.TextBox:
 				if e.Fill != "" || e.Line != "" {
 					fill := "none"
 					if e.Fill != "" {
 						fill = "#" + e.Fill
 					}
-					fmt.Fprintf(b, `<rect x="%s" y="%s" width="%s" height="%s" fill="%s"%s/>`, num(e.X), num(e.Y), num(e.W), num(e.H), fill, stroke(e.Line))
+					fmt.Fprintf(b, `<rect x="%s" y="%s" width="%s" height="%s" fill="%s"%s%s/>`, num(e.X), num(e.Y), num(e.W), num(e.H), fill, corner(e.Round), outline(e.Line, e.LineWidth, false))
 				}
 				y := e.Y + e.Inset
 				total := 0.0
 				for _, p := range e.Paragraphs {
-					total += p.LineHeight
+					lines := 1
+					if !e.NoWrap {
+						lines = len(layout.WrapText(p.Runs, p.Size, e.W-2*e.Inset-p.Indent))
+					}
+					total += float64(lines) * p.LineHeight
 				}
 				if e.Anchor == layout.AnchorMiddle {
 					y = e.Y + (e.H-total)/2
@@ -232,23 +262,16 @@ func elementsSVG(b *strings.Builder, elements []layout.Element, width, height fl
 					case layout.AlignRight:
 						x, anchor = e.X+e.W-e.Inset, "end"
 					}
-					weight := ""
-					if p.Bold {
-						weight = ` font-weight="bold"`
+					width := e.W - 2*e.Inset - p.Indent
+					if e.NoWrap {
+						width = 0
 					}
-					text := ""
-					for _, r := range p.Runs {
-						text += r.Text
-					}
-					fmt.Fprintf(b, `<text x="%s" y="%s" font-size="%s" fill="#%s" text-anchor="%s"%s>%s</text>`,
-						num(x), num(y+p.LineHeight*0.75), num(p.Size), p.Color, anchor, weight, html.EscapeString(text))
-					y += p.LineHeight
+					y += paragraphText(b, p, x, y, width, anchor)
 				}
 			}
 		}
 	}
 	draw(elements)
-	b.WriteString("</svg>")
 }
 
 func stroke(color string) string {
@@ -256,4 +279,56 @@ func stroke(color string) string {
 		return ""
 	}
 	return ` stroke="#` + color + `"`
+}
+
+// paragraphText writes a paragraph from y down, each line where the
+// layout broke it for width (on one line when width is 0), and returns
+// the height that it takes.
+func paragraphText(b *strings.Builder, p layout.Paragraph, x, y, width float64, anchor string) float64 {
+	weight := ""
+	if p.Bold {
+		weight = ` font-weight="bold"`
+	}
+	color := p.Color
+	if color == "" {
+		color = layout.ColorInk
+	}
+	var lines []string
+	if width > 0 {
+		lines = layout.WrapText(p.Runs, p.Size, width)
+	} else {
+		text := ""
+		for _, r := range p.Runs {
+			text += r.Text
+		}
+		lines = []string{text}
+	}
+	for i, line := range lines {
+		fmt.Fprintf(b, `<text x="%s" y="%s" font-size="%s" fill="#%s" text-anchor="%s"%s>%s</text>`,
+			num(x), num(y+float64(i)*p.LineHeight+p.LineHeight*0.75), num(p.Size), color, anchor, weight, html.EscapeString(line))
+	}
+	return float64(len(lines)) * p.LineHeight
+}
+
+// outline is the stroke of a box: its colour and width, dashed if asked.
+func outline(color string, width float64, dash bool) string {
+	if color == "" {
+		return ""
+	}
+	out := stroke(color)
+	if width > 0 {
+		out += ` stroke-width="` + num(width) + `"`
+	}
+	if dash {
+		out += ` stroke-dasharray="6 4"`
+	}
+	return out
+}
+
+// corner rounds the corners of a box that asks for it.
+func corner(round bool) string {
+	if round {
+		return ` rx="8"`
+	}
+	return ""
 }

@@ -1,6 +1,6 @@
 ---
 title: SMS の流れ
-footer: ims-practice 勉強会 6. SMS
+footer: ims-practice 6. SMS
 lang: ja
 format: visual
 ---
@@ -1324,21 +1324,156 @@ events:
     fields:
       - MWD: SC のアドレスを残す
       - 配達するとき: 加入者 3 が登録したときの知らせで
+  - id: ov-m1
+    msg: MESSAGE
+    from: ue1
+    to: ipsmgw
+    proto: SIP
+    note: (SMS-SUBMIT)
+  - id: ov-m1a
+    msg: "202"
+    from: ipsmgw
+    to: ue1
+    proto: SIP
+  - id: ov-ofr
+    msg: OFR
+    from: ipsmgw
+    to: sc
+    proto: SGd
+  - id: ov-srr1
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (受け付け)
+  - id: ov-sra1
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (受け付け)
+  - id: ov-ofa
+    msg: OFA
+    from: sc
+    to: ipsmgw
+    proto: SGd
+  - id: ov-m2
+    msg: MESSAGE
+    from: ipsmgw
+    to: ue1
+    proto: SIP
+    note: (submit report)
+  - id: ov-m2a
+    msg: 200 OK
+    from: ue1
+    to: ipsmgw
+    proto: SIP
+  - id: ov-srr2
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (配達)
+  - id: ov-sra2
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (配達)
+  - id: ov-tfr
+    msg: TFR
+    from: sc
+    to: ipsmgw
+    proto: SGd
+  - id: ov-m3
+    msg: MESSAGE
+    from: ipsmgw
+    to: ue2
+    proto: SIP
+    note: (SMS-DELIVER)
+  - id: ov-m3a
+    msg: 200 OK
+    from: ue2
+    to: ipsmgw
+    proto: SIP
+  - id: ov-m4
+    msg: MESSAGE
+    from: ue2
+    to: ipsmgw
+    proto: SIP
+    note: (delivery report)
+  - id: ov-m4a
+    msg: "202"
+    from: ipsmgw
+    to: ue2
+    proto: SIP
+  - id: ov-tfa
+    msg: TFA
+    from: ipsmgw
+    to: sc
+    proto: SGd
+  - id: ov-srr3
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (status report)
+  - id: ov-sra3
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (status report)
+  - id: ov-tfr3
+    msg: TFR
+    from: sc
+    to: ipsmgw
+    proto: SGd
+    note: (status report)
+  - id: ov-m5
+    msg: MESSAGE
+    from: ipsmgw
+    to: ue1
+    proto: SIP
+    note: (SMS-STATUS-REPORT)
+  - id: ov-m5a
+    msg: 200 OK
+    from: ue1
+    to: ipsmgw
+    proto: SIP
+  - id: ov-m6
+    msg: MESSAGE
+    from: ue1
+    to: ipsmgw
+    proto: SIP
+    note: (delivery report)
+  - id: ov-m6a
+    msg: "202"
+    from: ipsmgw
+    to: ue1
+    proto: SIP
+  - id: ov-tfa3
+    msg: TFA
+    from: ipsmgw
+    to: sc
+    proto: SGd
+    note: (status report)
 ```
 
 ---
 
 # SMS の流れ
 
-ims-practice 勉強会 第 6 回（SMS over IP。IP-SM-GW、SC、3 種類の報告、預かりと知らせ）
+（SMS over IP。IP-SM-GW、SC、3 種類の報告、預かりと知らせ）
 
 ---
 
 [layout: summary]
 
-## この回で分かること
+## このデッキで分かること
 
 最初の問い。ショートメッセージは電話番号に宛てて送ります。その番号の UE を、IMS の中で誰が見つけるのでしょうか。
+答えは 1 つのノードではありません。SC が S6c で HSS に尋ねて受信者を受け持つ IP-SM-GW を知り、その IP-SM-GW が送る MESSAGE を、I-CSCF と S-CSCF が登録の情報で UE に届けます。
 
 - 利用者がショートメッセージを受けられることを、IP-SM-GW が知るしくみ。
 - S-CSCF が、ショートメッセージを IP-SM-GW に渡す方法。
@@ -1349,6 +1484,7 @@ ims-practice 勉強会 第 6 回（SMS over IP。IP-SM-GW、SC、3 種類の報�
 
 > 手順書 [SMS の流れを追う](../../../docs/guide/ja/sms.md)（`docs/guide/ja/sms.md`）
 > 仕様の版は手順書の冒頭にあります。TS 24.341 V19.0.0、TS 23.204 V19.1.0、TS 24.011 V20.0.0、TS 23.040 V20.0.0 などです。
+> 本 [SMS の配達と報告](../../../docs/book/ja/sms.md)
 
 ---
 
@@ -1458,6 +1594,7 @@ steps:
     text: 優先度 2 は利用者に宛てた MESSAGE の条件です。P-Asserted-Identity が IP-SM-GW のものは除きます。
   - id: deliver-on
     title: MESSAGE はそのまま UE 2 へ
+    detail: [scscf-mt]
     show: [m3-s-p]
     text: 否定の条件があるので、IP-SM-GW が送った MESSAGE は IP-SM-GW に戻りません。
 ```
@@ -1495,47 +1632,47 @@ S-CSCF は SMS を知りません。どの要求をどの AS へ送るかは、H
 
 ---
 
-## 実行する
-
-```sh
-docker compose up -d --build
-
-# 1 つ目の端末。UE 2 が登録したままで待つ。
-docker compose run --rm ue2 register \
-  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  -password test-password-2
-
-# 2 つ目の端末。UE 1 が送り、status report を頼む。
-docker compose run --rm ue sms -status-report +12025550102 "Hello UE-B, this is UE-A."
-```
-
-- オプションは、番号と本文の前に書きます。
-- UE 1 のログに `"msg":"submit report"` と `"msg":"status report"` が出ます。
-- UE 2 のログに `"msg":"sms received"` が出ます。
-
-> 手順書 [「ショートメッセージを送る」](../../../docs/guide/ja/sms.md#ショートメッセージを送る)。同じ操作を、`scripts/` にある SMS の e2e のスクリプトが行います。
-
----
-
-## キャプチャを開く
-
-```text
-sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70)
-  || diameter.cmd.code in {302, 306, 307, 8388645, 8388646, 8388647, 8388648, 8388649, 16777214}
-```
-
-- 1 つのフィルタです。Wireshark では 1 行に書きます。
-- REGISTER、MESSAGE とその応答、IP-SM-GW の SUBSCRIBE と NOTIFY、LIR、UDR、PUR が残ります。SGd と S6c の 5 つのコマンドと、このプロジェクト独自の Ready-For-SM も残ります。
-- Wireshark は MESSAGE のボディを自分でデコードします。
-  - Info の列の最後に `(RP) RP-DATA (MS to Network)` のように出ます。
-  - 詳細に「GSM A-I/F RP」と「GSM SMS TPDU」の木があります。
-
-> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/sms.md#キャプチャを開く)。シーケンス図は手順書の [「送信と配達」](../../../docs/guide/ja/sms.md#送信と配達hello-ue-b-this-is-ue-a) にあります。
-
----
-
 ## 全体の流れ（MESSAGE は 6 通）
+
+```ims-scene
+id: overview
+view: ladder
+nodes: [ue1, ipsmgw, sc, hss, ue2]
+lead: SIP の 202 と 200 は MESSAGE が届いたことを、RP-ACK はショートメッセージを引き受けたことを、status report は受信者に届いたことを伝えます。
+steps:
+  - id: submit
+    title: UE 1 が送り、IP-SM-GW が 202 で答える（1〜4）
+    show: [ov-m1, ov-m1a]
+    active: ov-m1a
+    detail: []
+    text: |
+      CSCF と、I-CSCF の LIR は省いて描きます。宛先は SC の番号です。
+      202 は IP-SM-GW が MESSAGE を受け取ったことだけを伝えます。
+  - id: accept
+    title: SC が引き受け、submit report が戻る（5〜7）
+    show: [ov-ofr, ov-srr1, ov-sra1, ov-ofa, ov-m2, ov-m2a]
+    active: ov-m2
+    detail: []
+    checkpoint: true
+    text: |
+      SC は受信者の番号を HSS に確かめてから OFA で引き受けます。
+      submit report の RP-ACK が、SC が引き受けたことを UE 1 に伝えます。
+  - id: deliver
+    title: SC が配達し、UE 2 が delivery report を返す（8〜12）
+    show: [ov-srr2, ov-sra2, ov-tfr, ov-m3, ov-m3a, ov-m4, ov-m4a, ov-tfa]
+    active: ov-tfa
+    detail: []
+    checkpoint: true
+    text: |
+      UE 2 の 200 は MESSAGE が届いたこと、delivery report の RP-ACK は UE 2 がショートメッセージを受け取ったことです。
+      TFA は delivery report のあとで SC に返ります。
+  - id: status
+    title: status report が UE 1 に届く（13〜15）
+    show: [ov-srr3, ov-sra3, ov-tfr3, ov-m5, ov-m5a, ov-m6, ov-m6a, ov-tfa3]
+    active: ov-m5
+    detail: []
+    text: SC は送信者にもふつうのショートメッセージと同じ道で届けます。status report は、受信者に届いたことを伝えます。
+```
 
 | 順 | 向き | ボディ | 手順 |
 | --- | --- | --- | --- |
@@ -1564,7 +1701,7 @@ steps:
     active: r1-ue2-p
     checkpoint: true
     text: |
-      登録は登録の回と同じです。1 回目の REGISTER と 401 は省き、2 回目だけを描きます。
+      登録は登録のデッキと同じです。1 回目の REGISTER と 401 は省き、2 回目だけを描きます。
       違いは Contact の `+g.3gpp.smsip` だけです。
   - id: ok
     title: 200 OK で登録が終わる
@@ -1719,6 +1856,7 @@ steps:
     text: R5 の PUR で登録された IP-SM-GW です。番号を持つ加入者がいなければ、ここで DIAMETER_ERROR_USER_UNKNOWN が返ります。
   - id: ofa
     title: SC が受け付ける（OFA）
+    detail: [sra1]
     show: [ofa]
     zoom: [ipsmgw, sc, hss]
     text: SC はタイムスタンプ TP-SCTS を付けて預かります。ここから先、ショートメッセージは SC のものです。
@@ -1830,7 +1968,7 @@ steps:
 | --- | --- |
 | TFR | サービスセンタが SMS-DELIVER を SGd で IP-SM-GW へ転送する。受信者は IMSI で表す。 |
 
-- SMS-SUBMIT と SMS-DELIVER を比べます。TP-DA が TP-OA になり、TP-SCTS が新しく付いています。
+- SMS-SUBMIT と SMS-DELIVER の違いは 2 つです。TP-DA が TP-OA になり、TP-SCTS が新しく付いています。
 - TFR は宛先のノードを必ず Destination-Host に書きます。SRA が返した IP-SM-GW です。
 
 > 手順書 [8](../../../docs/guide/ja/sms.md#8-sc-がメッセージを転送しip-sm-gw-が配達するtfr-と-sms-deliver)。TS 23.040 8.1.1。TS 29.338 6.2.2、6.3.1.2。
@@ -2057,6 +2195,7 @@ steps:
     text: S6c のコマンド 8388649、Report-SM-Delivery-Status です。
   - id: hold
     title: HSS が SC を MWD に入れる
+    detail: [a3-tfa, hss-absent]
     show: [hss-absent, a4-rda]
     active: hss-absent
     focus: [hss]
@@ -2121,6 +2260,7 @@ steps:
     text: 番号が UE 2 の登録している IP-SM-GW のものかを確かめてから動きます。
   - id: alert
     title: HSS が答え、SC に知らせる（A7、ALR）
+    detail: [a6-rfsm]
     hide: [hss-present]
     show: [a6-ans, a7-alr]
     active: a7-alr
@@ -2358,6 +2498,7 @@ steps:
     text: SC はこの報告を 1 回だけ送ります。
   - id: clear
     title: HSS が MCEF を落とす
+    detail: [d1-sra, hss-success]
     show: [hss-success, d3-rda]
     active: hss-success
     focus: [hss]
@@ -2428,12 +2569,12 @@ steps:
     text: SC は預かります。加入者 3 が登録すると、HSS の知らせで配達されます。
 ```
 
-| 場合 | 試し方 | UE 1 が受け取るもの |
+| 場合 | UE シミュレータでの例 | UE 1 が受け取るもの |
 | --- | --- | --- |
 | 番号を持つ加入者がいない | `ue sms +12025550198 "Nobody has this number."` | RP-ERROR の submit report。RP-Cause 1、TP-FCS 0xC3。 |
 | 受信者が登録していない | `ue sms -status-report +12025550103 "Are you there?"` | RP-ACK の submit report。そのあとはまだ何も来ない。SC がショートメッセージを預かる。 |
 
-- コマンドは `docker compose run --rm` に続けて書きます。
+- 例は、`docker compose run --rm` に続けて書く `ue` のコマンドです（手順書の「ショートメッセージを送る」）。
 - どちらも SIP の応答は 202 です。失敗は RP と TP の層で伝わります。
 - 1 つ目は、SC が受け付けません。手順 5 の SRA が DIAMETER_ERROR_USER_UNKNOWN（5001）になり、配達は試みません。
 - 2 つ目は、SC は受け付けます。加入者 3 には IP-SM-GW が登録されていないので、SC の SRR には毎回 DIAMETER_ERROR_ABSENT_USER（5550）が返り、HSS は SC のアドレスを MWD に残します。加入者 3 が登録すると、HSS の知らせで配達されます。
@@ -2459,7 +2600,7 @@ steps:
 | `07 91 21 20 55 05 01 f0` | RP-DA | 長さは 7 オクテット。数字は 2 桁ずつ入れ替わる。SC の番号。 |
 | `23` | RP-User-Data の長さ | このあとの 35 オクテットが TPDU。 |
 
-- まず手で読み、そのあとで Wireshark の木と比べます。`21 20 55 05 01 f0` を 12025550100 に戻してみます。
+- `21 20 55 05 01 f0` は、各オクテットの 2 桁を入れ替えると 12 02 55 50 10 0f です。最後の `f` は埋め草なので、SC の 12025550100 になります。Wireshark の「GSM A-I/F RP」の木にも同じ値が出ます。
 - ラボでは、MESSAGE の詳しい表示の **Body (hex)** に同じオクテットが出ます。
 
 > 手順書 [「中継層（RP）」](../../../docs/guide/ja/sms.md#中継層rp)。全部のフィールドの表は手順書にあります。TS 24.011 7.3.1.2、8.2。
@@ -2477,7 +2618,7 @@ steps:
 
 - RP は長さをオクテットで、TP は桁で数えます。同じ番号でも 7 と 11 になります。
 - TP-MTI の 01 は、端末からなら SMS-SUBMIT、網からなら SMS-SUBMIT-REPORT です。
-- 最初の 2 文字の H と e を、手順書の図に沿って `c8` と `32` に詰めてみます。日本語は UCS2 で、TP-DCS は `08` です。UE 2 から日本語を送ると、TP-DCS と TP-UDL が変わります。
+- 最初の 2 文字の H（100 1000）と e（110 0101）は、下位のビットから詰めると `c8` と `32` になります。日本語は UCS2 で、TP-DCS は `08`、TP-UDL はオクテットの数です。手順書の例の `こんにちは、UE-A さん` では、TP-UDL が `1a`（26 オクテット）です。
 
 > 手順書 [「転送層（TP）の SMS-SUBMIT」](../../../docs/guide/ja/sms.md#転送層tpの-sms-submit) と [「GSM 7 ビットの詰め方と UCS2」](../../../docs/guide/ja/sms.md#gsm-7-ビットの詰め方と-ucs2)。TS 23.040 9.2.2.2、9.2.3。TS 23.038 6.1.2.1.1。
 
@@ -2485,7 +2626,7 @@ steps:
 
 ## Wireshark の表示フィルタ
 
-フィルタをかける前に、6 通のうちどれが残るかを予想します。
+右の列は、そのフィルタが 6 通の MESSAGE と Diameter のメッセージのうち、どれを残すかです。
 
 | フィルタ | 見つかるもの |
 | --- | --- |
@@ -2503,87 +2644,45 @@ steps:
 
 ---
 
-## ラボで送る
+## コードの場所
 
-```sh
-docker compose --profile phones up -d --build
-```
-
-1. `phone1` のカードの SMS のフォームに本文を書き、**status report** に印を付けて、**Send SMS** を押します。
-2. **SMS sent** の表示が `waiting for the submit report` から `accepted by the SC` に変わります。
-3. `phone2` のカードの **SMS received** に、送信者の番号と本文が出ます。
-4. 各行の **ladder** で、その MESSAGE のシーケンス図が出ます。矢印を選ぶと、RP と TP のフィールドが出ます。
-
-- ラボは Call-ID ごとにシーケンス図を描くので、6 通の MESSAGE は 6 つのシーケンス図になります。
-
-> 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
-
----
-
-## コードで確かめる
-
-| 見たもの | 開く場所 |
+| 扱うもの | 場所と、判断する関数 |
 | --- | --- |
-| ボディ。RP、TP、文字 | `internal/sms` の `rp.go`、`tp.go`、`text.go` |
-| iFC と、その評価 | `internal/ifc`、`internal/scscf/services.go` |
+| ボディ。RP、TP、文字 | `internal/sms` の `rp.go`、`tp.go`、`text.go`（`ParseRP`、`ParseTPDU`、`EncodeText`） |
+| iFC と、その評価 | `internal/ifc`、`internal/scscf/services.go`（`Matches`） |
 | 第三者 REGISTER | `internal/scscf/thirdparty.go` |
 | Accept-Contact の照合 | `internal/scscf/callerprefs.go` |
-| IP-SM-GW | `internal/ipsmgw` の `message.go`、`deliver.go`、`regevent.go`、`store.go` |
-| サービスセンタ | `internal/smsc` の `submit.go`、`deliver.go`、`alert.go`、`store.go` |
-| SGd と S6c | `internal/sgd`、`internal/hss/s6c.go` |
+| IP-SM-GW | `internal/ipsmgw` の `message.go`、`deliver.go`、`regevent.go`、`store.go`（`message`、`submit`、`outcomeOfReport`） |
+| サービスセンタ | `internal/smsc` の `submit.go`、`deliver.go`、`alert.go`、`store.go`（`takeShortMessage`、`attemptHead`、`reportDelivered`） |
+| SGd と S6c | `internal/sgd`、`internal/hss/s6c.go`（`servingNode`、`readyForSM`） |
 | SC との境界と、SC のスタブ | `internal/ipsmgw/servicecentre.go`、`internal/sc` |
 | Sh | `internal/sh`、`internal/hss/sh.go` |
 | UE | `internal/ue/sms.go` |
 
-- 手で読んだフィールドの名前を `internal/sms/tp.go` で探します。`internal/ipsmgw/network_test.go` が、流れの全体を 1 つのプロセスで動かします。
+- ボディのフィールドの名前は `internal/sms/tp.go` の型にそのまま出ます。`internal/ipsmgw/network_test.go` が、流れの全体を 1 つのプロセスで動かします。
 
 > 手順書 [「コードの場所」](../../../docs/guide/ja/sms.md#コードの場所) と [「このプロジェクトで簡略化していること」](../../../docs/guide/ja/sms.md#このプロジェクトで簡略化していること)
 
 ---
 
-[layout: exercise]
+## 自分で動かす場合
 
-## 振り返り
+このデッキの流れは、構成を動かさなくても読めます。実際のキャプチャで同じ流れを見たいときは、手順書の次の節に手順があります。
 
-1. UE 1 の MESSAGE の Request-URI は、誰のアドレスですか。
-2. S-CSCF は、その MESSAGE を IP-SM-GW へ送ることを、どうやって知りますか。
-3. 202 Accepted と submit report は、それぞれ何を伝えますか。
-4. IP-SM-GW が UE 2 へ送る MESSAGE は、網のどこから入りますか。
-5. delivery report が IP-SM-GW に届くのは、誰の iFC によりますか。
-6. RP-DA の長さが 7、TP-DA の長さが 11 なのは、なぜですか。
-7. UE 2 がショートメッセージを受け取れないとき、誰がそれを持っていますか。そのノードに、もう一度送るきっかけを与えるのは何ですか。
-
----
-
-[layout: answers]
-
-## 振り返りの答え
-
-1. SC のアドレスです。UE はショートメッセージを受信者に直接送りません。
-2. 登録のときの SAA で届いた iFC のうち、優先度 1 の条件に MESSAGE が一致するからです。
-3. 202 は、IP-SM-GW が MESSAGE を受け取ったことを伝えます。submit report は、SC がショートメッセージを受け付けたかを伝えます。
-4. I-CSCF です。I-CSCF が LIR で UE 2 の S-CSCF を見つけます。
-5. UE 2 の iFC です。delivery report は UE 2 が発信する MESSAGE だからです。
-6. RP は長さをオクテットで、TP は桁で数えるからです。
-7. SC が持っており、HSS が SC のアドレスを MWD に残します。UE 2 が戻ったと IP-SM-GW が伝えると、HSS が ALR で SC に知らせます。知らせが無ければ、SC の再送がもう一度送ります。
+- 送る。[「ショートメッセージを送る」](../../../docs/guide/ja/sms.md#ショートメッセージを送る)。UE 2 を登録したままにし、UE 1 から status report を頼んで送ります。同じ操作を、`scripts/` にある SMS の e2e のスクリプトが行います。
+- 受け取れない状態を作る。[「配達が失敗する状態に UE を置く」](../../../docs/guide/ja/sms.md#配達が失敗する状態に-ue-を置く)。
+- キャプチャを開く。[「キャプチャを開く」](../../../docs/guide/ja/sms.md#キャプチャを開く)。Wireshark は MESSAGE のボディを自分でデコードします。シーケンス図の全体は [「送信と配達」](../../../docs/guide/ja/sms.md#送信と配達hello-ue-b-this-is-ue-a) にあります。
+- ラボで送る。[ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)。ラボは Call-ID ごとにシーケンス図を描くので、6 通の MESSAGE は 6 つのシーケンス図になります。
+- 後片付け。[「後片付け」](../../../docs/guide/ja/sms.md#後片付け)。
 
 ---
 
 ## まとめ
 
-IMS の中心となる登録、通話、ショートメッセージの 6 回は、これで終わりです。
+- UE はショートメッセージを受信者ではなく SC に宛てます。S-CSCF の iFC が IP-SM-GW へ運び、IP-SM-GW が SGd で SC に渡します。
+- SC は S6c で HSS に受信者の IP-SM-GW を尋ね、TFR で配達を頼みます。IP-SM-GW が HSS に自分を書くのは、登録の reg イベントで `+g.3gpp.smsip` を見たときです。
+- 202 と 200 は MESSAGE が届いたこと、RP-ACK はショートメッセージを引き受けたこと、status report は受信者に届いたことを伝えます。
+- 受け取れないとき、SC は預かり、HSS は MWD に SC を書いて UNRI か MCEF を立てます。UE が戻ったという知らせで、知らせが無ければ SC の再送で送り直し、有効期間が切れれば捨てます。
 
-| 回 | 題 | 読む文書 |
-| --- | --- | --- |
-| 1 | パッケージ構成 | [README.ja.md](../../../README.ja.md) |
-| 2 | 網の地図 | [docs/guide/ja/README.md](../../../docs/guide/ja/README.md) |
-| 3 | キャプチャとラボ | [docs/guide/ja/capture.md](../../../docs/guide/ja/capture.md) |
-| 4 | 登録 | [docs/guide/ja/registration.md](../../../docs/guide/ja/registration.md) |
-| 5 | 通話 | [docs/guide/ja/call.md](../../../docs/guide/ja/call.md) |
-| 6 | SMS | [docs/guide/ja/sms.md](../../../docs/guide/ja/sms.md) |
-
-- 次は MMTel AS の付加サービス（[mmtel.md](../../../docs/guide/ja/mmtel.md)）です。その次が、付加サービスの上に立つ VoLTE の通話（[volte.md](../../../docs/guide/ja/volte.md)）です。
-
-```sh
-docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
-```
+> 本 [SMS の配達と報告](../../../docs/book/ja/sms.md)
+> 付加サービスは手順書の [MMTel AS の付加サービス](../../../docs/guide/ja/mmtel.md) に、付加サービスの上に立つ VoLTE の通話は [VoLTE の呼の流れ](../../../docs/guide/ja/volte.md) にあります。

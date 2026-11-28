@@ -1,6 +1,6 @@
 ---
 title: キャプチャの読み方とラボ
-footer: ims-practice 勉強会 3. キャプチャとラボ
+footer: ims-practice 3. キャプチャとラボ
 lang: ja
 format: visual
 ---
@@ -81,30 +81,104 @@ events:
     fields:
       - icid-value: 3 つのダイアログで同じ
       - Dialogs: 3
+  # 区間ごとのトランザクションと、端から端のダイアログ（説明のための例）
+  - id: tx-inv-ue-p
+    msg: INVITE
+    from: ue-a
+    to: pcscf
+    proto: SIP
+    note: (1 区間目)
+    fields:
+      - 一番上の Via: "UE 1 の `branch=z9hG4bK-a`"
+      - Call-ID: "`c1`"
+      - From と To: "From に `tag=f1`。To にはまだタグが無い"
+  - id: tx-inv-p-s
+    msg: INVITE
+    from: pcscf
+    to: scscf
+    proto: SIP
+    note: (2 区間目)
+    fields:
+      - 一番上の Via: "P-CSCF が足した `branch=z9hG4bK-b`。その下に UE 1 の Via"
+      - Call-ID: "`c1` のまま"
+  - id: tx-inv-s-as
+    msg: INVITE
+    from: scscf
+    to: as-o
+    proto: SIP
+    note: (3 区間目)
+    fields:
+      - 一番上の Via: "S-CSCF が足した `branch=z9hG4bK-c`"
+      - Call-ID: "`c1` のまま"
+  - id: tx-ok-as-s
+    msg: 200 OK
+    from: as-o
+    to: scscf
+    proto: SIP
+    fields:
+      - Via: "`-c`、`-b`、`-a` の 3 つ"
+      - To: "AS が付けた `tag=t1`"
+      - 対応するトランザクション: "一番上の branch `-c` と、CSeq のメソッド INVITE"
+  - id: tx-ok-s-p
+    msg: 200 OK
+    from: scscf
+    to: pcscf
+    proto: SIP
+    fields:
+      - Via: "S-CSCF が自分の Via を外し、`-b` と `-a`"
+  - id: tx-ok-p-ue
+    msg: 200 OK
+    from: pcscf
+    to: ue-a
+    proto: SIP
+    fields:
+      - Via: "`-a` だけ"
+      - ダイアログ: "Call-ID `c1` と、タグ `f1` と `t1`"
+  - id: tx-ack-ue-p
+    msg: ACK
+    from: ue-a
+    to: pcscf
+    proto: SIP
+    fields:
+      - 一番上の Via: "新しい `branch=z9hG4bK-d`"
+      - トランザクション: 2xx への ACK は INVITE のトランザクションに入らない
+      - ダイアログ: "同じ。Call-ID `c1`、タグ `f1` と `t1`"
+  - id: tx-ack-p-s
+    msg: ACK
+    from: pcscf
+    to: scscf
+    proto: SIP
+  - id: tx-ack-s-as
+    msg: ACK
+    from: scscf
+    to: as-o
+    proto: SIP
 ```
 
 ---
 
 # キャプチャの読み方とラボ
 
-ims-practice 勉強会 第 3 回（キャプチャはどこから来るか、どう絞るか、ラボは何を描くか）
+（キャプチャはどこから来るか、どう絞るか、ラボは何を描くか）
 
 ---
 
 [layout: summary]
 
-## この回で分かること
+## このデッキで分かること
 
 最初の問い。どちらの道具も同じ信号を見せます。ラボがシーケンス図を描いてくれるのに、なぜキャプチャを開くのでしょうか。
+答え。キャプチャはブリッジを通ったパケットそのものです。ラボはノードが送るコピーから図を組み立て、Cx と Rx がどの SIP の要求のためのものかを推定します。推定を確かめるときと、ラボの図に出ないもの（RTP、HTTP、HSS が自分から送る RTR など）を見るときに、キャプチャを開きます。
 
 - キャプチャのファイルがどこから来て、何が入っているか。
-- 表示フィルタの組み立て方と、どの回のフィルタがどこに書いてあるか。
+- 表示フィルタの組み立て方と、どの手順書のフィルタがどこに書いてあるか。
 - Wireshark からシーケンス図を出す方法と、音声を聞く方法。
 - ラボが何を組み立て、何を推定しているか。
 - ラボには出て、キャプチャには無いメッセージ。
 
+> 本 [信号を観測する](../../../docs/book/ja/observing.md)
 > 手順書 [信号をキャプチャして Wireshark で開く](../../../docs/guide/ja/capture.md)（`docs/guide/ja/capture.md`）と [ラボで IMS を見る](../../../docs/guide/ja/lab.md)（`docs/guide/ja/lab.md`）
-> この回では IMS の仕組みを説明しません。これより先の回は、どれもキャプチャを読み、多くはラボも開きます。
+> このデッキは IMS の仕組みを説明しません。ほかのデッキと本の章は、どれもキャプチャを読み、多くはラボの図も使います。
 
 ---
 
@@ -129,7 +203,7 @@ steps:
     title: 起動するたびに新しいファイル
     show: [writes]
     focus: [capture, pcap]
-    text: ファイルの名前は起動した時刻です。第 10 回では、3 つのブリッジにそれぞれ capture とファイルができます。
+    text: ファイルの名前は起動した時刻です。網間接続の構成では、3 つのブリッジにそれぞれ capture とファイルができます。
 ```
 
 
@@ -146,33 +220,16 @@ steps:
 - ノードはすべて 1 つの Docker のネットワークで通信します。そのため、ノード間のやり取りの全体が 1 つのファイルに入ります。
 - キャプチャ用のコンテナが最初に起動し、ノードはそのあとで起動します。ノードが最初に送るメッセージもファイルに入ります。
 - このコンテナは起動するたびに新しいファイルを作ります。名前は起動した時刻です。
-- 第 10 回では、2 つめの網と、この網とのあいだのブリッジが加わります。3 つのブリッジそれぞれに、キャプチャ用のコンテナとファイルが 1 つずつできます。
+- 網間接続の構成では、2 つめの網と、この網とのあいだのブリッジが加わります。3 つのブリッジそれぞれに、キャプチャ用のコンテナとファイルが 1 つずつできます。
+- ファイルは削除するまで `captures/` に残ります。キャプチャの途中でも開けます。
 
-```sh
-docker compose up -d --build
-```
-
-> 手順書 [「システムを起動する」](../../../docs/guide/ja/capture.md#システムを起動する)と [「キャプチャのファイルを開く」](../../../docs/guide/ja/capture.md#キャプチャのファイルを開く)
-
----
-
-## Wireshark で開く
-
-1. **File > Open** で、`captures/` のいちばん新しいファイルを開きます。
-2. 表示フィルタの欄に、その回のフィルタを入力して Enter キーを押します。
-3. シーケンス図を見るには、**Statistics > Flow Graph** を選び、**Limit to display filter** に印を付けます。
-
-- キャプチャの途中でもファイルを開けます。そのあとに届いたパケットを見るには **View > Reload** を選びます。
-- パケットを発生と同時に見るには、キャプチャを Wireshark に流し込みます。Git Bash では `scripts/capture-live.sh`、PowerShell 7.4 以降では `scripts/capture-live.ps1` です。
-- ファイルは削除するまで `captures/` に残ります。その回のキャプチャを、あとから読み直せます。
-
-> 手順書 [「キャプチャのファイルを開く」](../../../docs/guide/ja/capture.md#キャプチャのファイルを開く)と [「通信をライブで見る」](../../../docs/guide/ja/capture.md#通信をライブで見る)
+> 手順書 [「システムを起動する」](../../../docs/guide/ja/capture.md#システムを起動する)、[「キャプチャのファイルを開く」](../../../docs/guide/ja/capture.md#キャプチャのファイルを開く)、[「通信をライブで見る」](../../../docs/guide/ja/capture.md#通信をライブで見る)、[「システムを止める」](../../../docs/guide/ja/capture.md#システムを止める)
 
 ---
 
 ## 表示フィルタ
 
-登録の回で使うフィルタです。
+登録の手順書のフィルタです。
 
 ```text
 sip || diameter.cmd.code >= 300 || dns.qry.type == 35 || dns.qry.type == 33
@@ -204,11 +261,8 @@ sip || diameter.cmd.code >= 300 || dns.qry.type == 35 || dns.qry.type == 33
 | DWR と DWA | 約 30 秒なにも受け取らなかった側が、相手が動いているかを確かめる。 |
 | DPR と DPA | 止まるノードが、接続を閉じる前に、切断することを相手に伝える。 |
 
-```sh
-docker compose stop scscf
-```
-
-- S-CSCF が Disconnect-Cause `REBOOTING` を付けた DPR を送り、HSS が DPA で応えます。`docker compose start scscf` で起動し直すと、新しい CER と CEA が続きます。
+- 7 本の接続の CER は、UE が何もしないうちから、起動の直後のファイルに入っています。
+- S-CSCF を止めると、S-CSCF が Disconnect-Cause `REBOOTING` を付けた DPR を送り、HSS が DPA で応えます。起動し直すと、新しい CER と CEA が続きます。
 
 > 手順書 [「ノードを起動すると見えるもの」](../../../docs/guide/ja/capture.md#ノードを起動すると見えるもの)。7 本の接続の一覧もここにあります。RFC 6733。RFC 3539 3.4.1。
 
@@ -251,23 +305,10 @@ steps:
 - ノードは、送受信した SIP と Diameter のメッセージのコピーを、UDP の 9060 番で待つラボに送れます。コピーの形式は HEP のバージョン 3 です。
 - ノードは、設定に `hep` の項目があるとコピーを送ります。UE シミュレータは `-hep lab:9060` を付けると送ります。どちらも無ければ、何も送りません。
 - コピーも 9060 番あての UDP のパケットとしてキャプチャに入ります。Wireshark には HEP を解読する機能が標準では無いので、`not udp.port == 9060` で隠します。
-- ラボが知っているのは、このコピーだけです。ノードに状態を問い合わせることはなく、ノードもラボの応答を待ちません。
+- ラボが知っているのは、このコピーだけです。ノードに状態を問い合わせることはなく、ノードもラボの応答を待ちません。ラボは IMS の一部ではなく、呼の経路にもいないので、ラボが無くてもノードは起動して動きます。
+- ラボの HTTP の API と UE シミュレータの制御用の API は、どの仕様にもない、このプロジェクト独自のものです。シーケンス図が描くものは、仕様どおりの IMS の信号です。
 
-> 手順書 [「ラボに送るコピー（HEP）」](../../../docs/guide/ja/capture.md#ラボに送るコピーhep)
-
----
-
-## ラボを開く
-
-```sh
-docker compose up -d --build
-```
-
-- <http://localhost:8080> を開きます。ページがラボのサーバーから更新を受け取っているあいだ、題の横の点が `live` と表示します。
-- ラボはホストのループバックアドレスにだけ公開します。パスワードを聞かないので、たどり着いた人は誰でも、HSS が持っているものを読み、UE を操作し、UE をアクセス網から切り離せます。
-- ラボは IMS の一部ではなく、呼の経路にも入っていません。ラボが無くても、ノードは起動して動きます。
-
-> 手順書 [「ラボを開く」](../../../docs/guide/ja/lab.md#ラボを開く)
+> 手順書 [「ラボに送るコピー（HEP）」](../../../docs/guide/ja/capture.md#ラボに送るコピーhep)と [「このプロジェクト独自の API」](../../../docs/guide/ja/lab.md#このプロジェクト独自の-api)
 
 ---
 
@@ -286,7 +327,9 @@ docker compose up -d --build
 - シーケンス図の矢印を選ぶと、メッセージの全文と、それを定めた仕様の条項が出ます。
 - シーケンス図の下の **Copy as text** を押すと、手順書のシーケンス図と同じ形式の等幅のテキストにして書き出します。
 
-> 手順書 [「各パネルの内容」](../../../docs/guide/ja/lab.md#各パネルの内容)と [「シーケンス図をテキストでコピーする」](../../../docs/guide/ja/lab.md#シーケンス図をテキストでコピーする)
+- ラボはホストのループバックアドレスにだけ公開します。パスワードを聞かないので、たどり着いた人は誰でも、HSS が持っているものを読み、UE を操作できます。
+
+> 手順書 [「ラボを開く」](../../../docs/guide/ja/lab.md#ラボを開く)、[「各パネルの内容」](../../../docs/guide/ja/lab.md#各パネルの内容)、[「シーケンス図をテキストでコピーする」](../../../docs/guide/ja/lab.md#シーケンス図をテキストでコピーする)、[「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
 
 ---
 
@@ -358,6 +401,53 @@ steps:
 
 ---
 
+## キャプチャの中のトランザクションとダイアログ
+
+```ims-scene
+id: transactions
+view: ladder
+nodes: [ue-a, pcscf, scscf, as-o]
+basis: illustration
+lead: トランザクションは区間ごとに、ダイアログは端から端まで続きます。区間は Via の branch で、ダイアログは Call-ID と 2 つのタグで見分けます。
+steps:
+  - id: first
+    title: 1 区間目の INVITE
+    show: [tx-inv-ue-p]
+    text: UE 1 は自分の Via に branch を付けて送ります。この INVITE と、それへの応答が、1 区間目のトランザクションです。
+  - id: hops
+    title: 中継点ごとに新しいトランザクション
+    show: [tx-inv-p-s, tx-inv-s-as]
+    active: tx-inv-s-as
+    detail: [tx-inv-p-s, tx-inv-s-as]
+    checkpoint: true
+    text: |
+      P-CSCF と S-CSCF は、自分の Via を新しい branch で上に足して送ります。区間ごとに別のトランザクションです。
+      Call-ID は変わりません。プロキシはダイアログを作らないからです。
+  - id: answer
+    title: 200 OK は Via をたどって戻る
+    show: [tx-ok-as-s, tx-ok-s-p, tx-ok-p-ue]
+    active: tx-ok-p-ue
+    detail: [tx-ok-as-s, tx-ok-p-ue]
+    checkpoint: true
+    text: |
+      応答を受けたノードは、一番上の branch と CSeq のメソッドで自分のトランザクションを見つけ、自分の Via を外して戻します。
+      AS が To に付けたタグで、UE 1 と AS のあいだのダイアログが決まります。
+  - id: ack
+    title: ACK は別のトランザクションで、同じダイアログ
+    show: [tx-ack-ue-p, tx-ack-p-s, tx-ack-s-as]
+    active: tx-ack-ue-p
+    detail: [tx-ack-ue-p]
+    text: 2xx への ACK は新しい branch で送り、INVITE のトランザクションには入りません。Call-ID とタグは同じなので、同じダイアログの要求です。
+```
+
+- 図の branch、Call-ID、タグの値は、長い値を短く書いた例です。branch が `z9hG4bK` で始まるのは本物と同じです（RFC 3261 8.1.1.7）。100 Trying、183、PRACK、180 は省いて描いています。
+- 区間ごとのトランザクションは RFC 3261 17、プロキシが足す Via は 16.6 の手順 8、応答から外す Via は 16.7 の手順 3、応答とトランザクションの対応は 17.1.3、ダイアログの ID は 12 にあります。
+- キャプチャでは、`sip.Call-ID == "<Call-ID>"` が 1 つのダイアログを、`sip.CSeq.method` がメソッドを絞ります。MMTel AS の先は、AS が新しい Call-ID で始める別のダイアログです。
+
+> 本 [信号を観測する](../../../docs/book/ja/observing.md)
+
+---
+
 ## 1 つの通話に複数のダイアログ
 
 ```ims-scene
@@ -412,57 +502,3 @@ steps:
 - 逆に、どのシーケンス図にも描かれないものがキャプチャにはあります。登録中の加入者を削除したときに HSS が送る RTR がそうです。HSS は SIP のリクエストを受けて送るわけではないので、ラボはこれをどこにも結び付けません。
 
 > 手順書 [「シーケンス図の組み立て方」](../../../docs/guide/ja/lab.md#シーケンス図の組み立て方)と [「網が登録を取り消す」](../../../docs/guide/ja/lab.md#網が登録を取り消す)
-
----
-
-## UE シミュレータを操作する
-
-```sh
-docker compose --profile phones up -d --build
-```
-
-1. `phone2` のカードで、着信の応答方針を `manual` にします。応答するまで鳴り続けます。
-2. `phone1` のカードで **Call** を押します。`phone2` のカードに着信が出るので、**Answer** を押します。
-3. 通話の横の **ladder** を選びます。通話の最中でもシーケンス図を描きます。
-
-- `phone1`、`phone2`、`phone3` が使う加入者は 1、2、3 で、`ue`、`ue2`、`ue3` と同じです。2 つのプロファイルは、どちらか一方だけを動かします。
-- ラボの HTTP の API と UE シミュレータの制御用の API は、どの仕様にもなく、このプロジェクト独自のものです。シーケンス図が描くものは、仕様どおりの IMS の信号です。
-
-> 手順書 [「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)と [「このプロジェクト独自の API」](../../../docs/guide/ja/lab.md#このプロジェクト独自の-api)
-
----
-
-[layout: exercise]
-
-## 振り返り
-
-1. キャプチャのファイルはどこから来ますか。どのノードの最初のメッセージも入っているのはなぜですか。
-2. 1 つのノードだけを残すフィルタと、ラボへのコピーを隠すフィルタは、それぞれどう書きますか。
-3. Cx のリクエストと REGISTER が同じシーケンス図にあります。この 2 つを結び付けたのは何ですか。
-4. MMTel AS を通る通話には Call-ID が 3 つあります。ラボがこれを 1 つの通話として描くのはなぜですか。
-5. ラボには出てキャプチャには無いメッセージは何ですか。それはなぜですか。
-
----
-
-[layout: answers]
-
-## 振り返りの答え
-
-1. キャプチャ用のコンテナからです。Docker のブリッジで tcpdump を動かしています。ノードより先に起動します。
-2. 1 つのノードの両方向は `ip.addr == 172.28.0.70`、コピーを隠すのは `not udp.port == 9060` です。
-3. 手順の決まりです。同じノードが、同じ利用者について、2 秒以内に受け取ったことで結び付けます。ラボが推定した結び付きで、そのことは矢印の詳細に出ます。
-4. P-Charging-Vector の icid-value が同じだからです。発信側の P-CSCF が入れ、それぞれの AS が残した値です。
-5. ノードが自分自身に送るメッセージです。たとえば、S-CSCF が通話の両側を受け持つときに自分に送る INVITE です。コンテナの外に出ないので、ブリッジでは捕らえられません。
-
----
-
-## 次回
-
-- 次は登録です。キャプチャで読む最初の流れで、ラボで開く最初のシーケンス図でもあります。
-- その前に、一度システムを起動し、`captures/` のいちばん新しいファイルをフィルタ `diameter` で開いて、7 つの CER を見つけておいてください。
-
-```sh
-docker compose up -d --build
-```
-
-> 次回の手順書は [UE が IMS に登録する流れを追う](../../../docs/guide/ja/registration.md) です。システムの止め方は [「システムを止める」](../../../docs/guide/ja/capture.md#システムを止める)にあります。

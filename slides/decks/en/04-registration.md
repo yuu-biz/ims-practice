@@ -1,6 +1,6 @@
 ---
 title: A UE registers with the IMS
-footer: ims-practice study session 4. Registration
+footer: ims-practice 4. Registration
 lang: en
 format: visual
 ---
@@ -275,30 +275,52 @@ events:
     to: ue
     proto: SIP
   # The routes used after the registration
+  - id: route-path-store
+    do: Stores the Path
+    at: scscf
+    fields:
+      - What it stores: "The Contact and the Path, `sip:term@pcscf...`"
+      - When it is used: When a request for this UE goes out
+  - id: route-sr-store
+    do: Stores the Service-Route
+    at: ue
+    fields:
+      - What it stores: "The Service-Route of the 200 OK, `sip:orig@scscf...`"
+      - When it is used: When the UE sends a new request
   - id: mt-s-p
     msg: INVITE
     from: scscf
     to: pcscf
     proto: SIP
     note: (incoming)
+    fields:
+      - Request-URI: The Contact that the UE registered
+      - Route: "The stored Path, `sip:term@pcscf...`"
   - id: mt-p-ue
     msg: INVITE
     from: pcscf
     to: ue
     proto: SIP
     note: (incoming)
+    fields:
+      - Route: The P-CSCF removes its own value, and none is left
   - id: mo-ue-p
     msg: INVITE
     from: ue
     to: pcscf
     proto: SIP
     note: (outgoing)
+    fields:
+      - Request-URI: "The number called, `tel:+1-202-555-0102`"
+      - Route: "The URI of the P-CSCF, then the stored Service-Route, `sip:orig@scscf...`"
   - id: mo-p-s
     msg: INVITE
     from: pcscf
     to: scscf
     proto: SIP
     note: (outgoing)
+    fields:
+      - Route: The P-CSCF removes its own value and checks that the rest is the Service-Route
   # The subscription of the P-CSCF (steps 11 and 12)
   - id: psub-p-i
     msg: SUBSCRIBE
@@ -571,6 +593,80 @@ events:
     fields:
       - Reason-Code: PERMANENT_TERMINATION (0)
       - User-Name: the private identity
+  # A deregistration that comes late (an example to explain the rule)
+  - id: ord-stored
+    do: Holds the registration
+    at: scscf
+    fields:
+      - Call-ID: A (a long value, written short for the example)
+      - CSeq: 5 (stored by the re-registration)
+      - Contact: C
+      - Expiry: The one that the re-registration extended
+  - id: ord-late
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (late deregistration)
+    fields:
+      - Call-ID: A
+      - CSeq: "3"
+      - Contact: "C with `expires=0`"
+  - id: ord-compare
+    do: Compares the order
+    at: scscf
+    fields:
+      - Call-ID: A, the same as the stored one
+      - CSeq: 3 is not higher than the stored 5
+      - Decision: This request does not change the registration
+  - id: ord-500
+    msg: "500"
+    from: scscf
+    to: icscf
+    proto: SIP
+    fields:
+      - Status code: RFC 3261 10.3 names none. This implementation answers 500
+  - id: ord-kept
+    do: Keeps the registration as it is
+    at: scscf
+    fields:
+      - Contact and expiry: Unchanged
+      - CSeq: Still 5
+      - HSS: No SAR for a deregistration
+  - id: ord-other
+    msg: REGISTER
+    from: icscf
+    to: scscf
+    proto: SIP
+    note: (another Call-ID)
+    fields:
+      - Call-ID: B
+      - CSeq: 2 (the answer to the 401)
+  - id: ord-other-compare
+    do: Does not compare the CSeq
+    at: scscf
+    fields:
+      - Call-ID: B, not the stored A
+      - Decision: Checks the answer and goes on as a re-registration
+  - id: ord-other-sar
+    msg: SAR
+    from: scscf
+    to: hss
+    proto: Cx
+    fields:
+      - Server-Assignment-Type: RE_REGISTRATION (2)
+  - id: ord-other-saa
+    msg: SAA
+    from: hss
+    to: scscf
+    proto: Cx
+  - id: ord-other-ok
+    msg: 200 OK
+    from: scscf
+    to: icscf
+    proto: SIP
+    fields:
+      - Values stored: Call-ID B and CSeq 2. The next request is compared with them
   - id: rej-s-p
     msg: NOTIFY
     from: scscf
@@ -599,35 +695,26 @@ events:
 
 # A UE registers with the IMS
 
-ims-practice study session 4 (registration with SIP Digest, and the third-party REGISTER to the application server)
+(registration with SIP Digest, and the third-party REGISTER to the application server)
 
 ---
 
 [layout: summary]
 
-## What you will know after this session
+## What this deck covers
 
-To begin: what happens in the network between switching a phone on and its first call?
+Between switching a phone on and its first call, the phone registers with the IMS. This deck shows that registration one stretch at a time.
 
 - The three things registration settles: where the phone is, who the user is, and the route of later requests.
 - Why there are two REGISTERs.
 - What the I-CSCF and the S-CSCF ask the HSS.
 - Which headers of the 200 OK the later calls and short messages use.
+- What follows registration: the subscriptions to the registration state, the third-party REGISTER, deregistration, expiry, and removal by the network.
+- The call deck uses the Path, the Service-Route and the IP association that are set up here.
 
+> Book: [Three things that registration settles](../../../docs/book/en/registration.md), [Refresh, deregistration, subscription and removal by the network](../../../docs/book/en/registration-lifecycle.md)
 > Guide: [Follow a UE registering with the IMS](../../../docs/guide/en/registration.md) (`docs/guide/en/registration.md`)
 > The editions are those of Release 18: TS 24.229 V18.11.0, TS 29.228 V18.0.0, TS 29.229 V18.1.0.
-
----
-
-## How the session goes
-
-1. Start the system and run one registration.
-2. Open the capture in Wireshark and apply the filter.
-3. Look at the whole flow as a ladder.
-4. Open the messages one by one and find the headers and AVPs that the slide lists.
-5. Check the clause of the specification for that step in the guide.
-
-> Starting the system and opening a capture are in the guide [Capture signaling and open it in Wireshark](../../../docs/guide/en/capture.md).
 
 ---
 
@@ -669,7 +756,7 @@ steps:
       The HSS is 10, the I-CSCF 20, the S-CSCF 30, the P-CSCF 40.
 ```
 
-- The UE is a softphone without a SIM. Its identities are configured in it, as an IMC holds them (TS 24.229 5.1.1.1B.1), so it uses the public identity it registers in its other requests too. That identity is the SIP URI of the user's number, and it is not barred. A VoLTE phone registers a barred temporary identity instead; the VoLTE session shows it.
+- The UE is a softphone without a SIM. Its identities are configured in it, as an IMC holds them (TS 24.229 5.1.1.1B.1), so it uses the public identity it registers in its other requests too. That identity is the SIP URI of the user's number, and it is not barred. A VoLTE phone registers a barred temporary identity instead; the VoLTE deck shows it.
 
 | Node | Address | What it does in registration |
 | --- | --- | --- |
@@ -681,43 +768,6 @@ steps:
 | DNS | 172.28.0.2 | Holds NAPTR, SRV and A of the home network domain. |
 
 > Guide: ["The nodes"](../../../docs/guide/en/registration.md#the-nodes), which also gives the identities and the password of the test user.
-
----
-
-## Run it
-
-```sh
-docker compose up -d --build
-docker compose logs scscf | grep I-Open        # are the Diameter connections open?
-docker compose run --rm ue register -deregister-after 5s
-```
-
-After the start, wait until the I-CSCF and the S-CSCF have opened their Diameter connections to the HSS. A node that started before the HSS connects again after 30 seconds (Tc), so allow up to a minute.
-
-Find these three lines in the log of the UE.
-
-- `"msg":"registered"`, with the Service-Route and the associated identities.
-- `"msg":"reg event"` with `"state":"active"`.
-- `"msg":"deregistered"`.
-
-> Guide: ["Run a registration"](../../../docs/guide/en/registration.md#run-a-registration)
-
----
-
-## Open the capture
-
-Open the newest file in `captures/` and use this display filter.
-
-```text
-sip || diameter.cmd.code >= 300 || dns.qry.type == 35 || dns.qry.type == 33
-```
-
-- SIP, Cx, and the NAPTR and SRV lookups stay.
-- The Diameter watchdogs (DWR and DWA) go.
-- **Statistics > Flow Graph** with **Limit to display filter** draws the ladder.
-- The numbers 1 to 10 of the guide's ladder are the numbers of the next slides.
-
-> Guide: ["Open the capture"](../../../docs/guide/en/registration.md#open-the-capture) and ["The sequence"](../../../docs/guide/en/registration.md#the-sequence), which has the full ladder.
 
 ---
 
@@ -760,12 +810,18 @@ steps:
     show: [sar, saa, ok-s-i, ok-i-p, ok-p-ue]
     active: ok-p-ue
     detail: []
+    checkpoint: true
     text: |
       The HSS is asked four times: two UARs, one MAR, one SAR.
       The full ladder of the guide has DNS as well.
+  - id: settled
+    title: The three things registration settles
+    active: ok-s-i
+    detail: [ok-s-i]
+    text: The Contact says where the UE is, the second answer proves who it is, and Path and Service-Route are the routes. P-Associated-URI lists the identities registered with it.
 ```
 
-The same shape in a capture also has the DNS lookups, between 1 and 2. The next slides read it one stretch at a time, with the numbers of the guide's ladder.
+The same shape in a capture also has the DNS lookups, between 1 and 2. The next slides show it one stretch at a time, with the numbers of the guide's ladder.
 
 ```ladder
 UE, P-CSCF, I-CSCF, S-CSCF, HSS
@@ -780,6 +836,8 @@ I-CSCF -> S-CSCF: REGISTER
 S-CSCF <-> HSS: SAR, SAA // 9
 UE <-- P-CSCF <-- I-CSCF <-- S-CSCF: 200 OK // 10
 ```
+
+> Book: [Three things that registration settles](../../../docs/book/en/registration.md), [Why a UE sends REGISTER twice](../../../docs/book/en/registration-two-registers.md)
 
 ---
 
@@ -825,7 +883,7 @@ steps:
     focus: [pcscf]
     text: |
       Path is the route that later brings incoming requests to the UE.
-      Compare the REGISTER before and after the P-CSCF to find what it adds.
+      These four headers are what differs between the REGISTER before and after the P-CSCF.
   - id: forward
     title: The REGISTER reaches the I-CSCF
     show: [reg1-p-i]
@@ -842,7 +900,7 @@ steps:
 
 The filter is `dns.qry.type == 35 || dns.qry.type == 33`.
 
-- Compare the REGISTER before and after the P-CSCF to find what it adds. Path is what later brings an incoming call to the UE.
+- These four headers, which the P-CSCF adds, are what differs between the REGISTER before and after it. Path is what later brings an incoming call to the UE.
 
 > Guide: [1](../../../docs/guide/en/registration.md#1-the-ue-sends-the-first-register) and [2](../../../docs/guide/en/registration.md#2-the-p-cscf-finds-the-i-cscf-and-forwards-the-register). TS 24.229 5.1.1.2.1, 5.1.1.2.3, 5.2.2.1. RFC 3263, RFC 3327, RFC 3581.
 
@@ -1086,9 +1144,18 @@ The filter is `diameter.cmd.code == 301`. Wireshark names User-Data `Cx-User-Dat
 
 ```ims-scene
 id: routes
-nodes: [ue, pcscf, dns, icscf, hss, scscf]
-lead: Both routes arrive in the 200 OK, but they are used in opposite directions. The call session shows them with real INVITEs.
+nodes: [ue, pcscf, icscf, scscf]
+lead: Registration sets up both routes, but a different node keeps each, and they are used in opposite directions.
 steps:
+  - id: register
+    title: Registration sets up two routes
+    only: [route-path-store, route-sr-store]
+    focus: [scscf, ue]
+    detail: [route-path-store, route-sr-store]
+    checkpoint: true
+    text: |
+      The S-CSCF stores the Path that the P-CSCF put in the REGISTER, with the binding.
+      The UE stores the Service-Route that the S-CSCF put in the 200 OK.
   - id: path
     title: Path is the route of requests to the UE
     only: [mt-s-p, mt-p-ue]
@@ -1096,8 +1163,8 @@ steps:
     focus: [scscf, pcscf, ue]
     checkpoint: true
     text: |
-      The S-CSCF sends requests for the UE along the Path, through the P-CSCF of that UE.
-      An incoming INVITE takes this route.
+      The S-CSCF makes the Request-URI of a request for the UE the Contact, and puts the stored Path in its Route.
+      An incoming INVITE reaches the UE through the P-CSCF that the UE registered through.
   - id: service-route
     title: Service-Route is the route of requests from the UE
     only: [mo-ue-p, mo-p-s]
@@ -1106,11 +1173,13 @@ steps:
     checkpoint: true
     text: |
       The UE puts the Service-Route at the top of its requests. They go from the P-CSCF straight to its S-CSCF, not through the I-CSCF.
-      An outgoing INVITE takes this route, and so does the SUBSCRIBE of the UE later in this session.
+      An outgoing INVITE takes this route, and so does the SUBSCRIBE of the UE later in this deck.
 ```
 
-- The UE uses Service-Route when it calls. Path is used when it is called. Both come back in the call.
+- The UE uses Service-Route when it calls. Path is used when it is called. Neither is the list of Via that the answer to the REGISTER goes back along: Via is the way back of the answer to the request just sent, and Path and Service-Route are the routes of the new requests that come after it.
+- The call deck shows the whole incoming and outgoing INVITE again.
 
+> Book: [Which request follows Path and which follows Service-Route](../../../docs/book/en/registration-routes.md)
 > Guide: [10](../../../docs/guide/en/registration.md#10-the-s-cscf-accepts-200-ok). RFC 3327, RFC 3608.
 
 ---
@@ -1166,6 +1235,7 @@ steps:
 
 The filter is `sip.CSeq.method == "SUBSCRIBE" || sip.CSeq.method == "NOTIFY" || diameter.cmd.code == 302`.
 
+> Book: [Refresh, deregistration, subscription and removal by the network](../../../docs/book/en/registration-lifecycle.md)
 > Guide: ["Subscribe to the registration state"](../../../docs/guide/en/registration.md#subscribe-to-the-registration-state). TS 24.229 5.2.3, 5.4.2.1.1, 5.4.2.1.2. RFC 3680, RFC 6665. TS 29.228 6.1.4.
 
 ---
@@ -1244,7 +1314,7 @@ steps:
     detail: [pur, pua]
     text: |
       With Sh command 307 it writes into the HSS that it handles the short messages of this user.
-      The SMS session reads this flow closely.
+      The SMS deck shows this flow closely.
 ```
 
 | Look at | What to see |
@@ -1253,10 +1323,11 @@ steps:
 | SUBSCRIBE and NOTIFY of the IP-SM-GW | The IP-SM-GW subscribes to the reg event as well. |
 | PUR and PUA | The IP-SM-GW registers its number in the HSS over Sh. |
 
-- The UE does not wait for any of this: it already has its 200 OK. The SMS session reads this flow closely.
+- The UE does not wait for any of this: it already has its 200 OK. The SMS deck shows this flow closely.
 
 The filter is `diameter.cmd.code == 307`.
 
+> Book: [Refresh, deregistration, subscription and removal by the network](../../../docs/book/en/registration-lifecycle.md)
 > Guide: ["Register the user at the application server (third-party REGISTER)"](../../../docs/guide/en/registration.md#register-the-user-at-the-application-server-third-party-register). TS 24.229 5.4.1.7, 5.4.1.7A. TS 24.341 5.3.3.2. TS 29.328 6.1.2.
 
 ---
@@ -1310,7 +1381,60 @@ steps:
 
 - A registration that is not refreshed expires the same way: `event="expired"`, and a SAR with TIMEOUT_DEREGISTRATION. The same section of the guide has it.
 
+> Book: [Refresh, deregistration, subscription and removal by the network](../../../docs/book/en/registration-lifecycle.md)
 > Guide: ["Deregistration"](../../../docs/guide/en/registration.md#deregistration). TS 24.229 5.1.1.6.1, 5.4.1.4.1, 5.4.2.1.2.
+
+---
+
+## A deregistration that comes late
+
+```ims-scene
+id: registration-order
+nodes: [icscf, scscf, hss]
+basis: illustration
+lead: A request with the same Call-ID changes the registration only with a CSeq higher than the stored one.
+steps:
+  - id: stored
+    title: A newer registration is stored
+    only: [ord-stored]
+    focus: [scscf]
+    text: A re-registration was accepted with CSeq 5. The S-CSCF keeps its Call-ID and CSeq with the binding.
+  - id: late
+    title: An old deregistration arrives
+    show: [ord-late]
+    text: A retransmission of a deregistration with CSeq 3, which the UE sent before the re-registration, comes late. The figure leaves out what the P-CSCF and the I-CSCF did before.
+  - id: compare
+    title: The S-CSCF compares it with the stored CSeq
+    show: [ord-compare]
+    text: The Call-ID is the same, so the S-CSCF compares the CSeq. 3 is not higher than 5.
+  - id: refuse
+    title: A 500, and the registration stays
+    show: [ord-500, ord-kept]
+    active: ord-500
+    detail: [ord-500, ord-kept]
+    checkpoint: true
+    text: |
+      The S-CSCF answers 500 and changes neither the Contact, nor the expiry, nor the CSeq. No SAR for a deregistration goes to the HSS.
+      A request with CSeq 5 is refused the same way, since it is not higher.
+  - id: other
+    title: A REGISTER with another Call-ID is not compared
+    only: [ord-stored, ord-other, ord-other-compare]
+    focus: [scscf]
+    detail: [ord-other, ord-other-compare]
+    text: The Call-ID differs, so the S-CSCF does not compare the CSeq.
+  - id: accepted
+    title: An SAR, and the values of B are stored
+    show: [ord-other-sar, ord-other-saa, ord-other-ok]
+    active: ord-other-ok
+    checkpoint: true
+    text: The S-CSCF sends an SAR of RE_REGISTRATION and answers 200 OK. From now on, Call-ID B and CSeq 2 are the values to compare with.
+```
+
+- A and B for the Call-ID and C for the Contact are long values written short for the example. They are not values of a capture.
+- The rule is step 7 of RFC 3261 10.3. With the same Call-ID, the binding changes only with a CSeq higher than the stored one; otherwise the request fails. The rule names no status code. This implementation answers 500, the code that the same step names for binding updates that cannot be committed.
+- The S-CSCF compares after it has checked the answer to the challenge, and before it sends an SAR to the HSS. A deregistration is compared without a new challenge when there is an IP association. Either way, a refused request leaves nothing behind, at the HSS or in the binding.
+
+> Book: [Why a late deregistration does not remove a newer registration](../../../docs/book/en/registration-stale-deregistration.md). Guide: [7](../../../docs/guide/en/registration.md#7-the-ue-answers-the-challenge).
 
 ---
 
@@ -1340,7 +1464,7 @@ steps:
     only: [rtr]
     focus: [hss, scscf]
     text: |
-      This one starts at the HSS. The RTR is the first Cx request in these sessions that the HSS starts.
+      This one starts at the HSS. The Cx requests so far came from the I-CSCF or the S-CSCF; the HSS sends the RTR.
       The Reason-Code is PERMANENT_TERMINATION (0).
   - id: rejected
     title: The UE gets a NOTIFY with rejected
@@ -1352,15 +1476,16 @@ steps:
       A UE that gets rejected does not register again.
 ```
 
-| Case | How to try it | What to see |
+| Case | What sets it off | What to see |
 | --- | --- | --- |
 | A wrong password | `ue register -password wrong-password` | The same up to step 8. The S-CSCF answers 403 and sends a SAR with AUTHENTICATION_FAILURE (9). |
-| The HSS removes the subscription | Remove the subscription of a registered user through the OAM, as "The network cancels a registration" in the Lab guide does. | The HSS sends an RTR with Reason-Code PERMANENT_TERMINATION (0). The UE gets a NOTIFY with `event="rejected"`. |
+| The HSS removes the subscription | The operator removes the subscription of a registered user through the OAM. | The HSS sends an RTR with Reason-Code PERMANENT_TERMINATION (0). The UE gets a NOTIFY with `event="rejected"`. |
 
-- Put `docker compose run --rm` in front of the command.
+- The guide runs the `ue` command after `docker compose run --rm`.
 - The filter for RTR and RTA is `diameter.cmd.code == 304`.
 - The provisioning API of the HSS removes a subscription too; the guide has its table.
 
+> Book: [Refresh, deregistration, subscription and removal by the network](../../../docs/book/en/registration-lifecycle.md), [Why a UE sends REGISTER twice](../../../docs/book/en/registration-two-registers.md)
 > Guide: ["A wrong password"](../../../docs/guide/en/registration.md#a-wrong-password) and ["Remove a subscription (deregistration by the HSS)"](../../../docs/guide/en/registration.md#remove-a-subscription-deregistration-by-the-hss), and in the Lab guide ["The network cancels a registration"](../../../docs/guide/en/lab.md#the-network-cancels-a-registration). TS 24.229 5.4.1.2.3B. TS 29.228 6.1.2.1, 6.1.3.
 
 ---
@@ -1369,10 +1494,10 @@ steps:
 
 ## The same flow in the Lab
 
-- Open <http://localhost:8080> and pick an identity in the **Registrations** panel.
-- The ladder of the last REGISTER appears. Pick an arrow to see the whole message and the clause that defines it.
-- The ladder shows SIP and Cx. It does not show DNS.
-- The Lab draws from the copies (HEP) that the nodes send it. It is not part of the IMS.
+- The **Registrations** panel of the Lab (<http://localhost:8080>) lists each registered identity with its Contact, expiry and S-CSCF.
+- Picking an identity draws the ladder of its last REGISTER. Picking an arrow shows the whole message and the clause that defines it.
+- The ladder shows SIP and Cx. It does not show DNS. The Lab ties a Cx request to the REGISTER that the same node received just before, by inference.
+- The Lab draws from the copies (HEP) that the nodes send it. It is not part of the IMS. A third-party REGISTER adds no row, and an RTR is not drawn.
 
 [column]
 
@@ -1381,93 +1506,72 @@ steps:
 | Wireshark | Every packet: DNS, TCP, the inside of each AVP. |
 | Lab | One registration or call as a diagram, at once. |
 
+> Book: [Refresh, deregistration, subscription and removal by the network](../../../docs/book/en/registration-lifecycle.md)
 > Guide: [Watch the IMS in the Lab, "What each panel shows"](../../../docs/guide/en/lab.md#what-each-panel-shows) and ["How the ladder is built"](../../../docs/guide/en/lab.md#how-the-ladder-is-built)
 
 ---
 
-## Check it in the code
+## The code of the steps
 
 ```ims-scene
 id: code
 nodes: [ue, pcscf, dns, icscf, hss, scscf]
-lead: Each node has a file with its steps. Search it for a header name that you saw in the capture.
+lead: Each node has a file with its steps, and functions that decide.
 steps:
   - id: ue
     title: The REGISTER of the UE and its digest response (1, 7)
     focus: [ue]
-    text: "`internal/ue/ue.go`"
+    text: "`Register` in `internal/ue/ue.go`."
   - id: pcscf
     title: Path and DNS (2)
     focus: [pcscf, dns]
-    text: "`internal/pcscf/pcscf.go`, `internal/sipdns/locate.go`"
+    text: "`register` and `pathURI` in `internal/pcscf/pcscf.go`, `Locate` in `internal/sipdns/locate.go`."
   - id: icscf
     title: UAR (3, 8)
     focus: [icscf]
-    text: "`internal/icscf/icscf.go`"
+    text: "`register` and `choose` in `internal/icscf/icscf.go`."
   - id: scscf
     title: MAR, 401, SAR, 200 OK (5, 6, 9, 10)
     focus: [scscf]
-    text: "`internal/scscf/scscf.go`"
+    text: "`register`, `challenge`, `check`, `accept` and `deregister` in `internal/scscf/scscf.go`."
   - id: hss
     title: The answers of the HSS
     focus: [hss]
-    text: "`internal/hss/hss.go`"
+    text: "`userAuthorization`, `multimediaAuth` and `serverAssignment` in `internal/hss/hss.go`."
   - id: regevent
     title: The reg event (11 to 14)
     focus: [scscf, pcscf, ue]
-    text: "`internal/scscf/regevent.go`, `internal/pcscf/regevent.go`, `internal/ue/regevent.go`"
+    text: "`internal/scscf/regevent.go`, `internal/pcscf/regevent.go`, `internal/ue/regevent.go`."
 ```
 
-| Step | File to open |
-| --- | --- |
-| 1, 7. The REGISTER of the UE and its digest response | `internal/ue/ue.go` |
-| 2. Path and DNS | `internal/pcscf/pcscf.go`, `internal/sipdns/locate.go` |
-| 3, 8. UAR | `internal/icscf/icscf.go` |
-| 5, 6, 9, 10. MAR, 401, SAR, 200 OK | `internal/scscf/scscf.go` |
-| The answers of the HSS | `internal/hss/hss.go` |
-| 11 to 14. The reg event | `internal/scscf/regevent.go`, `internal/pcscf/regevent.go`, `internal/ue/regevent.go` |
+| Step | File to open | Functions that decide |
+| --- | --- | --- |
+| 1, 7. The REGISTER of the UE and its digest response | `internal/ue/ue.go` | `Register` |
+| 2. Path and DNS | `internal/pcscf/pcscf.go`, `internal/sipdns/locate.go` | `register`, `pathURI`, `Locate` |
+| 3, 8. UAR | `internal/icscf/icscf.go` | `register`, `choose` |
+| 5, 6, 9, 10. MAR, 401, SAR, 200 OK | `internal/scscf/scscf.go` | `register`, `challenge`, `check`, `accept`, `deregister` |
+| The answers of the HSS | `internal/hss/hss.go` | `userAuthorization`, `multimediaAuth`, `serverAssignment` |
+| 11 to 14. The reg event | `internal/scscf/regevent.go`, `internal/pcscf/regevent.go`, `internal/ue/regevent.go` | `subscribe`, `notifyRegistration`, `endRegistration`, `subscribeRegEvent`, `SubscribeRegEvent` |
 
-- Search the code for a header name from the capture, such as `Service-Route`.
-- Pick a row of the guide's table of simplifications and find its `SIMPLIFIED:` comment.
+- The header names of the capture are in the code as they are. `Service-Route`, for example, is what `bindingResponse` of the S-CSCF puts in the 200 OK, and what `routeSet` of the UE makes its Route from.
+- Each place where a procedure of the specification is simplified has a `SIMPLIFIED:` comment, and the guide's table of simplifications says the same.
 
 > Guide: ["What this project simplifies"](../../../docs/guide/en/registration.md#what-this-project-simplifies)
 
 ---
 
-[layout: exercise]
+## If you want to run it
 
-## Looking back
+This deck is written to be read. The steps to see the same flow in a capture of your own are in the guide.
 
-1. Why are there two REGISTERs?
-2. How often does the I-CSCF ask the HSS in one registration, and how do the answers differ?
-3. Does the HSS give the password to the S-CSCF?
-4. Who uses Path and who uses Service-Route of the 200 OK, and when?
-5. Why is there no 401 when the UE deregisters?
-
----
-
-[layout: answers]
-
-## Looking back: answers
-
-1. The network gives the challenge (the nonce) in answer to the first, and the UE answers it in the second.
-2. Twice. First DIAMETER_FIRST_REGISTRATION with Server-Capabilities, then DIAMETER_SUBSEQUENT_REGISTRATION with Server-Name.
-3. No. It gives H(A1).
-4. The S-CSCF uses Path to send requests for the UE through its P-CSCF. The UE uses Service-Route to send its own requests to its S-CSCF.
-5. The P-CSCF has an IP association for the UE and adds `ip-assoc-yes`.
-
----
-
-## Next session
-
-- Next is a call. It uses the Path, the Service-Route and the IP association that this session set up.
-- How to clean up depends on whether the next session follows straight away.
+- Starting the system and running a registration are in ["Run a registration"](../../../docs/guide/en/registration.md#run-a-registration). Opening the capture and the display filter are in ["Open the capture"](../../../docs/guide/en/registration.md#open-the-capture), and the whole numbered ladder is in ["The sequence"](../../../docs/guide/en/registration.md#the-sequence). Using Wireshark is in [Capture signaling and open it in Wireshark](../../../docs/guide/en/capture.md).
+- Cleaning up is in the guide's ["Clean up"](../../../docs/guide/en/registration.md#clean-up).
 
 ```sh
 docker compose --profile ue --profile phones --profile volte down -v --remove-orphans
 docker compose --profile ue down --rmi all -v --remove-orphans
 ```
 
-The first line stops the nodes and the UEs and removes the volumes, but keeps the images, so the next session starts without building again. The second removes the images too. Both remove the stored data of the volumes with `-v`; the captures stay.
+The first line stops the nodes and the UEs and removes the volumes, but keeps the images, so the system of the call deck starts without building again. The second removes the images too. Both remove the stored data of the volumes with `-v`; the captures stay.
 
-> The guide of the next session is [Follow a voice call through the IMS](../../../docs/guide/en/call.md). Cleaning up is in the guide's ["Clean up"](../../../docs/guide/en/registration.md#clean-up).
+> The guide for calls is [Follow a voice call through the IMS](../../../docs/guide/en/call.md).

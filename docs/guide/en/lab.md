@@ -2,6 +2,8 @@
 
 [日本語](../ja/lab.md)
 
+> This guide has the steps to run the setup and see it for yourself. The explanation that is understood by reading alone, of how it works and why, is in the book: [Watching the signalling](../../book/en/observing.md).
+
 The Lab is a web page where you try things on the IMS and watch what happens. It shows the registrations and the calls of the IMS while they happen, and draws each one as a ladder diagram. It also shows the subscriptions that the HSS holds, and drives the UE simulators `phone1`, `phone2` and `phone3`, so that you can make a call and watch its signaling without typing commands.
 
 ## Before you start

@@ -2,6 +2,8 @@
 
 [English](../en/registration.md)
 
+> この手順書は、構成を動かして確かめるための手順です。仕組みと判断の理由を読むだけで分かるように説明した本文は、本の [登録で決まる 3 つのこと](../../book/ja/registration.md)、[REGISTER が 2 回送られる理由](../../book/ja/registration-two-registers.md)、[Path と Service-Route の使い分け](../../book/ja/registration-routes.md)、[遅れて届いた登録の解除が、新しい登録を消さない理由](../../book/ja/registration-stale-deregistration.md)、[登録の更新、解除、購読、網からの取り消し](../../book/ja/registration-lifecycle.md) にあります。
+
 IMS で電話をかけたり SMS を送ったりする前に、端末は登録をします。登録で、端末がどこにいるかをホーム網に知らせ、利用者が本人であることを証明し、後の要求が通る経路を決めます。この手順書では登録を 1 回実行し、キャプチャに記録されたメッセージを順に読んでいきます。
 
 この手順書は 3GPP の Release 18（TS 24.229 V18.11.0、TS 29.228 V18.0.0、TS 29.229 V18.1.0）に沿っています。条項番号はこれらの版のものです。

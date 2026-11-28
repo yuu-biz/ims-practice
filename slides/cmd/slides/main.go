@@ -1,9 +1,14 @@
-// Command slides builds the study-session decks: it reads each source
+// Command slides builds the decks and the book: it reads each source
 // under decks/<language>/, lays out its slides, checks them, and writes a
-// pptx file and an HTML file for each deck. Run it in the directory slides/:
+// pptx file and an HTML file for each deck. It also reads the chapters of
+// the book under docs/book/, checks them, and draws their figures from
+// the scenes of the decks. Run it in the directory slides/:
 //
-//	go run ./cmd/slides check   # parse, lay out and check every deck
-//	go run ./cmd/slides build   # check, then write dist/<language>/
+//	go run ./cmd/slides check     # check every deck and the book
+//	go run ./cmd/slides build     # check, then write dist/<language>/
+//	go run ./cmd/slides figures   # draw the figures of the book again
+//	go run ./cmd/slides -repo-url https://github.com/<owner>/<repository>/blob/<commit> zenn
+//	                              # write the book for Zenn to dist/zenn/
 //
 // The format of a deck and the checks are described in slides/README.md.
 package main
@@ -17,6 +22,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/yuu-biz/ims-practice/slides/internal/book"
 	"github.com/yuu-biz/ims-practice/slides/internal/deck"
 	"github.com/yuu-biz/ims-practice/slides/internal/facts"
 	"github.com/yuu-biz/ims-practice/slides/internal/html"
@@ -30,16 +36,60 @@ func main() {
 	out := flags.String("out", "dist", "the directory that build writes to, one subdirectory per language")
 	repository := flags.String("repo-url", "", "the address of the repository tree, such as https://<host>/<owner>/<repository>/blob/<commit>;\n"+
 		"build makes the links to the guides absolute with it, for decks that are opened outside a checkout")
+	bookDir := flags.String("book", "../docs/book", "the directory of the book, one subdirectory per language")
+	unitsFile := flags.String("units", "../docs/book/units.yaml", "the record of what each part of the book explains and rests on")
+	lang := flags.String("lang", "ja", "the language of the book that zenn writes")
 	flags.Usage = func() {
-		fmt.Fprintf(flags.Output(), "usage: slides [flags] check|build\n")
+		fmt.Fprintf(flags.Output(), "usage: slides [flags] check|build|figures|zenn\n")
 		flags.PrintDefaults()
 	}
 	flags.Parse(os.Args[1:])
-	if flags.NArg() != 1 || (flags.Arg(0) != "check" && flags.Arg(0) != "build") {
+	command := flags.Arg(0)
+	if flags.NArg() != 1 || !slices.Contains([]string{"check", "build", "figures", "zenn"}, command) {
 		flags.Usage()
 		os.Exit(2)
 	}
+	root := filepath.Join(*decks, "..", "..")
+	switch command {
+	case "figures":
+		b, problems := book.Load(*bookDir, root)
+		exitOn(problems)
+		written, err := book.WriteFigures(b)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("%d figure files written or removed\n", len(written))
+		for _, w := range written {
+			fmt.Println(w)
+		}
+		return
+	case "zenn":
+		b, problems := book.Load(*bookDir, root)
+		exitOn(problems)
+		exitOn(book.Check(b))
+		written, err := book.Zenn(b, *lang, filepath.Join(*out, "zenn"), *repository)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Println(strings.Join(written, "\n"))
+		fmt.Printf("then, in slides/: node book-images.js %s\n", filepath.Join(*out, "zenn"))
+		return
+	}
 	all, problems := load(*decks)
+	b, bookProblems := book.Load(*bookDir, root)
+	problems = append(problems, bookProblems...)
+	var units []book.Unit
+	if b != nil {
+		problems = append(problems, book.Check(b)...)
+		var err error
+		if units, err = book.LoadUnits(*unitsFile); err != nil {
+			problems = append(problems, err)
+		} else {
+			problems = append(problems, book.CheckUnits(b, units)...)
+		}
+	}
 	if len(problems) > 0 {
 		for _, p := range problems {
 			fmt.Fprintln(os.Stderr, p)
@@ -47,11 +97,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%d problems\n", len(problems))
 		os.Exit(1)
 	}
-	if flags.Arg(0) == "check" {
+	if command == "check" {
 		for _, d := range all {
 			fmt.Println(summary(d))
 		}
 		fmt.Printf("%d decks: every slide parses, fits, links to what exists, quotes code that is in its file, names commands that the repository takes, and gives the nodes the addresses of the Compose files\n", len(all))
+		fmt.Printf("%d chapters in each of %s: every link reaches its file and heading, every excerpt is in its file, every figure is the drawing of its step, and the languages show the same figures and code\n",
+			len(b.Config.Chapters), strings.Join(book.Languages, ", "))
+		for _, s := range book.Stale(root, units) {
+			fmt.Println("to read again: " + s)
+		}
 		return
 	}
 	for _, d := range all {
@@ -65,6 +120,18 @@ func main() {
 		}
 		fmt.Println(strings.Join(written, "\n"))
 	}
+}
+
+// exitOn prints the problems and stops, if there are any.
+func exitOn(problems []error) {
+	if len(problems) == 0 {
+		return
+	}
+	for _, p := range problems {
+		fmt.Fprintln(os.Stderr, p)
+	}
+	fmt.Fprintf(os.Stderr, "%d problems\n", len(problems))
+	os.Exit(1)
 }
 
 // build writes the outputs of one deck and returns their paths.

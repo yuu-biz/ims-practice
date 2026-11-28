@@ -1,6 +1,6 @@
 ---
 title: A short message through the IMS
-footer: ims-practice study session 6. SMS
+footer: ims-practice 6. SMS
 lang: en
 format: visual
 ---
@@ -1324,21 +1324,156 @@ events:
     fields:
       - MWD: The SC's address stays
       - Delivery: On the alert when subscriber 3 registers
+  - id: ov-m1
+    msg: MESSAGE
+    from: ue1
+    to: ipsmgw
+    proto: SIP
+    note: (SMS-SUBMIT)
+  - id: ov-m1a
+    msg: "202"
+    from: ipsmgw
+    to: ue1
+    proto: SIP
+  - id: ov-ofr
+    msg: OFR
+    from: ipsmgw
+    to: sc
+    proto: SGd
+  - id: ov-srr1
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (acceptance)
+  - id: ov-sra1
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (acceptance)
+  - id: ov-ofa
+    msg: OFA
+    from: sc
+    to: ipsmgw
+    proto: SGd
+  - id: ov-m2
+    msg: MESSAGE
+    from: ipsmgw
+    to: ue1
+    proto: SIP
+    note: (submit report)
+  - id: ov-m2a
+    msg: 200 OK
+    from: ue1
+    to: ipsmgw
+    proto: SIP
+  - id: ov-srr2
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (delivery)
+  - id: ov-sra2
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (delivery)
+  - id: ov-tfr
+    msg: TFR
+    from: sc
+    to: ipsmgw
+    proto: SGd
+  - id: ov-m3
+    msg: MESSAGE
+    from: ipsmgw
+    to: ue2
+    proto: SIP
+    note: (SMS-DELIVER)
+  - id: ov-m3a
+    msg: 200 OK
+    from: ue2
+    to: ipsmgw
+    proto: SIP
+  - id: ov-m4
+    msg: MESSAGE
+    from: ue2
+    to: ipsmgw
+    proto: SIP
+    note: (delivery report)
+  - id: ov-m4a
+    msg: "202"
+    from: ipsmgw
+    to: ue2
+    proto: SIP
+  - id: ov-tfa
+    msg: TFA
+    from: ipsmgw
+    to: sc
+    proto: SGd
+  - id: ov-srr3
+    msg: SRR
+    from: sc
+    to: hss
+    proto: S6c
+    note: (status report)
+  - id: ov-sra3
+    msg: SRA
+    from: hss
+    to: sc
+    proto: S6c
+    note: (status report)
+  - id: ov-tfr3
+    msg: TFR
+    from: sc
+    to: ipsmgw
+    proto: SGd
+    note: (status report)
+  - id: ov-m5
+    msg: MESSAGE
+    from: ipsmgw
+    to: ue1
+    proto: SIP
+    note: (SMS-STATUS-REPORT)
+  - id: ov-m5a
+    msg: 200 OK
+    from: ue1
+    to: ipsmgw
+    proto: SIP
+  - id: ov-m6
+    msg: MESSAGE
+    from: ue1
+    to: ipsmgw
+    proto: SIP
+    note: (delivery report)
+  - id: ov-m6a
+    msg: "202"
+    from: ipsmgw
+    to: ue1
+    proto: SIP
+  - id: ov-tfa3
+    msg: TFA
+    from: ipsmgw
+    to: sc
+    proto: SGd
+    note: (status report)
 ```
 
 ---
 
 # A short message through the IMS
 
-ims-practice study session 6 (SMS over IP: the IP-SM-GW, the SC, the three kinds of report, and holding and alerting)
+(SMS over IP: the IP-SM-GW, the SC, the three kinds of report, and holding and alerting)
 
 ---
 
 [layout: summary]
 
-## What you will know after this session
+## What this deck covers
 
 To begin: a short message goes to a telephone number. Who in the IMS finds the UE of that number?
+No single node. The SC asks the HSS over S6c and learns which IP-SM-GW serves the recipient, and the MESSAGE of that IP-SM-GW reaches the UE through the I-CSCF and the S-CSCF, by what the registration left there.
 
 - How the IP-SM-GW learns that a user can take short messages.
 - How the S-CSCF hands a short message to the IP-SM-GW.
@@ -1349,6 +1484,7 @@ To begin: a short message goes to a telephone number. Who in the IMS finds the U
 
 > Guide: [Follow a short message through the IMS](../../../docs/guide/en/sms.md) (`docs/guide/en/sms.md`)
 > The editions are named at the top of the guide, among them TS 24.341 V19.0.0, TS 23.204 V19.1.0, TS 24.011 V20.0.0 and TS 23.040 V20.0.0.
+> Book: [Delivering SMS and reporting on it](../../../docs/book/en/sms.md)
 
 ---
 
@@ -1458,6 +1594,7 @@ steps:
     text: Priority 2 is for a MESSAGE to the user, unless P-Asserted-Identity is the IP-SM-GW.
   - id: deliver-on
     title: The MESSAGE goes on to UE 2
+    detail: [scscf-mt]
     show: [m3-s-p]
     text: The negated condition keeps the IP-SM-GW's own MESSAGE from coming back to it.
 ```
@@ -1495,47 +1632,47 @@ The criterion of priority 2 in `deploy/compose/hss.yaml` has four groups of cond
 
 ---
 
-## Run it
-
-```sh
-docker compose up -d --build
-
-# First terminal: UE 2 registers and stays registered.
-docker compose run --rm ue2 register \
-  -impi 001010000000002@ims.mnc001.mcc001.3gppnetwork.org \
-  -impu sip:+12025550102@ims.mnc001.mcc001.3gppnetwork.org \
-  -password test-password-2
-
-# Second terminal: UE 1 sends, and asks for a status report.
-docker compose run --rm ue sms -status-report +12025550102 "Hello UE-B, this is UE-A."
-```
-
-- The flags come before the number and the text.
-- UE 1 logs `"msg":"submit report"` and `"msg":"status report"`.
-- UE 2 logs `"msg":"sms received"`.
-
-> Guide: ["Send a short message"](../../../docs/guide/en/sms.md#send-a-short-message). The e2e script of SMS in `scripts/` does the same.
-
----
-
-## Open the capture
-
-```text
-sip.CSeq.method in {"MESSAGE", "REGISTER"} || (sip && ip.addr == 172.28.0.70)
-  || diameter.cmd.code in {302, 306, 307, 8388645, 8388646, 8388647, 8388648, 8388649, 16777214}
-```
-
-- It is one filter, on one line in Wireshark.
-- The REGISTERs, the MESSAGEs and their responses, the SUBSCRIBEs and NOTIFYs of the IP-SM-GW, LIR, UDR and PUR stay, and so do the five commands of SGd and S6c and the Ready-For-SM of this project.
-- Wireshark decodes the body of each MESSAGE by itself.
-  - The Info column ends with the RP message, such as `(RP) RP-DATA (MS to Network)`.
-  - The details have a "GSM A-I/F RP" tree and a "GSM SMS TPDU" tree.
-
-> Guide: ["Open the capture"](../../../docs/guide/en/sms.md#open-the-capture). The ladder is under ["Sending and delivering"](../../../docs/guide/en/sms.md#sending-and-delivering-hello-ue-b-this-is-ue-a) in the guide.
-
----
-
 ## The shape of the whole: six MESSAGEs
+
+```ims-scene
+id: overview
+view: ladder
+nodes: [ue1, ipsmgw, sc, hss, ue2]
+lead: The SIP 202 and 200 say that a MESSAGE arrived, an RP-ACK that the short message was taken on, and the status report that it reached the recipient.
+steps:
+  - id: submit
+    title: UE 1 sends, and the IP-SM-GW answers 202 (1 to 4)
+    show: [ov-m1, ov-m1a]
+    active: ov-m1a
+    detail: []
+    text: |
+      The CSCFs, and the LIR of the I-CSCF, are left out. The MESSAGE goes to the number of the SC.
+      The 202 only says that the IP-SM-GW got the MESSAGE.
+  - id: accept
+    title: The SC takes it on, and the submit report comes back (5 to 7)
+    show: [ov-ofr, ov-srr1, ov-sra1, ov-ofa, ov-m2, ov-m2a]
+    active: ov-m2
+    detail: []
+    checkpoint: true
+    text: |
+      The SC checks the number of the recipient with the HSS, then takes the message on in the OFA.
+      The RP-ACK of the submit report tells UE 1 that the SC took it on.
+  - id: deliver
+    title: The SC delivers, and UE 2 sends the delivery report (8 to 12)
+    show: [ov-srr2, ov-sra2, ov-tfr, ov-m3, ov-m3a, ov-m4, ov-m4a, ov-tfa]
+    active: ov-tfa
+    detail: []
+    checkpoint: true
+    text: |
+      The 200 of UE 2 says that the MESSAGE arrived; the RP-ACK of the delivery report, that UE 2 took the short message.
+      The TFA goes back to the SC after the delivery report.
+  - id: status
+    title: The status report reaches UE 1 (13 to 15)
+    show: [ov-srr3, ov-sra3, ov-tfr3, ov-m5, ov-m5a, ov-m6, ov-m6a, ov-tfa3]
+    active: ov-m5
+    detail: []
+    text: The SC delivers it to the sender the same way as any short message. The status report says that the message reached the recipient.
+```
 
 | No. | Direction | Body | Steps |
 | --- | --- | --- | --- |
@@ -1564,7 +1701,7 @@ steps:
     active: r1-ue2-p
     checkpoint: true
     text: |
-      The registration is the one of the registration session. The first REGISTER and the 401 are left out.
+      The registration is the one of the registration deck. The first REGISTER and the 401 are left out.
       The one difference is `+g.3gpp.smsip` in Contact.
   - id: ok
     title: The 200 OK ends the registration
@@ -1719,6 +1856,7 @@ steps:
     text: The IP-SM-GW registered by the PUR of R5. A number that no subscriber has gets DIAMETER_ERROR_USER_UNKNOWN here.
   - id: ofa
     title: The SC takes it (OFA)
+    detail: [sra1]
     show: [ofa]
     zoom: [ipsmgw, sc, hss]
     text: The SC stamps it with TP-SCTS and holds it. From here on, the short message belongs to the SC.
@@ -1830,7 +1968,7 @@ steps:
 | --- | --- |
 | TFR | The Service Centre forwards the SMS-DELIVER to the IP-SM-GW over SGd, naming the recipient by IMSI. |
 
-- Compare the SMS-SUBMIT with the SMS-DELIVER: TP-DA became TP-OA, and TP-SCTS is new.
+- The SMS-DELIVER differs from the SMS-SUBMIT in two things: TP-DA became TP-OA, and TP-SCTS is new.
 - A TFR always names its node in Destination-Host: the IP-SM-GW of the SRA.
 
 > Guide: [8](../../../docs/guide/en/sms.md#8-the-sc-forwards-the-message-and-the-ip-sm-gw-delivers-it-tfr-and-sms-deliver). TS 23.040 8.1.1. TS 29.338 6.2.2, 6.3.1.2.
@@ -2057,6 +2195,7 @@ steps:
     text: S6c command 8388649, Report-SM-Delivery-Status.
   - id: hold
     title: The HSS puts the SC in the MWD
+    detail: [a3-tfa, hss-absent]
     show: [hss-absent, a4-rda]
     active: hss-absent
     focus: [hss]
@@ -2121,6 +2260,7 @@ steps:
     text: It acts only if the number is that of the IP-SM-GW UE 2 registered at.
   - id: alert
     title: "The HSS answers and alerts the SC (A7: ALR)"
+    detail: [a6-rfsm]
     hide: [hss-present]
     show: [a6-ans, a7-alr]
     active: a7-alr
@@ -2358,6 +2498,7 @@ steps:
     text: The SC sends this report once.
   - id: clear
     title: The HSS clears MCEF
+    detail: [d1-sra, hss-success]
     show: [hss-success, d3-rda]
     active: hss-success
     focus: [hss]
@@ -2428,12 +2569,12 @@ steps:
     text: The SC holds it. The alert of the HSS delivers it when subscriber 3 registers.
 ```
 
-| Case | How to try it | What UE 1 gets |
+| Case | Example with the UE simulator | What UE 1 gets |
 | --- | --- | --- |
 | The number has no subscriber | `ue sms +12025550198 "Nobody has this number."` | A submit report that is an RP-ERROR: RP-Cause 1, TP-FCS 0xC3. |
 | The recipient is not registered | `ue sms -status-report +12025550103 "Are you there?"` | A submit report that is an RP-ACK, and then nothing yet: the SC holds the short message. |
 
-- Put `docker compose run --rm` in front of the command.
+- Each example is a command of `ue` that follows `docker compose run --rm` (the guide, "Send a short message").
 - In both, the SIP response is 202: the failure travels in the RP and TP layers.
 - In the first the SC refuses: the SRA of step 5 has DIAMETER_ERROR_USER_UNKNOWN (5001), and no delivery is tried.
 - In the second the SC accepts. No IP-SM-GW has registered for subscriber 3, so each SRR of the SC gets DIAMETER_ERROR_ABSENT_USER (5550), and the HSS keeps the SC's address in the MWD. The alert of the HSS delivers it when subscriber 3 registers.
@@ -2459,7 +2600,7 @@ This is the body of the MESSAGE of step 1.
 | `07 91 21 20 55 05 01 f0` | RP-DA | 7 octets long. The digits are swapped in pairs. The SC's number. |
 | `23` | Length of RP-User-Data | The 35 octets that follow are the TPDU. |
 
-- Read it by hand first, then compare with the tree in Wireshark. Turn `21 20 55 05 01 f0` back into 12025550100.
+- `21 20 55 05 01 f0`, with the two digits of each octet swapped, is 12 02 55 50 10 0f. The last `f` is filler, so it is the SC's 12025550100. The "GSM A-I/F RP" tree of Wireshark shows the same value.
 - The Lab shows the same octets under **Body (hex)** in the details of the MESSAGE.
 
 > Guide: ["The relay layer (RP)"](../../../docs/guide/en/sms.md#the-relay-layer-rp), which has the table of all fields. TS 24.011 7.3.1.2, 8.2.
@@ -2477,7 +2618,7 @@ This is the body of the MESSAGE of step 1.
 
 - RP counts a length in octets, TP in digits: 7 and 11 for the same kind of number.
 - TP-MTI 01 is SMS-SUBMIT from a UE, SMS-SUBMIT-REPORT from the network.
-- Pack the first two characters, H and e, into `c8` and `32` with the figure of the guide. Japanese goes in UCS2, with TP-DCS `08`: send one from UE 2 and watch TP-DCS and TP-UDL change.
+- The first two characters, H (100 1000) and e (110 0101), packed from the lowest bit, are `c8` and `32`. Japanese goes in UCS2, with TP-DCS `08`, and TP-UDL counts octets: for `こんにちは、UE-A さん`, the example of the guide, TP-UDL is `1a` (26 octets).
 
 > Guide: ["The transfer layer (TP): SMS-SUBMIT"](../../../docs/guide/en/sms.md#the-transfer-layer-tp-sms-submit) and ["GSM 7 bit packing and UCS2"](../../../docs/guide/en/sms.md#gsm-7-bit-packing-and-ucs2). TS 23.040 9.2.2.2, 9.2.3. TS 23.038 6.1.2.1.1.
 
@@ -2485,7 +2626,7 @@ This is the body of the MESSAGE of step 1.
 
 ## Wireshark display filters
 
-Before each filter, guess which of the six MESSAGEs stay.
+The right column says which of the six MESSAGEs, and which Diameter messages, each filter keeps.
 
 | Filter | What it finds |
 | --- | --- |
@@ -2503,87 +2644,45 @@ Before each filter, guess which of the six MESSAGEs stay.
 
 ---
 
-## Sending from the Lab
+## Where the code is
 
-```sh
-docker compose --profile phones up -d --build
-```
-
-1. Fill in the SMS form in the card of `phone1`, tick **status report**, and press **Send SMS**.
-2. Under **SMS sent**, `waiting for the submit report` turns into `accepted by the SC`.
-3. **SMS received** in the card of `phone2` shows the sender's number and the text.
-4. **ladder** in a row draws the ladder of that MESSAGE. Pick an arrow to see the RP and TP fields.
-
-- The Lab draws one ladder per Call-ID, so the six MESSAGEs are six ladders.
-
-> Guide: [Watch the IMS in the Lab, "Drive the UE simulators"](../../../docs/guide/en/lab.md#drive-the-ue-simulators)
-
----
-
-## Check it in the code
-
-| What you saw | Where to look |
+| What it handles | Where it is, and the function that decides |
 | --- | --- |
-| The body: RP, TP, text | `rp.go`, `tp.go`, `text.go` in `internal/sms` |
-| The iFCs and their evaluation | `internal/ifc`, `internal/scscf/services.go` |
+| The body: RP, TP, text | `rp.go`, `tp.go`, `text.go` in `internal/sms` (`ParseRP`, `ParseTPDU`, `EncodeText`) |
+| The iFCs and their evaluation | `internal/ifc`, `internal/scscf/services.go` (`Matches`) |
 | The third-party REGISTER | `internal/scscf/thirdparty.go` |
 | Matching Accept-Contact | `internal/scscf/callerprefs.go` |
-| The IP-SM-GW | `message.go`, `deliver.go`, `regevent.go`, `store.go` in `internal/ipsmgw` |
-| The Service Centre | `submit.go`, `deliver.go`, `alert.go`, `store.go` in `internal/smsc` |
-| SGd and S6c | `internal/sgd`, `internal/hss/s6c.go` |
+| The IP-SM-GW | `message.go`, `deliver.go`, `regevent.go`, `store.go` in `internal/ipsmgw` (`message`, `submit`, `outcomeOfReport`) |
+| The Service Centre | `submit.go`, `deliver.go`, `alert.go`, `store.go` in `internal/smsc` (`takeShortMessage`, `attemptHead`, `reportDelivered`) |
+| SGd and S6c | `internal/sgd`, `internal/hss/s6c.go` (`servingNode`, `readyForSM`) |
 | The SC boundary, the SC stub | `internal/ipsmgw/servicecentre.go`, `internal/sc` |
 | Sh | `internal/sh`, `internal/hss/sh.go` |
 | The UE | `internal/ue/sms.go` |
 
-- Find in `internal/sms/tp.go` the fields you read by hand. `internal/ipsmgw/network_test.go` runs the whole flow in one process.
+- The fields of the body have the same names in the types of `internal/sms/tp.go`. `internal/ipsmgw/network_test.go` runs the whole flow in one process.
 
 > Guide: ["Where the code is"](../../../docs/guide/en/sms.md#where-the-code-is) and ["What this project simplifies"](../../../docs/guide/en/sms.md#what-this-project-simplifies)
 
 ---
 
-[layout: exercise]
+## If you want to run it
 
-## Looking back
+The flow of this deck reads without running anything. To see it in a capture of your own, the guide has the steps.
 
-1. Whose address is the Request-URI of UE 1's MESSAGE?
-2. How does the S-CSCF know to send that MESSAGE to the IP-SM-GW?
-3. What does the 202 Accepted say, and what does the submit report say?
-4. Where does a MESSAGE from the IP-SM-GW to UE 2 enter the network?
-5. Whose iFC takes the delivery report to the IP-SM-GW?
-6. Why is the length of RP-DA 7 and the length of TP-DA 11?
-7. UE 2 cannot take a short message. Who keeps it, and what tells that node to try again?
-
----
-
-[layout: answers]
-
-## Looking back: answers
-
-1. The SC's. A UE does not send a short message to the recipient directly.
-2. The MESSAGE matches the criterion of priority 1 of the iFCs that came in the SAA at registration.
-3. The 202 says that the IP-SM-GW got the MESSAGE. The submit report says whether the SC accepted the short message.
-4. At the I-CSCF, which finds UE 2's S-CSCF with an LIR.
-5. UE 2's. The delivery report is a MESSAGE that UE 2 originates.
-6. RP counts octets and TP counts digits.
-7. The SC keeps it, and the HSS keeps the SC's address in the MWD. The HSS alerts the SC with an ALR when the IP-SM-GW reports that UE 2 is back; without an alert, the retry of the SC tries again.
+- Send. ["Send a short message"](../../../docs/guide/en/sms.md#send-a-short-message): UE 2 stays registered, and UE 1 sends and asks for a status report. The e2e script of SMS in `scripts/` does the same.
+- Make the UE fail to take it. ["Put the UE in the states where a delivery fails"](../../../docs/guide/en/sms.md#put-the-ue-in-the-states-where-a-delivery-fails).
+- Open the capture. ["Open the capture"](../../../docs/guide/en/sms.md#open-the-capture). Wireshark decodes the body of each MESSAGE by itself. The whole ladder is under ["Sending and delivering"](../../../docs/guide/en/sms.md#sending-and-delivering-hello-ue-b-this-is-ue-a).
+- Send from the Lab. [Watch the IMS in the Lab, "Drive the UE simulators"](../../../docs/guide/en/lab.md#drive-the-ue-simulators). The Lab draws one ladder per Call-ID, so the six MESSAGEs are six ladders.
+- Clean up. ["Clean up"](../../../docs/guide/en/sms.md#clean-up).
 
 ---
 
 ## Summing up
 
-These six sessions cover the core of the IMS: registration, calls and short messages.
+- A UE sends a short message to the SC, not to the recipient. The iFC of the S-CSCF takes it to the IP-SM-GW, and the IP-SM-GW hands it to the SC over SGd.
+- The SC asks the HSS over S6c which IP-SM-GW serves the recipient, and has it deliver with a TFR. The IP-SM-GW registers itself in the HSS once the reg event of the registration shows `+g.3gpp.smsip`.
+- The 202 and the 200 say that a MESSAGE arrived, an RP-ACK that the short message was taken on, and the status report that it reached the recipient.
+- When the recipient cannot take it, the SC holds it, and the HSS writes the SC into the MWD and sets UNRI or MCEF. The news that the UE is back has it sent again, or the retry of the SC when no news comes, and the end of the validity period drops it.
 
-| Session | Subject | What to read |
-| --- | --- | --- |
-| 1 | Package layout | [README.md](../../../README.md) |
-| 2 | The map of the network | [docs/guide/en/README.md](../../../docs/guide/en/README.md) |
-| 3 | Captures and the Lab | [docs/guide/en/capture.md](../../../docs/guide/en/capture.md) |
-| 4 | Registration | [docs/guide/en/registration.md](../../../docs/guide/en/registration.md) |
-| 5 | Call | [docs/guide/en/call.md](../../../docs/guide/en/call.md) |
-| 6 | SMS | [docs/guide/en/sms.md](../../../docs/guide/en/sms.md) |
-
-- Next come the supplementary services of the MMTel AS ([mmtel.md](../../../docs/guide/en/mmtel.md)), then the VoLTE call, which builds on them ([volte.md](../../../docs/guide/en/volte.md)).
-
-```sh
-docker compose --profile ue --profile phones down --rmi all -v --remove-orphans
-```
+> Book: [Delivering SMS and reporting on it](../../../docs/book/en/sms.md)
+> The supplementary services are in the guide [Supplementary services with the MMTel AS](../../../docs/guide/en/mmtel.md), and the VoLTE call, which builds on them, in [The VoLTE call flow](../../../docs/guide/en/volte.md).

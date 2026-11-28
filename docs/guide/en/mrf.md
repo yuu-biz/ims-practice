@@ -2,6 +2,8 @@
 
 [日本語](../ja/mrf.md)
 
+> This guide has the steps to run the setup and see it for yourself. The explanation that is understood by reading alone, of how it works and why, is in the book: [Announcements, ringback tones and conferences of the MRF](../../book/en/mrf.md).
+
 This guide follows the media that the network itself plays and mixes: an announcement before a barred call is rejected, the customized alerting tone (CAT) that a called user chooses for its callers, a call that waits while the user is on another one, and a conference of three. The MMTel AS decides what is played; the MRF, a controller (MRFC) and a media processor (MRFP), plays it. Every step shows up in the capture.
 
 The guide follows these editions: TS 23.228 V20.1.0, TS 24.229 V20.1.0, TS 24.182 V19.0.0 (CAT), TS 24.628 V19.0.0 (announcements and early media), TS 24.611 V19.0.0 (barring), TS 24.615 V19.0.0 (CW), TS 24.147 V19.0.0 (conferencing), TS 24.605 V19.0.0 (the CONF service), TS 24.607 V19.1.0 (OIR), TS 24.608 V19.0.0 (TIR), TS 23.333 V19.0.0 (the MRFP), RFC 4240 (netann), RFC 4575 (the conference event package) and GSMA IR.92 v24.0. Clause numbers below refer to those editions.

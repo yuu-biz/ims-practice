@@ -1,6 +1,6 @@
 ---
 title: 境界でつながる 2 つの IMS 網
-footer: ims-practice 勉強会 10. 2 つの網
+footer: ims-practice 10. 2 つの網
 lang: ja
 format: visual
 ---
@@ -8,7 +8,7 @@ format: visual
 ```ims-model
 nodes:
   # 網 A（ims0、172.28.0.0/24）
-  - {id: mmtel-a, label: MMTel AS, role: 会議のフォーカス, at: [0, 0]}
+  - {id: mmtel-a, label: MMTel AS, role: 付加サービスと会議, at: [0, 0]}
   - {id: dns-a, label: DNS-A, role: ENUM を返す, at: [0.9, 0]}
   - {id: ue-a1, label: UE A1, role: 発信する端末, at: [0, 1]}
   - {id: scscf-a, label: S-CSCF-A, role: 発信を受け持つ, at: [0.9, 1]}
@@ -522,30 +522,56 @@ events:
     to: scscf-b
     proto: SIP
     note: (Forbidden)
+  # 1 つの通話の 4 つのダイアログ
+  - id: dlg1-inv
+    msg: INVITE
+    from: ue-a1
+    to: mmtel-a
+    proto: SIP
+    note: (ダイアログ 1、網 A)
+    fields:
+      - Call-ID: UE A1 が作ったもの
+  - id: dlg2-inv
+    msg: INVITE
+    from: mmtel-a
+    to: ibcf-a
+    proto: SIP
+    note: (ダイアログ 2、網 A)
+    fields:
+      - Call-ID: MMTel AS が作ったもの
+  - id: dlg4-inv
+    msg: INVITE
+    from: ibcf-b
+    to: ue-b1
+    proto: SIP
+    note: (ダイアログ 4、網 B)
+    fields:
+      - Call-ID: IBCF-B が作ったもの
 ```
 
 ---
 
 # 境界でつながる 2 つの IMS 網
 
-ims-practice 勉強会 第 10 回（IBCF と TrGW、事業者どうしの取り決め、網をまたぐ通話とショートメッセージ）
+（IBCF と TrGW、事業者どうしの取り決め、網をまたぐ通話とショートメッセージ）
 
 ---
 
 [layout: summary]
 
-## この回で分かること
+## このデッキで分かること
 
-最初の問い。通話がほかの事業者の網へ出ていきます。相手の事業者には、こちらの網の何が見えるのでしょうか。
+最初の問い。通話がほかの事業者の網へ出ていきます。相手の事業者には、こちらの網の何が見えるのでしょうか。答えは、利用者の番号とドメインと、境界のノードの外側の名前とアドレスだけです。網の中のノードのアドレスと名前は見えません。
 
 - 境界に立つノード。SIP を受け持つ IBCF と、メディアを受け持つ TrGW。
 - 2 つの網をつなぐ参照点と、IBCF を自網につなぐ参照点。
 - 境界が B2BUA である理由と、それによって隠れるもの。
 - 事業者どうしの取り決めが決めることと、2 つの取り決めが食い違うと何が失敗するか。
-- 通話、ショートメッセージ、どの相手網でもない送信元からの要求を、3 つのキャプチャのどこで見るか。
+- 通話、ショートメッセージ、どの相手網でもない送信元からの要求が、3 つのキャプチャのどこに写るか。
 
 > 手順書 [IMS 網どうしを相互接続する](../../../docs/guide/ja/interconnect.md)（`docs/guide/ja/interconnect.md`）
 > 仕様の版は手順書の冒頭にあります。TS 24.229 V20.1.0、TS 29.165 V20.0.0、TS 23.204 V19.1.0、TS 24.341 V19.0.0、TS 23.040 V20.0.0、TS 32.409 V19.0.0、TS 24.147 V19.0.0、RFC 3261、RFC 3312、RFC 3966 などです。
+> 本 [網間接続](../../../docs/book/ja/interconnect.md)、[携帯のアクセスと、別の事業者の網](../../../docs/book/ja/access-and-borders.md)
 
 ---
 
@@ -557,13 +583,13 @@ nodes: [mmtel-a, dns-a, ue-a1, scscf-a, ibcf-a, ipsmgw-a, agw-a, trgw-a, icscf-b
 lead: 2 つの網をつなぐのは境界のノードだけです。網の中のノードは、相手網のノードに直接は届きません。
 steps:
   - id: net-a
-    title: 網 A はこれまでの回で使ってきた網
+    title: 網 A はほかのデッキで使ってきた網
     focus: [mmtel-a, dns-a, ue-a1, scscf-a, ibcf-a, ipsmgw-a, agw-a, trgw-a]
     zoom: [mmtel-a, dns-a, ue-a1, scscf-a, ibcf-a, ipsmgw-a, agw-a, trgw-a]
     checkpoint: true
     text: |
       ドメインは `ims.mnc001.mcc001.3gppnetwork.org`、UE A1 の番号は `+1-202-555-0101` です。
-      この回に出てくるノードだけを描いています。P-CSCF と HSS もこれまでどおりいます。
+      このデッキに出てくるノードだけを描いています。P-CSCF と HSS もこれまでどおりいます。
   - id: net-b
     title: 網 B は相手の事業者の網
     focus: [icscf-b, hss-b, ibcf-b, scscf-b, ue-b1, trgw-b, ipsmgw-b]
@@ -597,7 +623,7 @@ steps:
      agw --- TrGW-A (.91) --- .11 -- Izi -- .21 --- TrGW-B (.91) --- UE B1
 ```
 
-- 網 A は `compose.yaml` の網で、これまでの回で使ってきた網です。網 B は別の事業者の 2 つ目の IMS で、同じイメージを別のドメイン、別の番号、別の加入者で動かします。
+- 網 A は `compose.yaml` の網で、ほかのデッキで使ってきた網です。網 B は別の事業者の 2 つ目の IMS で、同じイメージを別のドメイン、別の番号、別の加入者で動かします。
 - 網のあいだのブリッジには IBCF と TrGW しかつながっていません。網 A の中のノードは、網 B の中のノードに直接は届きません。
 - 網 B は、シナリオに要る最小限のノードだけです。MMTel AS、EPC と PCRF、P-CSCF のメディア中継ノード、ラボはありません。
 - キャプチャはブリッジごとに 1 つです。網 A は `captures/`、網 B は `captures/b/`、網のあいだは `captures/nni/` にあります。
@@ -723,37 +749,13 @@ steps:
 | Ix | IBCF と自網の TrGW | 標準では H.248（TS 29.238）。ここでは P-CSCF が中継ノードに使うのと同じ HTTP の制御 API です。 |
 
 - Ici と Izi が II-NNI です（TS 29.165 5.1）。Mx と Ix は 1 つの網の中にあります（TS 29.165 3.2）。
-- 第 2 回は、この 4 つを網の地図の上に描きました。この回は、そこを流れるものを読みます。
+- 網の地図のデッキが、この 4 つを地図の上に描いています。このデッキは、そこを流れるものを見ます。
 
 > 手順書 [「IBCF と TrGW の仕事」](../../../docs/guide/ja/interconnect.md#ibcf-と-trgw-の仕事)
 
 ---
 
-## 実行する
-
-```sh
-docker compose -f compose.yaml -f deploy/interconnect/compose.yaml up -d --build
-
-# UE B1 が着信を待つ。UE シミュレータには網 B の設定をフラグで渡す
-docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue-b1 answer \
-  -domain ims.mnc002.mcc001.3gppnetwork.org \
-  -impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
-  -impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
-  -password test-password-b1 \
-  -pcscf 172.28.1.40:5060 -pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
-
-# UE A1 がその番号にかける。網 A の設定はこれまでどおり
-docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue call tel:+12025550151
-```
-
-- 網 B の `ue sms` には、フラグがもう 1 つ要ります。網 B の SC の番号を渡す `-sc` です。
-- `scripts/e2e-interconnect.sh` は、この回のすべてを実行して 3 つのキャプチャで確かめます。
-
-> 手順書 [「動かす」](../../../docs/guide/ja/interconnect.md#動かす)
-
----
-
-## 3 つのキャプチャを開く
+## 3 つのキャプチャに写るもの
 
 | キャプチャ | 入っているもの |
 | --- | --- |
@@ -761,9 +763,9 @@ docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue c
 | `captures/nni/ims-*.pcap` | 網のあいだ。2 つの IBCF と 2 つの TrGW だけです。 |
 | `captures/b/ims-*.pcap` | 網 B。IBCF-B から I-CSCF へ渡ったあとの INVITE と、TrGW-B の RTP。 |
 
-- キャプチャ用のコンテナはブリッジごとに 1 つです。3 つとも開いてください。同じ通話が、どのファイルにも別々の Call-ID で入っています。
-- これまでの回のフィルタは、どのファイルでもそのまま使えます。`sip.Method == "INVITE" && count(sip.Via) == 1` は、網のあいだから IBCF の INVITE を選び出します。
-- 網のあいだのキャプチャで **Statistics > Flow Graph** を開くと、2 つの IBCF のあいだのシーケンス図になります。
+- キャプチャ用のコンテナはブリッジごとに 1 つです。同じ通話が、どのファイルにも別々の Call-ID で入っています。
+- ほかのデッキのフィルタは、どのファイルでもそのまま使えます。`sip.Method == "INVITE" && count(sip.Via) == 1` は、網のあいだから IBCF の INVITE を選び出します。
+- 網のあいだのキャプチャの **Statistics > Flow Graph** は、2 つの IBCF のあいだのシーケンス図になります。
 
 > 手順書 [「各キャプチャに見えるもの」](../../../docs/guide/ja/interconnect.md#各キャプチャに見えるもの)
 
@@ -979,7 +981,7 @@ steps:
     active: lia
     detail: [lia]
     zoom: [icscf-b, hss-b, scscf-b]
-    text: 登録の回と通話の回と同じ Cx の問い合わせです。網 A からの通話でも変わりません。
+    text: 登録と通話のデッキと同じ Cx の問い合わせです。網 A からの通話でも変わりません。
   - id: deliver
     title: 網 B の中を UE B1 まで進む
     show: [inv-i-sb, inv-sb-ue]
@@ -1006,6 +1008,56 @@ steps:
 - 網 B の S-CSCF には tel URI が届き、あとはいつもの着信と同じように、網 B の P-CSCF を通って UE B1 に届きます。
 
 > 手順書 [5](../../../docs/guide/ja/interconnect.md#5-ibcf-b-が入口として働く)、[6](../../../docs/guide/ja/interconnect.md#6-網-b-の-i-cscf-が着信者を探す)、[7](../../../docs/guide/ja/interconnect.md#7-答えが戻る)
+
+---
+
+## 1 つの通話の 4 つのダイアログ
+
+```ims-scene
+id: four-dialogs
+view: ladder
+nodes: [ue-a1, mmtel-a, ibcf-a, ibcf-b, ue-b1]
+lead: 通話は 4 つのダイアログでできています。B2BUA の MMTel AS と 2 つの IBCF が、それぞれ 1 つを終えて次を始めます。
+steps:
+  - id: d1
+    title: UE A1 と MMTel AS のダイアログ
+    show: [dlg1-inv]
+    checkpoint: true
+    text: |
+      P-CSCF と S-CSCF はプロキシなので、ダイアログを変えずに渡します。
+      このダイアログは境界を越えません。
+  - id: d2
+    title: MMTel AS と IBCF-A のダイアログ
+    show: [dlg2-inv]
+    checkpoint: true
+    text: |
+      MMTel AS は B2BUA で、自分の Call-ID で新しい INVITE を送ります。
+      S-CSCF は、ENUM で網 B のものと分かった番号を、自網の IBCF へ送ります。
+  - id: d3
+    title: 網のあいだのダイアログ
+    show: [inv-nni]
+    checkpoint: true
+    text: 網のあいだのキャプチャにだけ写ります。Call-ID は IBCF-A が作ったものです。
+  - id: d4
+    title: IBCF-B と UE B1 のダイアログ
+    show: [dlg4-inv]
+    checkpoint: true
+    text: |
+      I-CSCF、S-CSCF、P-CSCF を通りますが、網 B の経路には AS が無いので、ダイアログは増えません。
+      3 つのキャプチャが並べて見せるのは、ダイアログ 2、3、4 です。
+  - id: all
+    title: 4 つの Call-ID を見比べる
+    active: ''
+    detail: [dlg1-inv, dlg2-inv, inv-nni, dlg4-inv]
+    checkpoint: true
+    text: ダイアログごとに Call-ID が違います。キャプチャで通話を追うときは、ダイアログごとに Call-ID を取り直します。
+```
+
+- 網 A のキャプチャにはダイアログ 1 と 2 が、網のあいだのキャプチャにはダイアログ 3 が、網 B のキャプチャにはダイアログ 4 が写ります。
+- 次のスライドは、境界のまわりの 3 つ（2、3、4）を、キャプチャごとに 1 つずつ比べます。ダイアログ 1 は境界を越えないので、その比較に入りません。
+- PRACK、ACK、BYE は、ダイアログごとに別々です。
+
+> 手順書 [「網 A から網 B への通話」](../../../docs/guide/ja/interconnect.md#網-a-から網-b-への通話)
 
 ---
 
@@ -1071,7 +1123,7 @@ Contact: <sip:ibcf.nni.mnc001.example.net:5060>
 
 - **Via** は IBCF-A の 1 つだけです。網 A のノードの Via は IBCF-A に届いた INVITE に付いていて、その INVITE は IBCF-A で終わっています。
 - **Record-Route** はありません。このダイアログの相手端は IBCF-A なので、網 B からの要求は Contact に届きます。
-- **Call-ID** は IBCF-A のものです。IBCF-A に届いた INVITE、IBCF-B が送り出した INVITE と見比べてください。この 3 つは別の Call-ID を持ちます。網 A のキャプチャにある UE A1 から P-CSCF への INVITE には、4 つめの Call-ID があります。
+- **Call-ID** は IBCF-A のものです。IBCF-A に届いた INVITE とも、IBCF-B が送り出した INVITE とも違います。この 3 つは別の Call-ID を持ちます。網 A のキャプチャにある UE A1 から P-CSCF への INVITE には、4 つめの Call-ID があります。
 - **Max-Forwards** は、IBCF-A がプロキシと同じく 1 つ減らしています（RFC 3261 16.6 step 3）。2 つの網が要求を回し合っても、いつかは終わるようにするためです。
 
 > 手順書 [「キャプチャで見る境界まわりの 3 つのダイアログ」](../../../docs/guide/ja/interconnect.md#キャプチャで見る境界まわりの-3-つのダイアログ)
@@ -1253,7 +1305,7 @@ steps:
 | 網 B が AMR-WB しか受けない | IBCF-B が UE A1 の PCMU の offer から音声のコーデックを全部外し、488（Not Acceptable Here）を返します。 | PCMU を挙げた `network-a.yaml` |
 | ローカル番号がそのまま越える | 網 B の取り決めはグローバル番号しか認めないので、IBCF-B がローカルポリシーで INVITE を 404（Not Found）で断ります。 | `network-b-global-numbers.yaml`。IBCF-A が出す前にグローバル番号にします |
 
-- 失敗させているのは UE ではなく、取り決めに従った IBCF です。網のあいだの INVITE と、網 B に届いた INVITE を見比べてください。
+- 失敗させているのは UE ではなく、取り決めに従った IBCF です。断った IBCF は、応答を運ぶ最初のパケットの送信元で分かります。IBCF は断った要求を先へ送らないので、488 と 404 になった INVITE は網 B の中に届きません。
 - スクリプトは食い違いを 1 つずつ試し、そのあとで合う取り決めに替えます。キャプチャには、失敗した通話と通った通話が続けて残ります。
 
 > 手順書 [「プロファイルが食い違うとき」](../../../docs/guide/ja/interconnect.md#プロファイルが食い違うとき)。TS 29.165 7.1、Table 6.1。TS 24.229 5.10.1。
@@ -1334,7 +1386,7 @@ steps:
     zoom: [ue-a1, scscf-a, ipsmgw-a, ibcf-a]
     checkpoint: true
     text: |
-      SMS の回と同じ MESSAGE です。発信側のフィルタ条件がこれを IP-SM-GW に渡します。
+      SMS のデッキと同じ MESSAGE です。発信側のフィルタ条件がこれを IP-SM-GW に渡します。
       SC のスタブはまず網 A の HSS に番号を尋ね、利用者がいないと返されます。この問い合わせは図に出していません。
   - id: enum
     title: SC が ENUM で相手網を見つける
@@ -1418,7 +1470,7 @@ steps:
     checkpoint: true
     text: |
       TP-ST 1 は、転送はしたが配送を確かめられないという意味です（TS 23.040 9.2.3.15）。
-      status report は SMS の回と同じように MESSAGE で UE A1 に届きます。
+      status report は SMS のデッキと同じように MESSAGE で UE A1 に届きます。
   - id: b-deliver
     title: 網 B の IP-SM-GW が自分の MESSAGE で届ける
     only: [sms-deliver-i, sms-deliver-sb]
@@ -1547,27 +1599,24 @@ steps:
 | Ix | IBCF は TrGW を、H.248 ではなくメディア中継ノードの HTTP の制御 API で動かす。 |
 | SMS | SC は相手網の利用者を、SMS-GMSC で相手網に尋ねるのではなく ENUM で見つける。配送報告は境界を越えて戻らない。 |
 
-```sh
-grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect internal/sc internal/ipsmgw
-```
-
+- どの項目にも、コードに `SIMPLIFIED:` で始まるコメントがあります。
 - トランスコードをしないのはなぜか。TrGW にコーデックが要り、このプロジェクトのノードは AMR を符号化も復号もしないからです。
 
 > 手順書 [「このプロジェクトで簡略化したこと」](../../../docs/guide/ja/interconnect.md#このプロジェクトで簡略化したこと)。項目ごとの条項と理由は手順書の表にあります。
 
 ---
 
-## コードで確かめる
+## コードの場所
 
-| 見たもの | 開く場所 |
-| --- | --- |
-| プロファイルと、IBCF がメッセージごとに行うこと | `internal/interconnect` の `screen.go`、`trust.go`、`number.go`、`codec.go`、`leg.go`、`border.go` |
-| 呼の 2 つのダイアログのあいだの中継 | `internal/b2bua` |
-| 役割 `ibcf`。2 つの UA、呼、ショートメッセージ、TrGW | `internal/ibcf` |
-| 網から出ていく要求 | `internal/scscf/session.go` の `exitIBCF` |
-| SIP URI の番号が tel URI になるところ | `internal/icscf/session.go` の `telURIOf` |
-| 網をまたぐショートメッセージ | `internal/sc/sc.go`、`internal/ipsmgw` の `deliver.go` と `message.go` |
-| 2 つの網、そのノード、取り決め | `deploy/interconnect/` |
+| 仕組み | 場所 | 判断する関数 |
+| --- | --- | --- |
+| プロファイルと、IBCF がメッセージごとに行うこと | `internal/interconnect` の `screen.go`、`trust.go`、`number.go`、`codec.go`、`leg.go`、`border.go` | `Border.ExitRequest`、`Border.EntryRequest`、`ScreenMethod`、`FilterCodecs`、`NormalizeNumber` |
+| 呼の 2 つのダイアログのあいだの中継 | `internal/b2bua` | |
+| 役割 `ibcf`。2 つの UA、呼、ショートメッセージ、TrGW | `internal/ibcf` | `IBCF.prepare`、`IBCF.Screen`、`IBCF.ReleaseLeftovers` |
+| 網から出ていく要求 | `internal/scscf/session.go` の `exitIBCF` | `exitIBCF` |
+| SIP URI の番号が tel URI になるところ | `internal/icscf/session.go` の `telURIOf` | `telURIOf` |
+| 網をまたぐショートメッセージ | `internal/sc/sc.go`、`internal/ipsmgw` の `deliver.go` と `message.go` | |
+| 2 つの網、そのノード、取り決め | `deploy/interconnect/` | |
 
 - `internal/ibcf` の試験は、2 つの網を 1 つのプロセスで動かします。境界の向こうでの分岐、境界を越える会議、起動し直して残した呼を終える台も含みます。
 
@@ -1575,72 +1624,23 @@ grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect intern
 
 ---
 
-[layout: exercise]
+## 自分で動かす場合
 
-## 演習
+このデッキを読むのに、構成を動かす必要はありません。同じ通話とショートメッセージを自分のキャプチャで見たいときは、手順書に手順があります。
 
-1. 3 つのキャプチャそれぞれで通話の INVITE を探します。網 A のキャプチャでは、UE A1 から P-CSCF への INVITE も探します。この通話は全部でいくつの Call-ID を持ち、それはなぜでしょうか。
-2. 網のあいだの INVITE を開きます。Via はいくつ付いていて、ほかの Via はどこにあるでしょうか。
-3. IBCF-B に取り決め `network-a-amr-wb-only.yaml` を与えて UE B1 にかけます。どの応答が返り、送ったのはどのノードでしょうか。
-4. 網 B のキャプチャで 172.28.0.0/24 のアドレスを探します。どういう結果になるのが正しいでしょうか。
-5. どのプロファイルにも無いアドレスから IBCF-A に要求を送ります。何が返るでしょうか。
-
-3 のコマンドは、手順書の「プロファイルが食い違うとき」にあります。5 では、スクリプトが 172.28.2.99 から INVITE と MESSAGE を送っています。
-
----
-
-[layout: answers]
-
-## 演習の答え
-
-1. 4 つです。ダイアログごとに 1 つあります。UE A1 と MMTel AS、MMTel AS と IBCF-A、IBCF-A と IBCF-B、IBCF-B と UE B1 のあいだです。MMTel AS と各 IBCF は B2BUA で、届いた側で要求を受け止め、もう一方の側で新しい要求を送るからです。キャプチャが並べて見せるのは後ろの 3 つで、網 B にはこの通話の AS がありません。
-2. IBCF-A の 1 つだけです。網 A のノードの Via は、IBCF-A で終わった INVITE に付いています。
-3. IBCF-B からの 488（Not Acceptable Here）です。網 B は AMR-WB しか受けず、UE A1 は PCMU を offer するからです。
-4. 1 つも見つからないのが正しい結果です。網 A の内側のアドレスは境界を越えません。
-5. 何も返りません。100（Trying）もエラー応答もありません。IBCF-A が要求を捨てるので、送信元には網 A のことが何も分かりません。
-
----
-
-[layout: exercise]
-
-## 振り返り
-
-1. 自網から届いた要求を、IBCF はどう扱いますか。
-2. 境界を越える 1 つの通話に Call-ID が 4 つあるのはなぜですか。
-3. II-NNI を作る 2 つの参照点はどれですか。
-4. MESSAGE が境界を越えてよいかを決めるのは何ですか。
-5. 発信した UE に相手網のアドレスが見えないのはなぜですか。
-6. プロセスが止まった IBCF の台の呼は、どうなりますか。
-
----
-
-[layout: answers]
-
-## 振り返りの答え
-
-1. 自網の出口として受け止め、相手網へ向けて自分のダイアログで新しい要求を送ります。
-2. ダイアログごとに 1 つだからです。発信側と MMTel AS、MMTel AS と IBCF-A、網のあいだ、IBCF-B と着信側の 4 つで、B2BUA はそれぞれ一方を終えて他方を始めます。
-3. SIP を運ぶ IBCF どうしの Ici と、メディアを運ぶ TrGW どうしの Izi です。
-4. 相手網との取り決めです。MESSAGE は任意のメソッドで、プロファイルの `methods` が認めるかどうかを決めます。
-5. IBCF がメディアを自網の TrGW に通し、それぞれの側の SDP に、その網での TrGW のアドレスを書くからです。
-6. 呼はプロセスと一緒に止まり、両側はダイアログを持ったままになります。記録を持った台が起動し直すと、2 つのダイアログそれぞれに BYE を送って終わらせます。
+- [「動かす」](../../../docs/guide/ja/interconnect.md#動かす)。2 つの網を起動し、UE B1 に着信を待たせ、UE A1 から番号でかけます。UE シミュレータには網 B の設定をフラグで渡し、網 B の `ue sms` には網 B の SC の番号を渡す `-sc` も要ります。`scripts/e2e-interconnect.sh` は、このデッキのすべてを実行して 3 つのキャプチャで確かめます。
+- [「プロファイルが食い違うとき」](../../../docs/guide/ja/interconnect.md#プロファイルが食い違うとき)。取り決めを替えて IBCF を起動し直すコマンドです。
+- [「後片付け」](../../../docs/guide/ja/interconnect.md#後片付け)。両方の網と網のあいだのノードと UE を止めます。
 
 ---
 
 ## この先に読むもの
 
-- ここが最後の回です。手順書は回の先まで続き、どの手順書も、簡略化したことと、コードのある場所で終わります。
+- どの手順書も、簡略化したことと、コードのある場所で終わります。
 
 | 文書 | 場所 |
 | --- | --- |
 | プロジェクトの説明と動かし方 | [README.ja.md](../../../README.ja.md) |
+| 本 | [docs/book/ja/](../../../docs/book/ja/README.md) |
 | 用語集 | [docs/glossary.md](../../../docs/glossary.md) |
 | 手順書 | [docs/guide/ja/](../../../docs/guide/ja/) |
-
-```sh
-docker compose -f compose.yaml -f deploy/interconnect/compose.yaml --profile ue down -v --remove-orphans
-```
-
-- 手順書の「後片付け」です。両方の網の UE と、両方の網と網のあいだのノードを止めます。
-
-> 手順書 [「後片付け」](../../../docs/guide/ja/interconnect.md#後片付け)
