@@ -253,7 +253,7 @@ func EventHeading(m *deck.Model, e deck.Event) string {
 		n, _ := m.Node(e.Actor)
 		return n.Label + ": " + label
 	}
-	if e.Protocol != "" {
+	if e.Protocol != "" && e.Protocol != label {
 		label += " (" + e.Protocol + ")"
 	}
 	from, _ := m.Node(e.From)
@@ -436,7 +436,10 @@ func drawDiagram(diagram *Diagram, scene *deck.Scene, step deck.Step, camera Box
 		w, h := lb.W*k*ratio+4, lb.H*k*ratio
 		cx := lx + lb.W*k/2
 		cy := ly + lb.H*k/2
-		g.Elements = append(g.Elements, &TextBox{Name: "label " + e.ID, X: cx - w/2, Y: cy - h/2, W: w, H: h, Anchor: AnchorMiddle,
+		// A label is one line, two on a map, as the layout sized it: the
+		// writers do not break it again, or a protocol would fall onto
+		// the line that it names.
+		g.Elements = append(g.Elements, &TextBox{Name: "label " + e.ID, X: cx - w/2, Y: cy - h/2, W: w, H: h, Anchor: AnchorMiddle, NoWrap: true,
 			Paragraphs: paragraphs})
 	}
 	return []Element{g}
