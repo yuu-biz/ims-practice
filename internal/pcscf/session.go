@@ -346,7 +346,7 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 			return
 		}
 	case kept && withoutOffer(out, d.Relay):
-		answer = p.offerInResponse(out, d, toUE, ue, log)
+		answer, unanswered, answered = p.offerInResponse(out, d, toUE, ue, log)
 	}
 	if kept && isTargetRefresh(out.Method) {
 		renegotiated := answer
@@ -611,6 +611,14 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 // nor to the PCRF. A failure after the relay took the offer of this
 // request is that of a retransmitted 2xx, and changes nothing.
 //
+// The SDP of a provisional response that is not reliable only shows the
+// offer before it comes (RFC 3261 13.2.1), and moves the relay all the
+// same, so that early media of the session being changed passes. When
+// the request then gets no 2xx, the session is as it was before it
+// (14.1): the termination that faces the party that offered goes back
+// where the last offer and answer said (goBack), and the P-CSCF
+// releases the dialog when the relay does not take it back.
+//
 // SIMPLIFIED: RFC 3264 and RFC 3262. The offer may also come in a
 // reliable provisional response, with the answer in the PRACK (RFC 3262
 // 5). That offer goes through the relay here, and the answer of the
@@ -619,7 +627,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 // PRACK carries no SDP to send it with. The UE simulator puts its offer
 // in the INVITE, and no node of this project sends a re-INVITE without
 // one.
-func (p *PCSCF) offerInResponse(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) func(*sip.Message) {
+func (p *PCSCF) offerInResponse(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) (answer func(*sip.Message), unanswered, answered func(final *sip.Message, err error)) {
 	cseq, _ := sip.ParseCSeq(out.Get("CSeq"))
 	// told is the relay context as the responses of this request have
 	// left it, which keeps a response that tells it the same again from
@@ -629,8 +637,27 @@ func (p *PCSCF) offerInResponse(out *sip.Message, d Dialog, toUE bool, ue netip.
 		c := *d.Relay
 		told = &c
 	}
-	taken, refused := false, false
-	return func(resp *sip.Message) {
+	// previewed is where the relay sends to the party that offers after
+	// the SDP of a provisional response that is not reliable, and stuck
+	// is true once the relay has not gone back from there (renegotiate).
+	taken, refused, stuck := false, false, false
+	var previewed netip.AddrPort
+	unanswered = func(final *sip.Message, err error) {
+		answeredWith2xx := err == nil && (final == nil || final.StatusCode < 300)
+		if taken || refused || answeredWith2xx {
+			return
+		}
+		// The request got no 2xx, so the session is as it was before it
+		// (RFC 3261 14.1), and the termination that the SDP of a
+		// provisional response moved goes back there.
+		stuck = !p.goBack(d.Relay, facingSender(!toUE), previewed, log)
+	}
+	answered = func(*sip.Message, error) {
+		if stuck {
+			p.release(d.Key, SDPNotRelayed, false, log)
+		}
+	}
+	answer = func(resp *sip.Message) {
 		if refused || resp.StatusCode >= 300 || !carriesSDP(resp, d.Relay) {
 			return
 		}
@@ -653,6 +680,8 @@ func (p *PCSCF) offerInResponse(out *sip.Message, d Dialog, toUE bool, ue netip.
 		// releases the dialog.
 		if resp.StatusCode >= 200 || resp.Requires(sip.Option100rel) {
 			taken = true
+		} else {
+			previewed = sent
 		}
 		if resp.StatusCode < 200 {
 			// The offer of a provisional response is answered in the PRACK
@@ -677,6 +706,7 @@ func (p *PCSCF) offerInResponse(out *sip.Message, d Dialog, toUE bool, ue netip.
 		refused = true
 		p.release(d.Key, SDPNotRelayed, true, log)
 	}
+	return answer, unanswered, answered
 }
 
 // answerInACK points the SDP answer in out, the ACK for the 2xx of a

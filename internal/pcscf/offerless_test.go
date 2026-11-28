@@ -52,6 +52,25 @@ func (c *rawINVITE) offerIn2xx(t *testing.T, ct *sip.ClientTransaction, st *sip.
 	return resp
 }
 
+// offerIn183 has the far end of c show its offer at media in a 183 that
+// is not reliable, before the 2xx that carries it (RFC 3261 13.2.1),
+// and waits for the UE to get that 183.
+func (c *rawINVITE) offerIn183(t *testing.T, ct *sip.ClientTransaction, st *sip.ServerTransaction, session string, media netip.AddrPort) {
+	t.Helper()
+	progress := sip.NewResponse(st.Request, 183, "")
+	progress.Add("Contact", "<"+c.farContact+">")
+	progress.Add("Content-Type", "application/sdp")
+	progress.Body = sdp.Offer(session, media).Bytes()
+	st.Respond(progress)
+	r := next(t, ct.Responses())
+	for r.StatusCode == 100 {
+		r = next(t, ct.Responses())
+	}
+	if r.StatusCode != 183 {
+		t.Fatalf("the UE got %d, want the 183 of the far end", r.StatusCode)
+	}
+}
+
 // TestOfferInThe2xxOfAReINVITEWithoutAnOfferIsRelayedAndAuthorised: the
 // UE asks the far end for an offer with a re-INVITE without one, so the
 // 2xx carries the offer and the ACK the answer (RFC 3261 13.2.1, 14.1).
@@ -216,18 +235,7 @@ func TestRefusedOfferInThe2xxAfterAPreviewReleasesTheDialog(t *testing.T) {
 
 	ct, st := c.reinviteWithoutOffer(t, "2")
 	farMoved := netip.MustParseAddrPort("192.0.2.99:6008")
-	progress := sip.NewResponse(st.Request, 183, "")
-	progress.Add("Contact", "<"+c.farContact+">")
-	progress.Add("Content-Type", "application/sdp")
-	progress.Body = sdp.Offer("3", farMoved).Bytes()
-	st.Respond(progress)
-	r := next(t, ct.Responses())
-	for r.StatusCode == 100 {
-		r = next(t, ct.Responses())
-	}
-	if r.StatusCode != 183 {
-		t.Fatalf("the UE got %d, want the 183 of the far end", r.StatusCode)
-	}
+	c.offerIn183(t, ct, st, "3", farMoved)
 
 	c.relay.refuseModify(agw.Core)
 	c.offerIn2xx(t, ct, st, "3", farMoved)
@@ -240,6 +248,65 @@ func TestRefusedOfferInThe2xxAfterAPreviewReleasesTheDialog(t *testing.T) {
 	}
 	if n := len(pcrf.mediaRequests()); n != authorised {
 		t.Errorf("the PCRF got %d service information after the refused offer, want none", n-authorised)
+	}
+}
+
+// TestFailedReINVITEWithoutAnOfferAfterAPreviewGoesBack: the far end
+// shows its offer in a 183 that is not reliable, which moves the core
+// termination, and then turns the re-INVITE down with 488. The 183
+// carried no offer (RFC 3261 13.2.1), so the session is as it was
+// before the re-INVITE (14.1), and the core termination sends where the
+// INVITE and its answer said again. The call goes on.
+func TestFailedReINVITEWithoutAnOfferAfterAPreviewGoesBack(t *testing.T) {
+	pcrf := &fakePolicy{}
+	c := newRawINVITEWith(t, pcrf)
+	c.upCall(t)
+	core := c.relay.remote("1", agw.Core)
+	authorised := len(pcrf.mediaRequests())
+
+	ct, st := c.reinviteWithoutOffer(t, "2")
+	preview := netip.MustParseAddrPort("192.0.2.99:6008")
+	c.offerIn183(t, ct, st, "3", preview)
+	if got := c.relay.remote("1", agw.Core); got != preview {
+		t.Fatalf("the core termination sends to %v for the 183, want %v", got, preview)
+	}
+	st.Respond(sip.NewResponse(st.Request, 488, ""))
+	if r := final(t, ct.Responses(), 3*time.Second); r.StatusCode != 488 {
+		t.Fatalf("the re-INVITE got %d, want the 488 of the far end", r.StatusCode)
+	}
+	if got := c.relay.remote("1", agw.Core); got != core {
+		t.Errorf("the core termination sends to %v after the 488, want %v of the INVITE's answer again", got, core)
+	}
+	noRequest(t, "the far end", c.farGot)
+	noRequest(t, "the UE", c.ueGot)
+	if n := len(pcrf.mediaRequests()); n != authorised {
+		t.Errorf("the PCRF got %d service information for the failed re-INVITE, want none", n-authorised)
+	}
+}
+
+// TestFailedReINVITEWithoutAnOfferEndsTheCallWhenTheRelayDoesNotGoBack:
+// as above, but the relay does not take the core termination back
+// after the 488. It keeps sending where the far end no longer takes the
+// media, so the P-CSCF releases the dialog (TS 24.229 5.2.8.1.2): the
+// 488 goes on, and each party then gets a BYE.
+func TestFailedReINVITEWithoutAnOfferEndsTheCallWhenTheRelayDoesNotGoBack(t *testing.T) {
+	pcrf := &fakePolicy{}
+	c := newRawINVITEWith(t, pcrf)
+	c.upCall(t)
+	core := c.relay.remote("1", agw.Core)
+
+	ct, st := c.reinviteWithoutOffer(t, "2")
+	c.offerIn183(t, ct, st, "3", netip.MustParseAddrPort("192.0.2.99:6008"))
+	c.relay.refuseRemote(core)
+	st.Respond(sip.NewResponse(st.Request, 488, ""))
+	if r := final(t, ct.Responses(), 3*time.Second); r.StatusCode != 488 {
+		t.Fatalf("the re-INVITE got %d, want the 488 of the far end", r.StatusCode)
+	}
+	if m := nextRequest(t, "the far end", c.farGot); m.Method != sip.BYE {
+		t.Errorf("the far end got %s, want the BYE of the release", m.Method)
+	}
+	if m := nextRequest(t, "the UE", c.ueGot); m.Method != sip.BYE {
+		t.Errorf("the UE got %s, want the BYE of the release", m.Method)
 	}
 }
 
