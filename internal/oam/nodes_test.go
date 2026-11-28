@@ -35,6 +35,8 @@ type fakeNode struct {
 	view func() any
 	// wrap, when set, stands between the client and the API.
 	wrap func(http.Handler) http.Handler
+	// down is set by stop.
+	down atomic.Bool
 }
 
 type fakeView struct {
@@ -80,6 +82,10 @@ func newFakeNode(t *testing.T, name string, roles []string, settings ...string) 
 	}
 	n.node = node
 	n.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if n.down.Load() {
+			dropConnection(w)
+			return
+		}
 		var h http.Handler = node.Handler()
 		if n.wrap != nil {
 			h = n.wrap(h)
@@ -88,6 +94,22 @@ func newFakeNode(t *testing.T, name string, roles []string, settings ...string) 
 	}))
 	t.Cleanup(n.server.Close)
 	return n
+}
+
+// stop makes the node a stopped one: it keeps its port and drops every
+// connection without an answer, as a host with a stopped process gives
+// a reset. Closing the server would free the port, and a listener of
+// another test process could take it and answer the OAM.
+func (n *fakeNode) stop() { n.down.Store(true) }
+
+// dropConnection closes the connection of the request without writing
+// anything.
+func dropConnection(w http.ResponseWriter) {
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err != nil {
+		panic(err)
+	}
+	conn.Close()
 }
 
 func (n *fakeNode) endpoint() Endpoint {
@@ -208,7 +230,7 @@ func TestStateListsEveryNodeAndTheOneThatFailed(t *testing.T) {
 	p1 := newFakeNode(t, "pcscf-1", []string{"pcscf"})
 	p2 := newFakeNode(t, "pcscf-2", []string{"pcscf"})
 	cscf := newFakeNode(t, "cscf-1", []string{"icscf", "scscf"})
-	p2.server.Close()
+	p2.stop()
 	ts := newTestServer(t, Config{}, p1, p2, cscf)
 
 	status, body := ts.call(t, "GET", "/oam/v1/state", "")

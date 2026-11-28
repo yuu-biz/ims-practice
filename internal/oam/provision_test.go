@@ -372,7 +372,7 @@ func TestSingleRecordOperations(t *testing.T) {
 	if status, body := ts.call(t, "PUT", "/oam/v1/subscriptions/"+impiOf(2), other); status != http.StatusConflict {
 		t.Errorf("PUT with an identity of another subscription: %d %s", status, body)
 	}
-	hss.server.Close()
+	hss.stop()
 	if status, body := ts.call(t, "GET", path, ""); status != http.StatusBadGateway {
 		t.Errorf("GET with the HSS down: %d %s", status, body)
 	}

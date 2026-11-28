@@ -260,7 +260,7 @@ func TestABackupThatFailsLeavesNoArchive(t *testing.T) {
 	hss := newFakeHSS(t)
 	ts := newProvisioningServer(t, hss, Config{Backups: store})
 	// The HSS is down before the export reads its first page.
-	hss.server.Close()
+	hss.stop()
 
 	_, backup := ts.streamCall(t, "/oam/v1/backups")
 	if backup.manifest == nil || backup.manifest.State != JobFailed || len(backup.errors) != 1 || !strings.Contains(backup.errors[0], "upstream") {

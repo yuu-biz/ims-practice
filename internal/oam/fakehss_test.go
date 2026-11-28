@@ -29,6 +29,8 @@ const testRealm = "ims.mnc001.mcc001.3gppnetwork.org"
 // of an HSS never hands out.
 type fakeHSS struct {
 	server *httptest.Server
+	// down is set by stop.
+	down atomic.Bool
 
 	mu   sync.Mutex
 	subs map[string]fakeSubscription // by private identity, lower case
@@ -72,10 +74,19 @@ func newFakeHSS(t *testing.T) *fakeHSS {
 	mux.HandleFunc("PUT /subscriptions/{impi}", h.put)
 	mux.HandleFunc("PATCH /subscriptions/{impi}", h.patch)
 	mux.HandleFunc("GET /subscriptions/export", h.export)
-	h.server = httptest.NewServer(mux)
+	h.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.down.Load() {
+			dropConnection(w)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(h.server.Close)
 	return h
 }
+
+// stop makes the HSS a stopped one; see fakeNode.stop.
+func (h *fakeHSS) stop() { h.down.Store(true) }
 
 func (h *fakeHSS) count() int {
 	h.mu.Lock()

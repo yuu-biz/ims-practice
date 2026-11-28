@@ -103,7 +103,7 @@ func TestAlarmListMergesTheListsOfEveryNode(t *testing.T) {
 	raise(t, a, "scscf", hssPeer, maintenance.Critical)
 	raise(t, b, "scscf", hssPeer, maintenance.Major)
 	raise(t, b, "scscf", "hss-2", maintenance.Minor)
-	down.server.Close()
+	down.stop()
 	c := mnsConfig()
 	c.Nodes = []Endpoint{
 		{Name: "scscf-1", Roles: []string{"scscf"}, URL: a.server.URL},
@@ -186,7 +186,7 @@ func TestUnreliableAlarmScope(t *testing.T) {
 			for _, name := range []string{"hss", "icscf", "scscf"} {
 				n := newFakeNode(t, name, []string{name})
 				if slices.Contains(tt.down, name) {
-					n.server.Close()
+					n.stop()
 				}
 				nodes = append(nodes, n)
 			}
@@ -205,7 +205,7 @@ func TestUnreliableAlarmScope(t *testing.T) {
 
 func TestAlarmListWithoutAnyNode(t *testing.T) {
 	n := newFakeNode(t, "hss", []string{"hss"})
-	n.server.Close()
+	n.stop()
 	ts := newTestServer(t, mnsConfig(), n)
 	got := ts.alarmList(t, "")
 	if got.Attributes.UnreliableAlarmScope != "SubNetwork=ims,ManagedElement=hss" || got.Attributes.NumOfAlarmRecords != 0 ||

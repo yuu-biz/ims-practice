@@ -237,7 +237,7 @@ func TestPatchThatTheNodeDoesNotTake(t *testing.T) {
 		})
 	}
 	n := newFakeNode(t, "scscf", []string{"scscf"})
-	n.server.Close()
+	n.stop()
 	ts := newTestServer(t, mnsConfig(), n)
 	if a := ts.mnsCall(t, "PATCH", alarmListPath, mergePatchJSON, ackPatch(map[string]string{"scscf.0123456789abcdef": acknowledge})); a.status != http.StatusBadGateway || len(a.body) != 0 {
 		t.Errorf("a node that does not answer: %d %s", a.status, a.body)
