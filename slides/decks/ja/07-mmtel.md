@@ -57,7 +57,7 @@ events:
     fields:
       - 発信側（優先度 10 と 13）: SESSION_TERMINATED。通話を終える
       - 着信側（優先度 11 と 12）: SESSION_CONTINUED。AS 無しで続ける
-      - 理由: 規制を確実に効かせる
+      - 引き換え: 発信の規制は確実に効く。着信は AS の規制なしで届く
   - id: c1-s-as1
     msg: INVITE
     from: scscf
@@ -1038,7 +1038,7 @@ steps:
     show: [scscf-default]
     focus: [scscf]
     zoom: [scscf, hss, as1]
-    text: 発信側の条件は通話を終え、着信側の条件は AS 無しで続けます。規制を確実に効かせるためです。
+    text: 発信側の条件は通話を終え、着信側の条件は AS 無しで続けます。発信の規制は守られ、着信の規制はそのあいだ効きません。
 ```
 
 | 優先度 | 一致する要求 | DefaultHandling |

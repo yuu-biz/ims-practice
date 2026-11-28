@@ -57,7 +57,7 @@ events:
     fields:
       - Originating (priorities 10 and 13): SESSION_TERMINATED. The call ends
       - Terminating (priorities 11 and 12): SESSION_CONTINUED. It goes on without the AS
-      - Why: So that barring holds
+      - In exchange: Outgoing barring always holds. Incoming calls arrive without the barring of the AS
   - id: c1-s-as1
     msg: INVITE
     from: scscf
@@ -1038,7 +1038,7 @@ steps:
     show: [scscf-default]
     focus: [scscf]
     zoom: [scscf, hss, as1]
-    text: An originating criterion ends the call; a terminating one goes on without the AS. That is so that barring holds.
+    text: An originating criterion ends the call; a terminating one goes on without the AS. Outgoing barring holds; incoming barring does not, while the AS is down.
 ```
 
 | Priority | Matches | DefaultHandling |
