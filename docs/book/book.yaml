@@ -18,3 +18,7 @@ chapters:
   - registration-lifecycle
   - mmtel
   - mrf
+  - design-registration-order
+  - design-shared-state
+  - design-media-rollback
+  - design-maintenance

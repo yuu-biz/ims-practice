@@ -152,7 +152,7 @@ The same CSeq arriving twice is not the same as a retransmission of one request.
 
 When several S-CSCFs run and keep the registrations in a shared store, another S-CSCF may rewrite the same user's registration between the comparison and the write. If two S-CSCFs each read an old CSeq, compare and both write, the comparison means nothing.
 
-The S-CSCF of this implementation takes a lock per user at the start of handling a REGISTER (`s.users.Lock` in `register`). Then only one S-CSCF at a time reads, compares and writes for the same user. It is a lock per user, not a lock that stops the whole role. Registration order and expiry looks at what this lock guarantees and what it does not.
+The S-CSCF of this implementation takes a lock per user at the start of handling a REGISTER (`s.users.Lock` in `register`). Then only one S-CSCF at a time reads, compares and writes for the same user. It is a lock per user, not a lock that stops the whole role. [Registration order and expiry](design-registration-order.md) looks at what this lock guarantees and what it does not.
 
 ## Run it yourself
 

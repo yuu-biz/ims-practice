@@ -25,6 +25,15 @@ Which decision, state and message change when a condition changes, followed thro
 - [iFC and the supplementary services of the MMTel AS](mmtel.md)
 - [Announcements, ringback tones and conferences of the MRF](mrf.md)
 
+## Advanced (design decisions within the specifications)
+
+What the standards settle is told apart from what an implementation or an operator chooses; the ways to choose are compared, and the choice of this implementation and its limits are explained. Each chapter names the intermediate chapters it builds on.
+
+- [Registration order and expiry](design-registration-order.md)
+- [What several nodes and failures hand over](design-shared-state.md)
+- [When a media renegotiation fails](design-media-rollback.md)
+- [Taking a node out for maintenance, and losing it](design-maintenance.md)
+
 ## The slides and the guides
 
 The slides in [slides/](../../../slides/README.md) show the same questions with figures and steps, and each chapter names its scenes. The guides in [docs/guide/en/](../../guide/en/README.md) have the steps to run the setups and the lists of headers to look at in a capture.

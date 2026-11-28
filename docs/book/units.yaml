@@ -80,7 +80,6 @@ units:
       - TS 24.229 V18.11.0 5.4.1.2.2A
     evidence: [code, test, illustration]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
-  # group g2
   - id: registration
     question:
       ja: 登録で何が決まるのか
@@ -211,7 +210,6 @@ units:
       - TS 24.229 V18.11.0 5.4.1.7
     evidence: [code, test]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
-  # group g4
   - id: services-as-invocation
     question:
       ja: S-CSCF はどうやって要求を AS に渡し、AS が送り返した要求をどう続けるのか
@@ -387,5 +385,208 @@ units:
       - RFC 4575 5.7, 8.2
       - RFC 7647 5
       - GSMA IR.92 v24.0 2.3.3
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: design-registration-order
+    question:
+      ja: 初回、更新、解除、遅れた要求、認証の時間切れを、どの識別子と状態で分け、それぞれ何を変えてよいか。読む、比べる、書くを、複数の台のあいだで 1 つの手順にするものは何か
+      en: How do the identifiers and the state tell an initial registration, a refresh, a deregistration, a late request and an authentication that ran out apart, what may each change, and what makes reading, comparing and writing one step across instances
+    setup: deploy/compose, a softphone that registers with SIP Digest, one binding per private identity; deploy/redundancy for the shared store, and two S-CSCF instances on one store in the Go tests
+    chapter: design-registration-order
+    scenes: [04-registration/registration-order, 00-go/locks]
+    code:
+      - internal/scscf/store.go:Challenge
+      - internal/scscf/store.go:Registration
+      - internal/scscf/scscf.go:register
+      - internal/scscf/scscf.go:putChallenge
+      - internal/scscf/scscf.go:regAwaitAuthExpired
+      - internal/scscf/scscf.go:endRegAwaitAuth
+      - internal/scscf/scscf.go:registrationExpired
+      - internal/scscf/scscf.go:outOfOrder
+      - internal/scscf/scscf.go:accept
+      - internal/scscf/scscf.go:deregister
+      - internal/scscf/aka.go:reregister
+      - internal/kvstore/scscfstore/scscfstore.go:RegistrationOf
+      - internal/kvstore/kvlock/kvlock.go:Lock
+      - internal/kvstore/kvlock/kvlock.go:acquire
+      - internal/kvstore/kvlock/kvlock.go:release
+    tests:
+      - internal/scscf/scscf_test.go:TestRegisterOutOfOrderLeavesTheBindingAlone
+      - internal/sip/stack_test.go:TestServerTransactionAbsorbsRetransmissions
+      - internal/scscf/challenge_deadline_test.go:TestRegistrationRejectsExpiredChallengeBeforeSweep
+      - internal/scscf/challenge_deadline_test.go:TestExpiredChallengeKeepsTheRegistration
+      - internal/scscf/challenge_deadline_test.go:TestIMSAKARejectsExpiredChallengeBeforeSweep
+      - internal/kvstore/scscfstore/challenge_deadline_test.go:TestAChallengePastItsExpiresIsNotAnswered
+      - internal/kvstore/scscfstore/instances_test.go:TestARegistrationRefreshedBeforeItsExpiryIsHandled
+      - internal/scscf/session_test.go:TestTerminatingCallAfterTheExpiryDoesNotGoToTheContact
+      - internal/scscf/scscf_test.go:TestRegAwaitAuthExpiry
+      - internal/scscf/scscf_test.go:TestFailedReauthenticationKeepsTheRegistrationExpiry
+      - internal/scscf/scscf_test.go:TestUsersDoNotWaitForEachOther
+      - internal/scscf/instances_test.go:TestAnotherInstanceNamesTheAssignedSCSCF
+      - internal/scscf/storefailure_test.go:TestRegisterWhenTheLockFails
+      - internal/kvstore/kvlock/kvlock_test.go:TestOnlyOneInstanceHoldsTheLock
+      - internal/kvstore/kvlock/kvlock_test.go:TestMutualExclusion
+      - internal/kvstore/kvlock/kvlock_test.go:TestStoppedHolder
+    standards:
+      - RFC 3261 10.3 (the paragraph before the steps, steps 6 and 7), 17.2.2
+      - TS 24.229 V18.11.0 3.1, 5.2.2.2, 5.4.1.2.1, 5.4.1.2.2, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3B, Table 7.7.1
+      - TS 29.228 V18.0.0 6.1.2.1
+    evidence: [code, test, illustration]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: design-shared-state
+    question:
+      ja: 状態を共有した台は、登録、新しい要求、処理中の呼、止まったプロセスの残りのうち、何を引き継げて、何を引き継げないか
+      en: Of the registration, a new request, a call in progress and what a stopped process left, what can instances that share their state take over, and what can they not
+    setup: deploy/redundancy, one Valkey server and one instance of each role in Compose; two instances of a role on one store in the Go tests
+    chapter: design-shared-state
+    scenes: [01-packages/state]
+    code:
+      - internal/scscf/store.go:Store
+      - internal/scscf/expiry.go:handleExpiry
+      - internal/scscf/scscf.go:assignedName
+      - internal/scscf/scscf.go:storeFailed
+      - internal/ims/route.go:Targets
+      - internal/diameter/peergroup.go:Request
+      - internal/diameter/peergroup.go:serving
+      - internal/mmtel/mmtel.go:uri
+      - internal/mmtel/store.go:CallRecord
+      - internal/mmtel/hooks.go:KeepDialogs
+      - internal/mmtel/conference.go:otherSide
+      - internal/ibcf/recovery.go:ReleaseLeftovers
+      - internal/ibcf/recovery.go:byeInLeftover
+    tests:
+      - internal/scscf/instances_test.go:TestAnotherInstanceNamesTheAssignedSCSCF
+      - internal/kvstore/scscfstore/instances_test.go:TestTwoInstancesHandleARegistrationExpiryOnce
+      - internal/kvstore/scscfstore/instances_test.go:TestAnotherInstanceTakesOverAnExpiryThatWasNotHandled
+      - internal/kvstore/scscfstore/instances_test.go:TestAnExpiryWhoseClaimRunsOutWhileItIsHandled
+      - internal/sip/nexttarget_test.go:TestRequestGoesToTheNextTargetWhenTheFirstIsSilent
+      - internal/sip/nexttarget_test.go:TestRequestGoesToTheNextTargetAfterA503
+      - internal/diameter/peergroup_test.go:TestPeerGroupFailsOverWhenThePeerDoesNotAnswer
+      - internal/diameter/peergroup_test.go:TestPeerGroupKeepsToTheDestinationHost
+      - internal/mmtel/focusrelay_test.go:TestFocusInviteWithReplacesThroughTheAS
+      - internal/mmtel/relay_test.go:TestRecordFollowsTheDialogs
+      - internal/mmtel/storefailure_test.go:TestACallThatCannotBeStored
+      - internal/mmtel/storefailure_test.go:TestAnINVITEWhoseReplacesCannotBeRead
+      - internal/sip/ua_test.go:TestRequestForAnUnknownDialogGets481
+      - internal/ibcf/network_test.go:TestRestartedInstanceEndsTheCallsItLeft
+      - internal/ibcf/storefailure_test.go:TestAnInstanceThatCannotReadItsCallsDoesNotStart
+      - internal/scscf/storefailure_test.go:TestRegisterWhenTheLockFails
+      - internal/scscf/storefailure_test.go:TestInitialRequestsWhenTheStoreFails
+      - internal/scscf/storefailure_test.go:TestRefreshWhenTheStoreFails
+      - internal/scscf/storefailure_test.go:TestAnExpiryIsClaimedAgainWhenTheStoreFails
+    standards:
+      - RFC 3261 12.2.1.2, 12.2.2, 16.12
+      - RFC 3263 4.3
+      - RFC 6733 5.5.4
+      - TS 24.229 V18.11.0 5.7.5, 5.7.5.1, 5.10.2.2, 5.10.2.4, 5.10.3.2, 5.10.3.4
+      - TS 29.228 V18.0.0 6.4, 8.1.2
+      - TS 29.229 V18.1.0 5.5
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: design-media-rollback
+    question:
+      ja: メディアの再交渉が失敗したとき、どの状態へ戻し、呼を続けるか終えるか
+      en: When a media renegotiation fails, which state does the media relay go back to, and does the call go on or end
+    setup: deploy/compose, the P-CSCF as IMS-ALG with its media relay over the control API; the IBCF with its TrGW in deploy/interconnect
+    chapter: design-media-rollback
+    scenes: []
+    code:
+      - internal/pcscf/dialog.go:RelayContext
+      - internal/pcscf/session.go:subsequent
+      - internal/pcscf/session.go:renegotiate
+      - internal/pcscf/session.go:goBack
+      - internal/pcscf/session.go:notRelayed
+      - internal/pcscf/session.go:mediaGone
+      - internal/agw/api.go:ErrRejected
+      - internal/ims/route.go:Finish
+      - internal/ibcf/call.go:Unanswered
+      - internal/ibcf/call.go:goBack
+      - internal/ibcf/call.go:callStays
+      - internal/sip/indialog.go:lost
+    tests:
+      - internal/pcscf/rollback_test.go:TestRejectedOfferPutsTheRelayBack
+      - internal/pcscf/rollback_test.go:TestCancelledReInvitePutsTheRelayBack
+      - internal/pcscf/rollback_test.go:TestRejectedOfferGoesBackToTheLastOfferAndAnswer
+      - internal/pcscf/rollback_test.go:TestRejectedOfferEndsTheCallWhenTheRelayDoesNotGoBack
+      - internal/pcscf/rollback_test.go:TestRejectedOfferAfterAPreviewPutsBothSidesBack
+      - internal/pcscf/refusedoffer_test.go:TestRefusedOfferWithinTheDialogIsRejected
+      - internal/pcscf/refusedoffer_test.go:TestOfferWithinTheDialogEndsTheCallWhenTheRelayMayHaveTakenIt
+      - internal/pcscf/refusedanswer_test.go:TestRefusedAnswerWithinTheDialogReleasesTheCall
+      - internal/ibcf/rollback_test.go:TestRejectedOfferPutsTheTrGWBack
+      - internal/ibcf/rollback_test.go:TestRejectedOfferEndsTheCallWhenTheTrGWDoesNotGoBack
+      - internal/ibcf/rollback_test.go:TestCancelledReInvitePutsTheTrGWBack
+      - internal/ibcf/rollback_test.go:TestRejectedOfferAfterAPreviewGoesBackToTheLastOfferAndAnswer
+      - internal/ibcf/rollback_test.go:TestRejectedOfferAfterAReliableAnswerKeepsIt
+      - internal/sip/indialog_test.go:TestA481WithinTheDialogEndsTheCall
+      - internal/sip/reinviteprack_test.go:TestPRACKOfAReINVITEThatGets481EndsTheCall
+    standards:
+      - RFC 3261 12.2.1.2, 13.2.1, 14.1, 21.5.1
+      - RFC 3262 4, 5
+      - RFC 3264 8.3.1
+      - RFC 3311 5.3
+      - RFC 6141 3.3, 3.4
+      - TS 24.229 V18.11.0 5.2.8.1.2, 5.10.2.4, 5.10.3.4, 6.1.4.2, 6.7.2.1
+      - TS 29.214 4.4.2
+    evidence: [code, test, illustration]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: design-maintenance
+    question:
+      ja: 保守で外すとき、正常に止めるとき、プロセスが消えるとき、保存先を失うとき、どの仕事を断り、どれを終えるか
+      en: Taken out for maintenance, stopped in order, lost with its process, or left without its store, which work does a node refuse and which does it finish
+    setup: deploy/compose with one node per role and the state in each process; deploy/redundancy with the state in a shared Valkey store; the maintenance API of each node and the OAM
+    chapter: design-maintenance
+    scenes: []
+    code:
+      - internal/maintenance/state.go:ManagedFunction
+      - internal/maintenance/state.go:ShutDown
+      - internal/scscf/scscf.go:OnRequest
+      - internal/scscf/maintenance.go:carriesOn
+      - internal/scscf/maintenance.go:Function
+      - internal/pcscf/pcscf.go:register
+      - internal/pcscf/maintenance.go:refusal
+      - internal/icscf/maintenance.go:refuse
+      - internal/hss/maintenance.go:Function
+      - internal/mmtel/maintenance.go:Function
+      - internal/smsc/maintenance.go:Function
+      - internal/agw/maintenance.go:Function
+      - internal/diameter/peergroup.go:Request
+      - internal/ibcf/recovery.go:ReleaseLeftovers
+      - cmd/ims/main.go:stopNode
+    tests:
+      - internal/maintenance/state_test.go:TestShutDownWaitsForTheLastUserToQuit
+      - internal/maintenance/state_test.go:TestShutDownWithoutUsersLocksAtOnce
+      - internal/maintenance/state_test.go:TestShutDownDeadlineLocksWithUsersLeft
+      - internal/scscf/maintenance_test.go:TestAShutDownSCSCFRefusesOnlyWhatIsNew
+      - internal/scscf/maintenance_test.go:TestAShutDownWaitsForTheTransactionsInProgress
+      - internal/pcscf/maintenance_test.go:TestAShutDownPCSCFRefusesOnlyTheRegistrations
+      - internal/icscf/maintenance_test.go:TestAShutDownICSCFRefusesEveryRequest
+      - internal/hss/maintenance_test.go:TestPeerGroupMovesToTheSecondHSSWhenTheFirstIsDrained
+      - internal/hss/maintenance_test.go:TestShutDownWaitsForTheRequestsItTook
+      - internal/mmtel/maintenance_test.go:TestAShutDownASRefusesANewCall
+      - internal/mmtel/maintenance_test.go:TestAShutDownASServesTheDiversionOfACallInProgress
+      - internal/mmtel/maintenance_test.go:TestAShutDownWaitsForTheCallsOfTheAS
+      - internal/smsc/maintenance_test.go:TestAShutDownSCFinishesTheAttemptInHandAndLeavesTheQueue
+      - internal/smsc/maintenance_test.go:TestALockedSCLeavesEveryDeliveryToAnInstanceInService
+      - internal/agw/maintenance_test.go:TestAShutDownRelayMakesNoContext
+      - internal/agw/maintenance_test.go:TestTheDrainWaitsForTheContextsOfTheRelay
+      - internal/agw/maintenance_test.go:TestTheContextsOfAnEarlierProcessCountAsUsers
+      - cmd/ims/stop_test.go:TestAnExpiryThatComesWhileANodeStopsGoesToAnotherInstance
+      - internal/ibcf/network_test.go:TestRestartedInstanceEndsTheCallsItLeft
+      - internal/ibcf/storefailure_test.go:TestACallGoesOnWhenItsRecordCannotBeWritten
+      - internal/ibcf/storefailure_test.go:TestAnInstanceThatCannotReadItsCallsDoesNotStart
+      - internal/scscf/storefailure_test.go:TestRegisterWhenTheStoreFails
+      - internal/pcscf/storefailure_test.go:TestRegisterWhenTheStoreFails
+      - internal/pcscf/storefailure_test.go:TestInviteWhenTheStoreFails
+      - internal/hss/storefailure_test.go:TestRequestsWhoseSubscriberCannotBeRead
+    standards:
+      - TS 28.622 5.3.1, 5.3.3
+      - ITU-T X.731 7.1.3
+      - TS 32.600 4.2.1.3
+      - RFC 3261 12.2.1.2, 12.2.2, 16.7 step 6, 21.5.4
+      - RFC 3263 4.3
+      - RFC 6733 2.1, 5.4, 5.4.3, 5.5.4, 7.1.3
+      - TS 24.229 V18.11.0 5.1.1.2.1, 5.2.2.1, 5.10.2.4, 5.10.3.4
+      - TS 29.334 5.17.3.2
+      - TS 23.333 8.30
     evidence: [code, test]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
