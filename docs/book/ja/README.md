@@ -29,6 +29,7 @@ IMS のノードが何を受け持ち、登録と通話で何が決まるかを�
   - [登録の更新、解除、購読、網からの取り消し](registration-lifecycle.md)
 - [通話のトランザクション、ダイアログ、メディアの交渉](call-signaling.md)
 - [iFC と MMTel AS の付加サービス](mmtel.md)
+- [SMS の配達と報告](sms.md)
 - [MRF の音声ガイダンス、呼び出し音、会議](mrf.md)
 - [VoLTE の登録と通話](volte.md)
 - [網間接続](interconnect.md)

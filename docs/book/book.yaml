@@ -23,6 +23,7 @@ chapters:
   - registration-lifecycle
   - call-signaling
   - mmtel
+  - sms
   - mrf
   - volte
   - interconnect

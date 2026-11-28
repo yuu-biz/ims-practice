@@ -29,6 +29,7 @@ Which decision, state and message change when a condition changes, followed thro
   - [Refresh, deregistration, subscription and removal by the network](registration-lifecycle.md)
 - [Transactions, dialogs and media negotiation in a call](call-signaling.md)
 - [iFC and the supplementary services of the MMTel AS](mmtel.md)
+- [Delivering SMS and reporting on it](sms.md)
 - [Announcements, ringback tones and conferences of the MRF](mrf.md)
 - [Registration and calls over VoLTE](volte.md)
 - [Interconnection between networks](interconnect.md)
