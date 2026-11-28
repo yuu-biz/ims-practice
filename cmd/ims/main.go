@@ -331,9 +331,15 @@ func run(configPath string, log *slog.Logger, level *slog.LevelVar) error {
 			// that register with IMS AKA. config has made sure that
 			// sip.listen names this P-CSCF's own address, which the
 			// security associations are bound to.
+			espLog := log.With("role", config.RolePCSCF)
 			pc.ESP = &pcscf.ESP{Address: c.SIP.Listen.Addr(), ProtectedClientPort: port,
 				Confidentiality: ims.Confidentiality(c.Confidentiality),
-				Kernel:          ipsec.NewKernel(log.With("role", config.RolePCSCF))}
+				Kernel:          ipsec.NewKernel(espLog)}
+			if file := c.WiresharkSAFile; file != "" {
+				// The keys of the security associations, for a reader of
+				// the capture of this deployment (TS 33.203 6.2, 6.3).
+				pc.ESP.SAFile = ipsec.NewSAFile(file, espLog)
+			}
 		}
 		if h := c.HostAccess; h != nil {
 			pc.HostAccess = &pcscf.HostAccess{Gateway: h.Gateway, Address: h.Address}
@@ -1320,8 +1326,9 @@ type secAgreeView struct {
 }
 
 type espView struct {
-	ProtectedClientPort int  `json:"protected_client_port"`
-	Confidentiality     bool `json:"confidentiality,omitempty"`
+	ProtectedClientPort int    `json:"protected_client_port"`
+	Confidentiality     bool   `json:"confidentiality,omitempty"`
+	WiresharkSAFile     string `json:"wireshark_sa_file,omitempty"`
 }
 
 type icscfView struct {
@@ -1456,7 +1463,7 @@ func newConfigurationView(cfg config.Config) configurationView {
 			v.PCSCF.SecAgree = &secAgreeView{ProtectedServerPort: int(c.ProtectedServerPort)}
 			if c.ProtectedClientPort != 0 {
 				v.PCSCF.SecAgree.ESP = &espView{ProtectedClientPort: int(c.ProtectedClientPort),
-					Confidentiality: c.Confidentiality}
+					Confidentiality: c.Confidentiality, WiresharkSAFile: c.WiresharkSAFile}
 			}
 		}
 	}

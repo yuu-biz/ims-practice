@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -85,6 +86,12 @@ type PCSCF struct {
 	// ProtectedClientPort, since only a P-CSCF that sets ESP up
 	// encrypts anything.
 	Confidentiality bool
+	// WiresharkSAFile, when set, is a file the P-CSCF appends the keys
+	// of every set of security associations to, as rows of the ESP SAs
+	// table of Wireshark, so that a reader of the capture beside it can
+	// see what the ESP carries. The keys are in the clear, so only a
+	// deployment of test subscribers names such a file.
+	WiresharkSAFile string
 }
 
 type HostAccess struct {
@@ -402,6 +409,7 @@ type rawPCSCF struct {
 		ESP                 *struct {
 			ProtectedClientPort uint16 `yaml:"protected_client_port"`
 			Confidentiality     bool   `yaml:"confidentiality"`
+			WiresharkSAFile     string `yaml:"wireshark_sa_file"`
 		} `yaml:"esp"`
 	} `yaml:"sec_agree"`
 }
@@ -586,6 +594,12 @@ func (raw *rawPCSCF) validate() (PCSCF, error) {
 			}
 			c.ProtectedClientPort = port
 			c.Confidentiality = esp.Confidentiality
+			if file := esp.WiresharkSAFile; file != "" {
+				if !filepath.IsAbs(file) {
+					return PCSCF{}, fmt.Errorf("sec_agree.esp.wireshark_sa_file: %q must be an absolute path", file)
+				}
+				c.WiresharkSAFile = file
+			}
 		}
 	}
 	return c, nil

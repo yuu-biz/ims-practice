@@ -155,6 +155,10 @@ type ESP struct {
 	Confidentiality ims.Confidentiality
 	// Kernel is where the security associations go.
 	Kernel *ipsec.Kernel
+	// SAFile, when set, takes the keys of every set of security
+	// associations as rows of Wireshark's ESP SAs table, for a reader
+	// of the capture of this deployment.
+	SAFile *ipsec.SAFile
 	// TeardownDelay is how long the associations stay in the kernel
 	// after the SA table has let them go; zero means
 	// afterTheLastMessage. Tests shorten it.
@@ -307,7 +311,15 @@ func (p *PCSCF) putSecurityAssociations(ctx context.Context, sas SecurityAssocia
 		// they are in the kernel before the 401 leaves, and they live
 		// as long as the authentication has to finish.
 		return p.holdESP(ctx, sas, time.Until(sas.Expires), func(a ipsec.Agreement) error {
-			return p.cfg.ESP.Kernel.Setup(ctx, a, ipsec.PCSCFEnd)
+			if err := p.cfg.ESP.Kernel.Setup(ctx, a, ipsec.PCSCFEnd); err != nil {
+				return err
+			}
+			if p.cfg.ESP.SAFile != nil {
+				// Once the kernel has them, so that the file holds the
+				// keys of the associations that really carry the SIP.
+				p.cfg.ESP.SAFile.Write(a)
+			}
+			return nil
 		})
 	}
 	// A registration that was refreshed moved the lifetime of the SA
