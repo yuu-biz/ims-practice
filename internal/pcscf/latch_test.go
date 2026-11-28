@@ -1,10 +1,12 @@
 package pcscf
 
 import (
+	"context"
 	"net/netip"
 	"testing"
 
 	"github.com/yuu-biz/ims-practice/internal/agw"
+	"github.com/yuu-biz/ims-practice/internal/sdp"
 	"github.com/yuu-biz/ims-practice/internal/sip"
 )
 
@@ -97,4 +99,44 @@ func TestRejectedOfferAsksTheAccessTerminationToLatchBack(t *testing.T) {
 	}
 	wantCallUp(t, h, pcrf, relay, c.key)
 	hangUp(t, h, c.out, pcrf, relay, c.key)
+}
+
+// TestTheSameAnswerAgainAsksForNoSecondRelatch: the UE answers an offer
+// of the network side with a new address in a 183, and the 200 after it
+// names the same address, as a retransmission of that 200 does too. The
+// first of them moves the access termination and asks it to latch onto
+// the UE's new source; the others tell it nothing new, so they ask for
+// no latching again. A latching asked for again after the termination
+// has followed the UE would let a late packet from where the UE sent
+// before take it back there for good (H.248.37 (06/2008) 6.6.3).
+func TestTheSameAnswerAgainAsksForNoSecondRelatch(t *testing.T) {
+	c := newRawCall(t)
+	key := DialogKey{CallID: c.invite.Get("Call-ID"), UETag: tagOf(c.invite.Get("From"))}
+	d, ok, _ := c.store.UpdateDialog(context.Background(), key, func(*Dialog) {})
+	if !ok {
+		t.Fatal("the dialog of the call is not in the Store")
+	}
+	wantLatchings(t, c.relay, agw.Access, "")
+
+	offer := update(c.invite, true, c.ueContact, "1", netip.MustParseAddrPort("192.0.2.99:6004"))
+	answer, _, _, err := c.p.renegotiate(offer, d, true, ueMedia.Addr(), quiet())
+	if err != nil {
+		t.Fatalf("the relay did not take the offer of the network side: %v", err)
+	}
+	respond := func(status int) {
+		resp := sip.NewResponse(offer, status, "")
+		resp.Set("Content-Type", "application/sdp")
+		resp.Body = sdp.Offer("4", moved).Bytes()
+		answer(resp)
+	}
+	respond(183)
+	respond(200)
+	respond(200)
+	// Each of them tells the termination where the UE's SDP says; only the
+	// first asks it to latch again. A Modify without a latching leaves a
+	// latching that waits as it is.
+	wantLatchings(t, c.relay, agw.Access, "", agw.NAPTRelatch, "", "")
+	if got := c.relay.remote("1", agw.Access); got != moved {
+		t.Errorf("the access termination sends to %v, want the UE's new address %v", got, moved)
+	}
 }

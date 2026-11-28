@@ -471,6 +471,17 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 	// other than 2xx.
 	authorized, taken, refused, settled, stuck := false, false, false, false, false
 	var previewed netip.AddrPort
+	// told is the relay context as the responses of this request have
+	// left it: where each termination was last told to send. A response
+	// that tells it the same again, such as the 2xx after a 183 with the
+	// same SDP or a retransmitted 2xx, moves nothing, and so asks for no
+	// latching again (relatching): that would let a late packet from where
+	// the UE sent before take the termination back there.
+	var told *RelayContext
+	if d.Relay != nil {
+		c := *d.Relay
+		told = &c
+	}
 	unanswered = func(final *sip.Message, err error) {
 		// A 2xx comes as final, or, for a re-INVITE, goes through Proxy,
 		// which then returns neither a final response nor an error.
@@ -501,7 +512,10 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 			return
 		}
 		received := resp.Body
-		sent, err := p.relaySDP(resp, d.Relay, !toUE)
+		sent, err := p.relaySDP(resp, told, !toUE)
+		if err == nil && told != nil {
+			told = told.agreeing(facingSender(!toUE), sent)
+		}
 		if err != nil {
 			log.Warn("media relay refused the answer", "error", err.Error())
 			if !taken {
