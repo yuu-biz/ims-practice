@@ -8,7 +8,7 @@ So the second REGISTER is not a retransmission of the first. The first request s
 
 The example in this chapter is the `deploy/compose` setup, with a softphone UE that has no SIM card and registers with SIP Digest. There are five nodes: the UE, the P-CSCF, the I-CSCF, the S-CSCF and the HSS. This chapter leaves out how the P-CSCF finds the I-CSCF with DNS.
 
-A VoLTE phone registers with IMS-AKA, which uses the keys of the USIM. The REGISTER exchange has the same shape, but the challenge in the 401 differs, and so does the protection set up with the P-CSCF. The chapter on VoLTE covers that.
+A VoLTE phone registers with IMS-AKA, which uses the keys of the USIM. The REGISTER exchange has the same shape, but the challenge in the 401 differs, and so does the protection set up with the P-CSCF. The [chapter on VoLTE](volte.md) covers that.
 
 This chapter cites TS 24.229 V18.11.0, TS 29.228 V18.0.0 and TS 29.229 V18.1.0.
 
@@ -141,7 +141,7 @@ In this flow, what the three nodes know does not change at the same moment.
 | The answer is right, and the SAR and the SAA are done | Registered at this S-CSCF. The profile | The binding (Contact, Path, expiry, identities, iFCs, Call-ID and CSeq) | It still waits for the response |
 | The 200 OK reached the UE | The same | The same | It is registered. With rspauth, it confirms that the S-CSCF knows H(A1) too, and it receives the Service-Route and the expiry |
 
-The HSS marking the user as registered, the S-CSCF storing the binding and the UE receiving the 200 OK happen at different moments. If a node stops in between, the nodes are left out of step. What several nodes and failures hand over looks at how that is handled.
+The HSS marking the user as registered, the S-CSCF storing the binding and the UE receiving the 200 OK happen at different moments. If a node stops in between, the nodes are left out of step. [What several nodes and failures hand over](design-shared-state.md) looks at how that is handled.
 
 The `rspauth` in the Authentication-Info of the 200 OK proves that the S-CSCF knows H(A1) too (RFC 2617 3.2.3). The UE checks it and learns that the network side is genuine as well.
 

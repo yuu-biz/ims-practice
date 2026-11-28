@@ -2,6 +2,8 @@
 
 [日本語](../ja/sms.md)
 
+> This guide has the steps to run the setup and see it for yourself. The explanation that is understood by reading alone, of how it works and why, is in the book: [Delivering SMS and reporting on it](../../book/en/sms.md).
+
 This guide sends one short message (SMS) from UE 1 to UE 2 over the IMS and walks through every message in the capture: how the IP-SM-GW learns that a user can take short messages, how the S-CSCF hands a short message to it, how the message reaches the other UE and how each side learns what became of it. It ends by reading the body of one MESSAGE octet by octet.
 
 The guide follows these editions: TS 24.341 V19.0.0 and TS 23.204 V19.1.0 (SMS over IP), TS 24.011 V20.0.0 (relay layer), TS 23.040 V20.0.0 (transfer layer), TS 23.038 V20.0.0 (alphabets), TS 24.229 V20.1.0, TS 29.228 V20.0.0 (filter criteria), TS 29.328 V20.0.0 and TS 29.329 V19.1.0 (Sh), TS 29.338 V19.3.0 (S6c), TS 29.002 V19.1.0 (MAP) and TS 29.272 V19.6.0 (S6a), which define what this project's Ready-For-SM stands in for and the AVP it borrows. Clause numbers below refer to those editions.

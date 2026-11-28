@@ -8,7 +8,7 @@ The AS sends the MRFC an INVITE whose Request-URI names what to play, without SD
 
 The example is the `deploy/compose` setup. For the announcement and the ringback tone, UE 1 (`tel:+12025550101`, 172.28.0.100) is the caller and UE 2 (`tel:+12025550102`, 172.28.0.101) the callee. The conference is made with phone1, phone2 and phone3 of the `phones` profile. The MMTel AS is 172.28.0.75, the MRFC 172.28.0.85, the MRFP 172.28.0.86.
 
-The chapter [iFC and the supplementary services of the MMTel AS](mmtel.md) comes first: the AS as a B2BUA that holds three dialogs for a call, and how P-Served-User reads. Reliable provisional responses (PRACK) and preconditions are in the chapter From a number to the other phone.
+The chapter [iFC and the supplementary services of the MMTel AS](mmtel.md) comes first: the AS as a B2BUA that holds three dialogs for a call, and how P-Served-User reads. Reliable provisional responses (PRACK) and preconditions are in the chapter [From a number to the other phone](call.md).
 
 The clause numbers are those of the editions of the guide: TS 23.228 V20.1.0, TS 24.229 V20.1.0, TS 24.182 V19.0.0 (CAT), TS 24.628 V19.0.0 (announcements and early media), TS 24.611 V19.0.0 (barring), TS 24.615 V19.0.0 (CW), TS 24.147 V19.0.0 (conferences), TS 23.333 V19.0.0 (MRFP), RFC 4240, RFC 4575 and GSMA IR.92 v24.0.
 
@@ -409,4 +409,4 @@ The 1.08 s and the lines of frames are copied from the capture of the guide; the
 
 The steps to run the announcement, the tone, the waiting call and the conference yourself are in "Run it" of the guide [Announcements, alerting tones and conferences with the MRF](../../guide/en/mrf.md#run-it), and the display filters in its "Wireshark display filters". The Lab is in [Watch the IMS in the Lab](../../guide/en/lab.md#drive-the-ue-simulators). A conference with parties in two networks is in the guide [Connect two IMS networks](../../guide/en/interconnect.md#a-conference-across-the-border). In the slides, the [MRF deck](../../../slides/decks/en/08-mrf.md) shows the figures of this chapter as the steps of its scenes.
 
-The next intermediate chapter looks at the authentication and resource control that mobile access adds. VoLTE calls go through the MMTel AS of this chapter too. Registration and calls over VoLTE
+The next intermediate chapter looks at the authentication and resource control that mobile access adds. VoLTE calls go through the MMTel AS of this chapter too. [Registration and calls over VoLTE](volte.md)

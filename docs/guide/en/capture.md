@@ -2,6 +2,8 @@
 
 [日本語](../ja/capture.md)
 
+> This guide has the steps to run the setup and see it for yourself. The explanation that is understood by reading alone, of how it works and why, is in the book: [Watching the signalling](../../book/en/observing.md).
+
 Every node in this project talks over one Docker network. A capture container records all traffic on that network, so one file holds the whole conversation between the nodes.
 
 ## Before you start

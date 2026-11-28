@@ -2,6 +2,8 @@
 
 [日本語](../ja/registration.md)
 
+> This guide has the steps to run the setup and see it for yourself. The explanation that is understood by reading alone, of how it works and why, is in the book: [Three things that registration settles](../../book/en/registration.md), [Why a UE sends REGISTER twice](../../book/en/registration-two-registers.md), [Which request follows Path and which follows Service-Route](../../book/en/registration-routes.md), [Why a late deregistration does not remove a newer registration](../../book/en/registration-stale-deregistration.md), [Refresh, deregistration, subscription and removal by the network](../../book/en/registration-lifecycle.md).
+
 Before a phone can make a call or send an SMS over IMS, it registers. Registration tells the home network where the phone is, proves who the user is, and sets up the route that later requests take. This guide runs one registration and walks through every message in the capture.
 
 The guide follows 3GPP Release 18 (TS 24.229 V18.11.0, TS 29.228 V18.0.0, TS 29.229 V18.1.0). Clause numbers below refer to those editions.

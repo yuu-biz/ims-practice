@@ -2,6 +2,8 @@
 
 [日本語](../ja/README.md)
 
+> The guides have the steps to run the setup and see it for yourself. The explanation that is understood by reading alone, of how it works and why, is [the book](../../book/en/README.md), with an order of reading for the introduction, the intermediate and the advanced levels.
+
 These guides run the IMS on your machine and follow its messages in a capture, one procedure at a time. Start here: this page gives the order to read them in, the first commands, how to clean up, and what the Docker Compose project starts.
 
 ## The order to read them in

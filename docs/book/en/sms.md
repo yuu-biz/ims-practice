@@ -482,7 +482,7 @@ So the sender of a short message to subscriber 3, who is not registered, gets no
 
 ## Retransmissions and duplicates
 
-So far, every request has got its answer. In fact the answer to an OFR or a TFR can be lost, and the sender of the request sends it again. When the copy reaches another instance, what tells the instances that they must not hold the same short message twice, or deliver it twice, and how far that holds, is the subject of Retransmitted and duplicated SMS.
+So far, every request has got its answer. In fact the answer to an OFR or a TFR can be lost, and the sender of the request sends it again. When the copy reaches another instance, what tells the instances that they must not hold the same short message twice, or deliver it twice, and how far that holds, is the subject of [Retransmitted and duplicated SMS](design-sms-duplicates.md).
 
 ## Reading the body of the first MESSAGE
 

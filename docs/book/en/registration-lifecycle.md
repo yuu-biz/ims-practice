@@ -233,7 +233,7 @@ The input is the reginfo document `doc` of the NOTIFY and the identity `publicID
 
 ![The IP-SM-GW writes into the HSS with a PUR that it handles the short messages of this user, and the HSS answers with a PUA](figures/04-registration.third-party.pur.svg)
 
-If the user can, the IP-SM-GW reads the IMSI of the user with an Sh UDR, and sends the HSS a PUR (Profile-Update-Request, Sh command 307, TS 29.328 6.1.2). Its Data-Reference is SMSRegistrationInfo (24), and its Sh-User-Data has the number of the IP-SM-GW, `12025550199`, in `<IP-SM-GW-Number>`. The HSS answers with a PUA of DIAMETER_SUCCESS (2001). From then on, the HSS names this IP-SM-GW as the destination of short messages that come from other networks. If the UE registered without `+g.3gpp.smsip`, no PUR is sent. The delivery of short messages itself is in the chapter on SMS.
+If the user can, the IP-SM-GW reads the IMSI of the user with an Sh UDR, and sends the HSS a PUR (Profile-Update-Request, Sh command 307, TS 29.328 6.1.2). Its Data-Reference is SMSRegistrationInfo (24), and its Sh-User-Data has the number of the IP-SM-GW, `12025550199`, in `<IP-SM-GW-Number>`. The HSS answers with a PUA of DIAMETER_SUCCESS (2001). From then on, the HSS names this IP-SM-GW as the destination of short messages that come from other networks. If the UE registered without `+g.3gpp.smsip`, no PUR is sent. The delivery of short messages itself is in the [chapter on SMS](sms.md).
 
 ## The UE deregisters
 
@@ -499,4 +499,4 @@ The example of the body of a NOTIFY has the values of a capture in the guide, an
 
 You do not need to run the setup to read this chapter. To see it in a capture, the guide has the commands and the display filters in [Subscribe to the registration state](../../guide/en/registration.md#subscribe-to-the-registration-state), [Register the user at the application server: third-party REGISTER](../../guide/en/registration.md#register-the-user-at-the-application-server-third-party-register), [Fetch the bindings](../../guide/en/registration.md#fetch-the-bindings), [Deregistration](../../guide/en/registration.md#deregistration), [Remove a subscription: deregistration by the HSS](../../guide/en/registration.md#remove-a-subscription-deregistration-by-the-hss) and [A wrong password](../../guide/en/registration.md#a-wrong-password). For the Lab, the Lab guide has [What each panel shows](../../guide/en/lab.md#what-each-panel-shows) and [The network cancels a registration](../../guide/en/lab.md#the-network-cancels-a-registration). In the slides, the scenes of the [registration deck](../../../slides/decks/en/04-registration.md) from "The P-CSCF subscribes to the registration state" to "Watching it fail" show the figures of this chapter in steps.
 
-Next, the routes that registration settled are used to make a call. From a number to the other phone
+Next, the routes that registration settled are used to make a call. [From a number to the other phone](call.md)

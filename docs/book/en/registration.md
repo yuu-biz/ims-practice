@@ -21,7 +21,7 @@ The example is the `deploy/compose` setup, with a softphone UE that has no SIM c
 
 The test user has the private identity `001010000000001@ims.mnc001.mcc001.3gppnetwork.org` and the public identity `sip:+12025550101@ims.mnc001.mcc001.3gppnetwork.org`. The private identity is the name used for authentication. The public identity is the name that other users see.
 
-A VoLTE phone registers with IMS-AKA, which uses the keys of the USIM. The three things it settles are the same. The way of authenticating and the protection with the P-CSCF differ. The chapter on VoLTE covers that.
+A VoLTE phone registers with IMS-AKA, which uses the keys of the USIM. The three things it settles are the same. The way of authenticating and the protection with the P-CSCF differ. The [chapter on VoLTE](volte.md) covers that.
 
 ## The whole exchange
 
@@ -110,4 +110,4 @@ Both pass as Go tests of this repository. The figure is a diagram of how this se
 
 You do not need to run the setup to read this chapter. To see the same exchange in a real capture, the guide has the steps in [Run a registration](../../guide/en/registration.md#run-a-registration) and [Open the capture](../../guide/en/registration.md#open-the-capture). In the slides, the scene "The shape of the whole" of the [registration deck](../../../slides/decks/en/04-registration.md) shows the figure of this chapter in steps.
 
-The next chapter uses the routes that registration settled to make a call. From a number to the other phone
+The next chapter uses the routes that registration settled to make a call. [From a number to the other phone](call.md)

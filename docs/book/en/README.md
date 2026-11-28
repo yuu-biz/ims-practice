@@ -2,7 +2,7 @@
 
 [日本語](../ja/README.md)
 
-This book takes the repository, a learning implementation of 3GPP IMS, and explains with figures and short excerpts of code what IMS decides and how. It is written to be read: there is nothing to run and no question to answer. For those who want to run it themselves, the end of each chapter and Running it yourself point to the guides.
+This book takes the repository, a learning implementation of 3GPP IMS, and explains with figures and short excerpts of code what IMS decides and how. It is written to be read: there is nothing to run and no question to answer. For those who want to run it themselves, the end of each chapter and [Running it yourself](reproduce.md) point to the guides.
 
 There are three ways to read it. Each can be read from the front, but any chapter can be read on its own: each names the chapters it builds on at its start.
 
@@ -48,6 +48,7 @@ What the standards settle is told apart from what an implementation or an operat
 ## Appendices
 
 - [Go for reading the code](go-reading.md)
+- [Running it yourself](reproduce.md)
 
 ## The slides and the guides
 

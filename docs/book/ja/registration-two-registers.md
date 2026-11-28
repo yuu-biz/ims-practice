@@ -8,7 +8,7 @@
 
 この章の例は、`deploy/compose` の構成で、SIM カードの無いソフトフォン型の UE が SIP Digest で登録する場合です。ノードは UE、P-CSCF、I-CSCF、S-CSCF、HSS の 5 つです。P-CSCF が I-CSCF を DNS で探す処理は、この章では省きます。
 
-VoLTE の端末は USIM の鍵を使う IMS-AKA で登録し、REGISTER の往復の形は同じですが、401 に入る問いと、P-CSCF とのあいだに張る保護が違います。それは VoLTE の章 で扱います。
+VoLTE の端末は USIM の鍵を使う IMS-AKA で登録し、REGISTER の往復の形は同じですが、401 に入る問いと、P-CSCF とのあいだに張る保護が違います。それは [VoLTE の章](volte.md) で扱います。
 
 この章が引く仕様の版は、TS 24.229 V18.11.0、TS 29.228 V18.0.0、TS 29.229 V18.1.0 です。
 
@@ -141,7 +141,7 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 | 答えが正しく、SAR と SAA が済んだ | この S-CSCF に登録済み。プロファイル | 登録先（Contact、Path、期限、識別子、iFC、Call-ID と CSeq） | まだ応答を待っている |
 | 200 OK が UE に届いた | 同じ | 同じ | 登録できた。rspauth で S-CSCF も H(A1) を知っていると確かめ、Service-Route と期限を受け取る |
 
-HSS の「登録済み」と、S-CSCF の登録先の保存と、UE が 200 OK を受け取ることは、別々の時点に起きます。途中でノードが止まると、この食い違いが残ります。その扱いは 複数台と障害で引き継ぐもの で見ます。
+HSS の「登録済み」と、S-CSCF の登録先の保存と、UE が 200 OK を受け取ることは、別々の時点に起きます。途中でノードが止まると、この食い違いが残ります。その扱いは [複数台と障害で引き継ぐもの](design-shared-state.md) で見ます。
 
 200 OK の Authentication-Info にある `rspauth` は、S-CSCF も H(A1) を知っていることの証明です（RFC 2617 3.2.3）。UE はこれを確かめて、網の側も本物であることを知ります。
 

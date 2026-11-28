@@ -12,7 +12,7 @@ There are two setups. In `deploy/compose` each role runs on one node and keeps i
 
 Every node of the Compose project serves a maintenance API on port 8085. The OAM server can send the same request to every node of a role. The API is this project's own: the interface between the manager and the managed nodes is left to each product (TS 32.600 4.2.1.3).
 
-Where state lives and how several instances take it over is in [What several nodes and failures hand over](design-shared-state.md); what happens when an application server does not answer is in When an application server is not available; and retransmitted and duplicated short messages are in Retransmitted and duplicated SMS.
+Where state lives and how several instances take it over is in [What several nodes and failures hand over](design-shared-state.md); what happens when an application server does not answer is in [When an application server is not available](design-as-unavailable.md); and retransmitted and duplicated short messages are in [Retransmitted and duplicated SMS](design-sms-duplicates.md).
 
 ## Taking a node out of service, and the answer
 
@@ -198,7 +198,7 @@ An SC taken out of service finishes the delivery attempt it is making. After tha
 
 On a lock, and when the deadline of a shut down passes, the node closes its connections, so a TFR that waits for its TFA gets no answer. The SC takes that as a system failure that may pass, and keeps the short message for its next retry. Stopped in order, the SC cuts its attempts short and hands their recipients at once to an instance in service. When its process disappears, nobody claims the recipient until the lease runs out; then another instance takes it over.
 
-In each case the outcome of the attempt in progress is not known, the short message stays in the store, and it goes out again. But the serving node may have delivered it already, and the recipient then gets the same short message twice. That is the subject of Retransmitted and duplicated SMS.
+In each case the outcome of the attempt in progress is not known, the short message stays in the store, and it goes out again. But the serving node may have delivered it already, and the recipient then gets the same short message twice. That is the subject of [Retransmitted and duplicated SMS](design-sms-duplicates.md).
 
 When the contents of the store are lost, the short messages that were held are gone. Nobody delivers them, and the sender hears of no outcome.
 

@@ -2,6 +2,8 @@
 
 [日本語](../ja/mmtel.md)
 
+> This guide has the steps to run the setup and see it for yourself. The explanation that is understood by reading alone, of how it works and why, is in the book: [What application servers add](../../book/en/services.md), [iFC and the supplementary services of the MMTel AS](../../book/en/mmtel.md).
+
 This guide follows the supplementary services of multimedia telephony (MMTel) through the IMS: how the S-CSCF hands every call to the MMTel AS, what the AS does to the call as a B2BUA, how a user sets the services up over Ut with XCAP, and one call per service in the capture: identity presentation and restriction, call forwarding (CFU, CFB, CFNR, CFNL) and barring.
 
 The industry also calls the MMTel AS the TAS (Telephony Application Server) or the T-AS. This guide uses the name of the specifications, the MMTel AS.

@@ -6,7 +6,7 @@ The S-CSCF matches each request against the initial filter criteria (iFCs) in th
 
 ## The setup of this chapter
 
-The example is the `deploy/compose` setup. The chapters [Three things that registration settles](registration.md) and From a number to the other phone come before this one. The service nodes of this chapter are these three.
+The example is the `deploy/compose` setup. The chapters [Three things that registration settles](registration.md) and [From a number to the other phone](call.md) come before this one. The service nodes of this chapter are these three.
 
 | Node | Role in Compose | What it takes care of |
 | --- | --- | --- |
@@ -159,7 +159,7 @@ A short message travels in the body of a SIP MESSAGE. But the node that stores a
 - A MESSAGE that the user sends reaches the IP-SM-GW by an originating criterion. The IP-SM-GW takes the MESSAGE and ends it there, and passes the short message in it to the service centre.
 - A short message for the user comes from the service centre to the IP-SM-GW, which builds a MESSAGE of its own and sends it to the user.
 
-This book names only the role of the IP-SM-GW here. Reports, storing and sending again are in the chapter Delivering SMS and reporting on it.
+This book names only the role of the IP-SM-GW here. Reports, storing and sending again are in the chapter [Delivering SMS and reporting on it](sms.md).
 
 ### The MRF that the MMTel AS uses
 

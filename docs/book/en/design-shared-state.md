@@ -11,7 +11,7 @@ This chapter keeps four cases apart:
 
 The answer of this implementation first. The registrations, the expiries that come due and new requests can be taken over by any instance that shares the store. A call in progress at the MMTel AS lives in the process of the instance that took its INVITE, and does not go on when that instance stops. The record of the call in the store serves only to find the other leg of a call from the dialog that a Replaces names. Of the roles in this chapter, only at the IBCF does an instance that is created again under the same name end the calls of the process before it. The store is one server, and when it stops, no instance can read or write its state. This implementation cannot claim to keep calls up through a failure.
 
-This chapter builds on [Registration order and expiry](design-registration-order.md), [iFC and the supplementary services of the MMTel AS](mmtel.md) and Interconnection between networks. It restates what it needs from them.
+This chapter builds on [Registration order and expiry](design-registration-order.md), [iFC and the supplementary services of the MMTel AS](mmtel.md) and [Interconnection between networks](interconnect.md). It restates what it needs from them.
 
 ## The setup of this chapter
 
@@ -350,4 +350,4 @@ That an MMTel AS instance created again answers 481 is read from the configurati
 
 You do not need to run anything to read this chapter. How to start the setup with the state in the store, and how to look at the keys in it, is in [The state of the users in a store outside the nodes](../../guide/en/README.md#the-state-of-the-users-in-a-store-outside-the-nodes). How SIP tries one destination after another is in [The P-CSCF finds the I-CSCF and forwards the REGISTER](../../guide/en/registration.md#2-the-p-cscf-finds-the-i-cscf-and-forwards-the-register), and what shows when an IBCF instance is created again is in [When an IBCF instance starts again](../../guide/en/interconnect.md#when-an-ibcf-instance-starts-again). The tests run with, for example, `go test ./internal/kvstore/scscfstore -run TestAnotherInstanceTakesOverAnExpiryThatWasNotHandled`.
 
-The next chapter looks at what the S-CSCF puts first when an application server does not answer. When an application server is not available
+The next chapter looks at what the S-CSCF puts first when an application server does not answer. [When an application server is not available](design-as-unavailable.md)

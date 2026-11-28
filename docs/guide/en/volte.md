@@ -2,6 +2,8 @@
 
 [日本語](../ja/volte.md)
 
+> This guide has the steps to run the setup and see it for yourself. The explanation that is understood by reading alone, of how it works and why, is in the book: [Registration and calls over VoLTE](../../book/en/volte.md).
+
 This guide follows what a VoLTE phone adds to the softphone of [Follow a UE registering with the IMS](registration.md) and [Follow a voice call through the IMS](call.md): the access network, IMS AKA with the security agreement, policy control over Rx, and a voice call the way a VoLTE phone makes it. Two UE simulators attach to a stub of the EPC, register with IMS AKA, and call each other in AMR-WB with preconditions; the PCRF sets up a voice bearer for each of them. Then the network takes one of the bearers away and the P-CSCF ends the call.
 
 The guide follows these editions: TS 24.229 V20.1.0, TS 29.214 V20.0.0 (Rx), TS 29.213 (the SDP to Rx mapping), TS 24.301 V20.1.0 (the EPS messages), TS 26.114 V20.1.1 (media handling), TS 33.203 V20.0.0 and TS 33.102 V19.1.0 (IMS AKA), TS 35.206 and TS 35.208 (MILENAGE), RFC 3310 (Digest AKA), RFC 3329 (sec-agree), RFC 3312 (preconditions), RFC 4867 (AMR payload format), RFC 4028 (session timer) and GSMA IR.92 v24.0. Clause numbers below refer to those editions. The integrity algorithm `hmac-sha2-256-128` of the security agreement, and the derivation of its key in Annex I of TS 33.203, are in TS 33.203 from Release 19 (V19.0.0) on; an earlier edition has neither.

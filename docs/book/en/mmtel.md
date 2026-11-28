@@ -8,7 +8,7 @@ This chapter follows what changes when a condition changes. When the session cas
 
 The example is the `deploy/compose` setup. UE 1 (`tel:+12025550101`) calls, UE 2 (`tel:+12025550102`) is the user who sets the services (the served user), and UE 3 (`tel:+12025550103`) is where UE 2's calls are forwarded. The S-CSCF serves all three, and there is one MMTel AS. The figures draw the AS in two places, once for each user it serves.
 
-Where the AS sits, and the whole of how the S-CSCF hands it requests, is in the chapter [What application servers add](services.md). This chapter goes on from there. It takes the reading of INVITE, PRACK and ACK from the chapter From a number to the other phone.
+Where the AS sits, and the whole of how the S-CSCF hands it requests, is in the chapter [What application servers add](services.md). This chapter goes on from there. It takes the reading of INVITE, PRACK and ACK from the chapter [From a number to the other phone](call.md).
 
 The clause numbers are those of the editions of the guide: TS 24.229 V20.1.0, TS 24.604 V19.0.0 (CDIV), TS 24.607 V19.1.0 (OIP, OIR), TS 24.608 V19.0.0 (TIP, TIR), TS 24.611 V19.0.0 (barring), TS 24.615 V19.0.0 (CW), TS 24.623 V19.0.0 (Ut), TS 29.364 V19.1.0 (service data), TS 29.328 V20.0.0 (Sh) and GSMA IR.92 v24.0.
 
@@ -67,7 +67,7 @@ DefaultHandling is what applies when the AS cannot be reached, or answers 408 or
 
 Only the originating side ends, so that barring holds. Outgoing barring (BAOC and the like) is applied by the AS on the originating side. If the call went on without the AS when it does not answer, a call that the user has barred would connect. The AS on the terminating side runs forwarding, incoming barring and the handling of identities. Ending the terminating side would turn a failure of the AS into a failed incoming call, so this setup goes on to the callee without the AS. In exchange, incoming barring and forwarding do not apply meanwhile.
 
-Which responses make DefaultHandling apply, which do not, and what each choice gives up, are compared in the chapter When an application server is not available.
+Which responses make DefaultHandling apply, which do not, and what each choice gives up, are compared in the chapter [When an application server is not available](design-as-unavailable.md).
 
 ## The session case and P-Served-User
 

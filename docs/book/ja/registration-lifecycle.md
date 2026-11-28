@@ -233,7 +233,7 @@ func takesShortMessages(doc reginfo.Document, publicID string) bool {
 
 ![IP-SM-GW が PUR で、この利用者の SMS を受け持つことを HSS に書き、HSS が PUA で答える](figures/04-registration.third-party.pur.svg)
 
-受けられるなら、IP-SM-GW は Sh の UDR で利用者の IMSI を読み、PUR（Profile-Update-Request、Sh のコマンド 307、TS 29.328 6.1.2）を HSS に送ります。Data-Reference は SMSRegistrationInfo（24）で、Sh-User-Data の `<IP-SM-GW-Number>` に IP-SM-GW の番号 `12025550199` が入ります。HSS は DIAMETER_SUCCESS（2001）の PUA で答えます。これで、ほかの網から届く SMS の宛先として、HSS がこの IP-SM-GW を答えるようになります。UE が `+g.3gpp.smsip` を付けずに登録したときは、PUR を送りません。SMS の配達そのものは SMS の章 で扱います。
+受けられるなら、IP-SM-GW は Sh の UDR で利用者の IMSI を読み、PUR（Profile-Update-Request、Sh のコマンド 307、TS 29.328 6.1.2）を HSS に送ります。Data-Reference は SMSRegistrationInfo（24）で、Sh-User-Data の `<IP-SM-GW-Number>` に IP-SM-GW の番号 `12025550199` が入ります。HSS は DIAMETER_SUCCESS（2001）の PUA で答えます。これで、ほかの網から届く SMS の宛先として、HSS がこの IP-SM-GW を答えるようになります。UE が `+g.3gpp.smsip` を付けずに登録したときは、PUR を送りません。SMS の配達そのものは [SMS の章](sms.md) で扱います。
 
 ## UE が登録を解除する
 
@@ -499,4 +499,4 @@ NOTIFY の本文の例は手順書のキャプチャの値で、図はこの構�
 
 この章を読むのに、構成を動かす必要はありません。キャプチャで見たいときは、手順書の [登録の状態を購読する](../../guide/ja/registration.md#登録の状態を購読する)、[アプリケーションサーバーにも登録する（第三者 REGISTER）](../../guide/ja/registration.md#アプリケーションサーバーにも登録する第三者-register)、[バインディングを取得する](../../guide/ja/registration.md#バインディングを取得する)、[登録の解除](../../guide/ja/registration.md#登録の解除)、[加入を削除する（HSS からの登録解除）](../../guide/ja/registration.md#加入を削除するhss-からの登録解除)、[パスワードが誤っているとき](../../guide/ja/registration.md#パスワードが誤っているとき) に、コマンドと表示フィルタがあります。ラボで見るときは、ラボの手順書の [各パネルの内容](../../guide/ja/lab.md#各パネルの内容) と [網が登録を取り消す](../../guide/ja/lab.md#網が登録を取り消す) にあります。スライドでは [登録のデッキ](../../../slides/decks/ja/04-registration.md) の「P-CSCF が登録の状態を購読する」から「失敗の例」までのシーンが、この章の図を段階に分けて見せます。
 
-次は、登録で決まった経路を使って、電話をかける流れを見ます。番号から相手の電話へ
+次は、登録で決まった経路を使って、電話をかける流れを見ます。[番号から相手の電話へ](call.md)

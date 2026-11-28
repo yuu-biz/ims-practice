@@ -75,7 +75,7 @@ The signalling went through the CSCFs and the application servers. The voice doe
 
 The SDP in the INVITE and in its answers decides where the RTP goes. The SDP gives the address and the port that receive the media. In this setup the P-CSCF rewrites the address in the SDP to one of the media relay (IMS-AGW). So the RTP flows only between the UEs and the media relay, and passes neither the CSCFs nor the application servers. The P-CSCF of the caller and that of the callee each make a context (in this setup the same P-CSCF makes one in each of its two roles), so the RTP passes two contexts inside the relay.
 
-The P-CSCF controls the relay with an HTTP API, on the reference point Iq. The API is this project's own, and a setup switches it to the standard H.248. In a VoLTE call the P-CSCF also asks the PCRF over Diameter Rx to authorise the media, and the access network sets up a bearer for the voice. That is in Mobile access and other operators' networks.
+The P-CSCF controls the relay with an HTTP API, on the reference point Iq. The API is this project's own, and a setup switches it to the standard H.248. In a VoLTE call the P-CSCF also asks the PCRF over Diameter Rx to authorise the media, and the access network sets up a bearer for the voice. That is in [Mobile access and other operators' networks](access-and-borders.md).
 
 ## Reference points and protocols
 
