@@ -16,6 +16,7 @@ chapters:
   - registration
   - call
   - services
+  - access-and-borders
   - registration-two-registers
   - registration-routes
   - registration-stale-deregistration
@@ -23,6 +24,8 @@ chapters:
   - call-signaling
   - mmtel
   - mrf
+  - volte
+  - interconnect
   - design-registration-order
   - design-shared-state
   - design-media-rollback

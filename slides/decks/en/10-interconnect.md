@@ -1,6 +1,6 @@
 ---
 title: Two IMS networks joined at the border
-footer: ims-practice study session 10. Two networks
+footer: ims-practice 10. Two networks
 lang: en
 format: visual
 ---
@@ -8,7 +8,7 @@ format: visual
 ```ims-model
 nodes:
   # Network A (ims0, 172.28.0.0/24)
-  - {id: mmtel-a, label: MMTel AS, role: the conference focus, at: [0, 0]}
+  - {id: mmtel-a, label: MMTel AS, role: services and conferences, at: [0, 0]}
   - {id: dns-a, label: DNS-A, role: answers the ENUM, at: [0.9, 0]}
   - {id: ue-a1, label: UE A1, role: the UE that calls, at: [0, 1]}
   - {id: scscf-a, label: S-CSCF-A, role: the originating side, at: [0.9, 1]}
@@ -522,30 +522,56 @@ events:
     to: scscf-b
     proto: SIP
     note: (Forbidden)
+  # The four dialogs of one call
+  - id: dlg1-inv
+    msg: INVITE
+    from: ue-a1
+    to: mmtel-a
+    proto: SIP
+    note: (dialog 1, network A)
+    fields:
+      - Call-ID: made by UE A1
+  - id: dlg2-inv
+    msg: INVITE
+    from: mmtel-a
+    to: ibcf-a
+    proto: SIP
+    note: (dialog 2, network A)
+    fields:
+      - Call-ID: made by the MMTel AS
+  - id: dlg4-inv
+    msg: INVITE
+    from: ibcf-b
+    to: ue-b1
+    proto: SIP
+    note: (dialog 4, network B)
+    fields:
+      - Call-ID: made by IBCF-B
 ```
 
 ---
 
 # Two IMS networks joined at the border
 
-ims-practice study session 10 (the IBCF and the TrGW, the agreement between two operators, a call and short messages across)
+(the IBCF and the TrGW, the agreement between two operators, a call and short messages across)
 
 ---
 
 [layout: summary]
 
-## What you will know after this session
+## What this deck covers
 
-To begin: a call leaves for another operator's network. What does that operator get to see of this one?
+To begin: a call leaves for another operator's network. What does that operator get to see of this one? The numbers and the domain of the users, and the outer names and addresses of the border nodes, nothing else. The addresses and names of the nodes inside stay hidden.
 
 - What stands on the border: the IBCF for the SIP, the TrGW for the media.
 - Which reference points join two networks, and which join an IBCF to its own network.
 - Why the border is a B2BUA, and what that hides.
 - What the agreement between two operators decides, and what fails when the two do not match.
-- Where to look for the call, the short messages and the host that no agreement covers, in three captures.
+- Where the call, the short messages and the host that no agreement covers show in three captures.
 
 > Guide: [Connect two IMS networks](../../../docs/guide/en/interconnect.md) (`docs/guide/en/interconnect.md`)
 > The editions are named at the top of the guide, among them TS 24.229 V20.1.0, TS 29.165 V20.0.0, TS 23.204 V19.1.0, TS 24.341 V19.0.0, TS 23.040 V20.0.0, TS 32.409 V19.0.0, TS 24.147 V19.0.0, RFC 3261, RFC 3312 and RFC 3966.
+> Book: [Interconnection between networks](../../../docs/book/en/interconnect.md), [Mobile access and other operators' networks](../../../docs/book/en/access-and-borders.md)
 
 ---
 
@@ -557,13 +583,13 @@ nodes: [mmtel-a, dns-a, ue-a1, scscf-a, ibcf-a, ipsmgw-a, agw-a, trgw-a, icscf-b
 lead: Only the nodes of the border join the two networks. A node inside one of them cannot reach a node inside the other at all.
 steps:
   - id: net-a
-    title: Network A is the one every earlier session used
+    title: Network A is the one the other decks used
     focus: [mmtel-a, dns-a, ue-a1, scscf-a, ibcf-a, ipsmgw-a, agw-a, trgw-a]
     zoom: [mmtel-a, dns-a, ue-a1, scscf-a, ibcf-a, ipsmgw-a, agw-a, trgw-a]
     checkpoint: true
     text: |
       Its domain is `ims.mnc001.mcc001.3gppnetwork.org` and the number of UE A1 is `+1-202-555-0101`.
-      Only the nodes of this session are drawn. The P-CSCF and the HSS are there as always.
+      Only the nodes of this deck are drawn. The P-CSCF and the HSS are there as always.
   - id: net-b
     title: Network B is the network of another operator
     focus: [icscf-b, hss-b, ibcf-b, scscf-b, ue-b1, trgw-b, ipsmgw-b]
@@ -597,7 +623,7 @@ steps:
      agw --- TrGW-A (.91) --- .11 -- Izi -- .21 --- TrGW-B (.91) --- UE B1
 ```
 
-- Network A is the network of `compose.yaml`, the one every earlier session used. Network B is a second IMS of another operator: the same image with another domain, other numbers and other subscribers.
+- Network A is the network of `compose.yaml`, the one the other decks used. Network B is a second IMS of another operator: the same image with another domain, other numbers and other subscribers.
 - Only the IBCFs and the TrGWs are on the link. A node inside network A cannot reach a node inside network B at all.
 - Network B is as small as the scenarios allow: no MMTel AS, no EPC with its PCRF, no media relay at its P-CSCF and no Lab.
 - Each bridge has a capture of its own: `captures/` for network A, `captures/b/` for network B and `captures/nni/` for the link.
@@ -723,37 +749,13 @@ steps:
 | Ix | the IBCF and its TrGW | H.248 in the standard (TS 29.238). Here the HTTP control API that the P-CSCF uses for its own relay. |
 
 - Ici and Izi make up the II-NNI (TS 29.165 5.1). Mx and Ix are inside one network (TS 29.165 3.2).
-- Session 2 drew these four on the map of the network. This session reads what they carry.
+- The deck on the map of the network draws these four on the map. This deck shows what they carry.
 
 > Guide: ["What the IBCF and the TrGW do"](../../../docs/guide/en/interconnect.md#what-the-ibcf-and-the-trgw-do)
 
 ---
 
-## Run it
-
-```sh
-docker compose -f compose.yaml -f deploy/interconnect/compose.yaml up -d --build
-
-# UE B1 waits for a call. The UE simulator takes network B's settings as flags.
-docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue-b1 answer \
-  -domain ims.mnc002.mcc001.3gppnetwork.org \
-  -impi 001020000000001@ims.mnc002.mcc001.3gppnetwork.org \
-  -impu sip:+12025550151@ims.mnc002.mcc001.3gppnetwork.org \
-  -password test-password-b1 \
-  -pcscf 172.28.1.40:5060 -pcscf-uri sip:pcscf.ims.mnc002.mcc001.3gppnetwork.org:5060
-
-# UE A1 calls that number, with the settings of network A as always.
-docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue call tel:+12025550151
-```
-
-- `ue sms` of network B takes one flag more, `-sc`, the number of the SC of that network.
-- `scripts/e2e-interconnect.sh` runs everything of this session and checks it in the three captures.
-
-> Guide: ["Run it"](../../../docs/guide/en/interconnect.md#run-it)
-
----
-
-## Open the three captures
+## What the three captures hold
 
 | Capture | What is in it |
 | --- | --- |
@@ -761,8 +763,8 @@ docker compose -f compose.yaml -f deploy/interconnect/compose.yaml run --rm ue c
 | `captures/nni/ims-*.pcap` | The link: the two IBCFs and the two TrGWs, and nothing else. |
 | `captures/b/ims-*.pcap` | Network B: the INVITE from IBCF-B to the I-CSCF and on, and the RTP of TrGW-B. |
 
-- Three capture containers, one per bridge. Open all three: the same call is in each of them, under a Call-ID of its own.
-- The filters of the earlier sessions work in each file. `sip.Method == "INVITE" && count(sip.Via) == 1` picks the INVITEs of the IBCFs out of the link.
+- Three capture containers, one per bridge. The same call is in each of them, under a Call-ID of its own.
+- The filters of the other decks work in each file. `sip.Method == "INVITE" && count(sip.Via) == 1` picks the INVITEs of the IBCFs out of the link.
 - **Statistics > Flow Graph** on the capture of the link draws the sequence diagram between the two IBCFs.
 
 > Guide: ["What each capture shows"](../../../docs/guide/en/interconnect.md#what-each-capture-shows)
@@ -979,7 +981,7 @@ steps:
     active: lia
     detail: [lia]
     zoom: [icscf-b, hss-b, scscf-b]
-    text: The same Cx question as in the sessions on registration and on a call. A call from network A changes nothing about it.
+    text: The same Cx question as in the decks on registration and on a call. A call from network A changes nothing about it.
   - id: deliver
     title: Through network B to UE B1
     show: [inv-i-sb, inv-sb-ue]
@@ -1006,6 +1008,56 @@ steps:
 - The S-CSCF of network B gets the tel URI, and from there the call reaches UE B1 through the P-CSCF of network B, as any other terminating call.
 
 > Guide: [5](../../../docs/guide/en/interconnect.md#5-ibcf-b-the-entry-point), [6](../../../docs/guide/en/interconnect.md#6-the-i-cscf-of-network-b-finds-the-callee) and [7](../../../docs/guide/en/interconnect.md#7-the-answer-comes-back)
+
+---
+
+## The four dialogs of one call
+
+```ims-scene
+id: four-dialogs
+view: ladder
+nodes: [ue-a1, mmtel-a, ibcf-a, ibcf-b, ue-b1]
+lead: "A call is made of four dialogs: the MMTel AS and the two IBCFs are B2BUAs, and each ends one dialog and starts the next."
+steps:
+  - id: d1
+    title: The dialog of UE A1 and the MMTel AS
+    show: [dlg1-inv]
+    checkpoint: true
+    text: |
+      The P-CSCF and the S-CSCF are proxies, so they pass the dialog on as it is.
+      This dialog does not cross the border.
+  - id: d2
+    title: The dialog of the MMTel AS and IBCF-A
+    show: [dlg2-inv]
+    checkpoint: true
+    text: |
+      The MMTel AS is a B2BUA and sends a new INVITE with a Call-ID of its own.
+      The S-CSCF sends the number, which ENUM found in network B, to the IBCF of its own network.
+  - id: d3
+    title: The dialog on the link
+    show: [inv-nni]
+    checkpoint: true
+    text: Only the capture of the link shows it. Its Call-ID is the one IBCF-A made.
+  - id: d4
+    title: The dialog of IBCF-B and UE B1
+    show: [dlg4-inv]
+    checkpoint: true
+    text: |
+      It passes the I-CSCF, the S-CSCF and the P-CSCF, but no AS is on the path in network B, so network B adds no dialog.
+      What the three captures show side by side are dialogs 2, 3 and 4.
+  - id: all
+    title: The four Call-IDs side by side
+    active: ''
+    detail: [dlg1-inv, dlg2-inv, inv-nni, dlg4-inv]
+    checkpoint: true
+    text: Each dialog has a Call-ID of its own. To follow the call in the captures, take the Call-ID again for each dialog.
+```
+
+- The capture of network A shows dialogs 1 and 2, the capture of the link dialog 3, and the capture of network B dialog 4.
+- The next slide compares the three around the border (2, 3 and 4), one per capture. Dialog 1 does not cross the border, so it is not in that comparison.
+- PRACK, ACK and BYE are separate in each dialog.
+
+> Guide: ["A call from network A to network B"](../../../docs/guide/en/interconnect.md#a-call-from-network-a-to-network-b)
 
 ---
 
@@ -1071,7 +1123,7 @@ Contact: <sip:ibcf.nni.mnc001.example.net:5060>
 
 - **Via.** One entry, IBCF-A's. The nodes of network A put theirs on the INVITE that reached IBCF-A, and that INVITE ended there.
 - **Record-Route.** None. IBCF-A is the far end of this dialog, so the requests of network B reach it by its Contact.
-- **Call-ID.** IBCF-A's own. Compare it with the INVITE to IBCF-A and with the one from IBCF-B: the three are different. The INVITE of UE A1 to the P-CSCF, in the capture of network A too, has a fourth.
+- **Call-ID.** IBCF-A's own, unlike the INVITE to IBCF-A and the one from IBCF-B: the three are different. The INVITE of UE A1 to the P-CSCF, in the capture of network A too, has a fourth.
 - **Max-Forwards.** IBCF-A took one hop off, as a proxy would (RFC 3261 16.6 step 3), so a call that two networks send round in a loop still ends.
 
 > Guide: ["Three dialogs around the border in the captures"](../../../docs/guide/en/interconnect.md#three-dialogs-around-the-border-in-the-captures)
@@ -1253,7 +1305,7 @@ steps:
 | Network B takes AMR-WB alone | IBCF-B removes every speech codec from UE A1's offer of PCMU and answers 488 (Not Acceptable Here). | `network-a.yaml`, which lists PCMU |
 | A local number crosses as it is | Network B's agreement allows only global numbers, so IBCF-B rejects the INVITE with 404 (Not Found) by local policy. | `network-b-global-numbers.yaml`: IBCF-A makes the number global before it leaves |
 
-- The failures come from the IBCFs, by the agreement, not from the UEs: compare the INVITE on the link with the one that reaches network B.
+- The failures come from the IBCFs, by the agreement, not from the UEs. The source of the first packet of the response names the IBCF that refused. An IBCF does not pass on a request it refuses, so an INVITE that got 488 or 404 never reaches the inside of network B.
 - The script runs each mismatch and then the agreement that fits, so the capture holds the call that failed and the one that went through, one after the other.
 
 > Guide: ["When the profiles do not match"](../../../docs/guide/en/interconnect.md#when-the-profiles-do-not-match). TS 29.165 7.1, Table 6.1. TS 24.229 5.10.1.
@@ -1334,7 +1386,7 @@ steps:
     zoom: [ue-a1, scscf-a, ipsmgw-a, ibcf-a]
     checkpoint: true
     text: |
-      The MESSAGE of the session on SMS. An originating filter criterion gives it to the IP-SM-GW.
+      The MESSAGE of the deck on SMS. An originating filter criterion gives it to the IP-SM-GW.
       The SC stub first asks the HSS of network A for the number and is told that there is no such user. That question is not drawn here.
   - id: enum
     title: The SC finds the peer network with ENUM
@@ -1418,7 +1470,7 @@ steps:
     checkpoint: true
     text: |
       TP-ST 1 says that it forwarded the message but cannot confirm the delivery (TS 23.040 9.2.3.15).
-      The status report reaches UE A1 in a MESSAGE, as in the session on SMS.
+      The status report reaches UE A1 in a MESSAGE, as in the deck on SMS.
   - id: b-deliver
     title: The IP-SM-GW of network B delivers it in a MESSAGE of its own
     only: [sms-deliver-i, sms-deliver-sb]
@@ -1547,27 +1599,24 @@ steps:
 | Ix | The IBCF drives the TrGW over the HTTP control API of the media relay, not over H.248. |
 | SMS | The SC finds a user of another network by ENUM, not by asking that network through an SMS-GMSC, and no delivery report crosses back. |
 
-```sh
-grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect internal/sc internal/ipsmgw
-```
-
+- Each item has a comment in the code that starts with `SIMPLIFIED:`.
 - Why no transcoding: it needs codecs in the TrGW, and the nodes of this project neither encode nor decode AMR.
 
 > Guide: ["What this project simplifies"](../../../docs/guide/en/interconnect.md#what-this-project-simplifies). The table there gives the clause and the reason of each item.
 
 ---
 
-## Check it in the code
+## Where the code is
 
-| What you saw | Where to look |
-| --- | --- |
-| The profile, and what the IBCF does to each message | `screen.go`, `trust.go`, `number.go`, `codec.go`, `leg.go`, `border.go` in `internal/interconnect` |
-| The relay between the two dialogs of a call | `internal/b2bua` |
-| The IBCF role: the two UAs, the call, the short messages, the TrGW | `internal/ibcf` |
-| The request that leaves the network | `exitIBCF` in `internal/scscf/session.go` |
-| The number in a SIP URI becoming a tel URI | `telURIOf` in `internal/icscf/session.go` |
-| The short message across | `internal/sc/sc.go`, `deliver.go` and `message.go` in `internal/ipsmgw` |
-| The two networks, their nodes and the agreements | `deploy/interconnect/` |
+| What | Where | The function that decides |
+| --- | --- | --- |
+| The profile, and what the IBCF does to each message | `screen.go`, `trust.go`, `number.go`, `codec.go`, `leg.go`, `border.go` in `internal/interconnect` | `Border.ExitRequest`, `Border.EntryRequest`, `ScreenMethod`, `FilterCodecs`, `NormalizeNumber` |
+| The relay between the two dialogs of a call | `internal/b2bua` | |
+| The IBCF role: the two UAs, the call, the short messages, the TrGW | `internal/ibcf` | `IBCF.prepare`, `IBCF.Screen`, `IBCF.ReleaseLeftovers` |
+| The request that leaves the network | `exitIBCF` in `internal/scscf/session.go` | `exitIBCF` |
+| The number in a SIP URI becoming a tel URI | `telURIOf` in `internal/icscf/session.go` | `telURIOf` |
+| The short message across | `internal/sc/sc.go`, `deliver.go` and `message.go` in `internal/ipsmgw` | |
+| The two networks, their nodes and the agreements | `deploy/interconnect/` | |
 
 - The tests of `internal/ibcf` run two networks in one process: a fork beyond the border, a conference across it, and an instance that starts again and ends the calls it left.
 
@@ -1575,72 +1624,23 @@ grep -rn "SIMPLIFIED:" internal/ibcf internal/b2bua internal/interconnect intern
 
 ---
 
-[layout: exercise]
+## If you want to run it yourself
 
-## Exercises
+You need not run anything to read this deck. To see the same call and short messages in captures of your own, the guide has the steps.
 
-1. Find the INVITE of the call in each of the three captures, and, in the capture of network A, the INVITE of UE A1 to the P-CSCF as well. How many Call-IDs does the call have in all, and why?
-2. Open the INVITE on the link. How many Via entries does it carry, and where are the others?
-3. Give IBCF-B the agreement `network-a-amr-wb-only.yaml` and call UE B1. Which status comes back, and which node sent it?
-4. Search the capture of network B for an address of 172.28.0.0/24. What should the result be?
-5. Send IBCF-A a request from an address that no profile lists. What comes back?
-
-For 3, the commands are in "When the profiles do not match" in the guide. For 5, the script sends an INVITE and a MESSAGE from 172.28.2.99.
-
----
-
-[layout: answers]
-
-## Exercises: answers
-
-1. Four, one for each dialog: UE A1 and the MMTel AS, the MMTel AS and IBCF-A, IBCF-A and IBCF-B, IBCF-B and UE B1. The MMTel AS and each IBCF are B2BUAs: each ends the request on the side it came from and sends a new one on the other. The captures put the last three side by side, and network B has no AS in this call.
-2. One, IBCF-A's. The nodes of network A put theirs on the INVITE that ended at IBCF-A.
-3. 488 (Not Acceptable Here), from IBCF-B. Network B takes AMR-WB alone, and UE A1 offers PCMU.
-4. Nothing. No address of network A's inside crosses the border.
-5. Nothing at all: no 100 (Trying), no error response. IBCF-A drops the request, so the sender learns nothing of network A.
-
----
-
-[layout: exercise]
-
-## Looking back
-
-1. What does an IBCF do with a request that reaches it from its own network?
-2. Why does one call across the border have four Call-IDs?
-3. Which two reference points make up the II-NNI?
-4. What decides whether a MESSAGE may cross the border?
-5. Why does the caller's UE never see an address of the other network?
-6. What becomes of the calls of an IBCF instance whose process stops?
-
----
-
-[layout: answers]
-
-## Looking back: answers
-
-1. It ends it as the exit point of its network, and sends a new request in a dialog of its own towards the peer network.
-2. One per dialog: the caller and the MMTel AS, the MMTel AS and IBCF-A, the link, and IBCF-B and the callee. Each B2BUA ends one dialog and starts another.
-3. Ici between the IBCFs for the SIP, and Izi between the TrGWs for the media.
-4. The agreement with the peer network. MESSAGE is an optional method, and `methods` in the profile says whether it is allowed.
-5. The IBCF puts the media through its TrGW and writes the address of that TrGW in each network into the SDP of that side.
-6. They stop with it, and the parties keep their dialogs. An instance that starts again with its records ends them with a BYE in both dialogs.
+- ["Run it"](../../../docs/guide/en/interconnect.md#run-it). It starts the two networks, has UE B1 wait for a call, and calls its number from UE A1. The UE simulator takes network B's settings as flags, and `ue sms` of network B takes `-sc`, the number of the SC of that network, too. `scripts/e2e-interconnect.sh` runs everything of this deck and checks it in the three captures.
+- ["When the profiles do not match"](../../../docs/guide/en/interconnect.md#when-the-profiles-do-not-match). The commands that start an IBCF again with another agreement.
+- ["Clean up"](../../../docs/guide/en/interconnect.md#clean-up). It stops the nodes and UEs of both networks and of the link.
 
 ---
 
 ## Where to go from here
 
-- This was the last session. The guides go on where the sessions stop, and each one ends with what this project simplifies and where its code is.
+- Each guide ends with what this project simplifies and where its code is.
 
 | Document | Place |
 | --- | --- |
 | What the project is, and how to run it | [README.md](../../../README.md) |
+| Book | [docs/book/en/](../../../docs/book/en/README.md) |
 | Glossary | [docs/glossary.md](../../../docs/glossary.md) |
 | Guides | [docs/guide/en/](../../../docs/guide/en/) |
-
-```sh
-docker compose -f compose.yaml -f deploy/interconnect/compose.yaml --profile ue down -v --remove-orphans
-```
-
-- This is the "Clean up" of the guide, for the UEs of both networks and the nodes of both and of the link.
-
-> Guide: ["Clean up"](../../../docs/guide/en/interconnect.md#clean-up)

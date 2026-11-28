@@ -820,3 +820,164 @@ units:
       - TS 29.228 V18.0.0 6.1.4.1
     evidence: [code, test]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: access-and-borders
+    question:
+      ja: 携帯のアクセス網と別の事業者の網は、登録と通話に何を加えるのか
+      en: What do a mobile access network and another operator's network add to registration and calls
+    setup: deploy/compose with the profile volte (two VoLTE UEs and the EPC stub), and deploy/interconnect (a second network and the link between the two)
+    chapter: access-and-borders
+    scenes: [09-volte/nodes, 09-volte/answer, 09-volte/media, 10-interconnect/networks, 10-interconnect/legs, 10-interconnect/media]
+    code:
+      - internal/ue/access.go:AccessNetwork
+      - internal/policy/policy.go:PolicyControl
+    tests:
+      - internal/ue/volte_epc_test.go:TestVoLTECallOverTheEPCStub
+      - internal/ue/volte_epc_test.go:TestNetworkEndsTheCallWhenItTakesTheBearer
+      - internal/ue/aka_ims_test.go:TestIMSAKAThroughTheWholeIMS
+      - internal/ibcf/network_test.go:TestCallAcrossTheBorder
+      - internal/ibcf/network_test.go:TestMismatchedProfiles
+      - internal/ibcf/network_test.go:TestRequestFromNoPeerIsDiscarded
+    standards:
+      - GSMA IR.92 v24.0
+      - TS 29.165 V20.0.0
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: volte-registration
+    question:
+      ja: VoLTE の端末は、P-CSCF をどう見つけ、IMS-AKA で網とどう確かめ合うのか
+      en: How does a VoLTE phone find its P-CSCF, and how do it and the network prove themselves to each other with IMS AKA
+    setup: deploy/compose with the profile volte; volte10 attaches to the EPC stub and registers with IMS AKA through the P-CSCF, I-CSCF, S-CSCF and HSS
+    chapter: volte
+    scenes: [09-volte/attach, 09-volte/challenge, 09-volte/answer]
+    code:
+      - cmd/ue/main.go:openUE
+      - internal/ue/access_epc.go:Attach
+      - internal/scscf/scscf.go:register
+      - internal/scscf/aka.go:registerAKA
+      - internal/scscf/aka.go:challengeAKA
+      - internal/aka/aka.go:NewAuthenticationVector
+      - internal/aka/usim.go:Authenticate
+      - internal/pcscf/secagree.go:receiveSecAgree
+      - internal/pcscf/secagree.go:challenged
+      - internal/pcscf/secagree.go:answerSecAgree
+    tests:
+      - internal/scscf/aka_test.go:TestRegistrationWithIMSAKA
+      - internal/scscf/aka_test.go:TestIMSAKAResynchronisation
+      - internal/scscf/aka_test.go:TestIMSAKANetworkAuthenticationFailure
+      - internal/pcscf/secagree_test.go:TestIMSAKASecurityAgreement
+      - internal/aka/aka_test.go:TestUSIMAcceptsTheNetworksVector
+      - internal/aka/aka_test.go:TestResynchronisation
+      - internal/epc/epc_test.go:TestAttachGivesTheAddressAndTheP_CSCFs
+      - internal/ue/aka_ims_test.go:TestIMSAKAThroughTheWholeIMS
+    standards:
+      - TS 24.229 V20.1.0 5.1.1.1A, 5.1.1.4.2, 5.1.1.6.2, 5.2.2.2, 5.4.1.1, 5.4.1.2.1A, 5.4.1.2.2, 5.4.1.2.2F, L.2.2.1
+      - TS 29.229 6.3.9
+      - TS 33.203 V20.0.0 6.2, 6.3, 7.1, 7.2
+      - TS 33.102 V19.1.0 6.3.2, 6.3.3, C.2
+      - TS 24.008 10.5.6.3
+      - RFC 3310 3.2, 3.3
+      - RFC 3329
+      - GSMA IR.92 v24.0 4.4.1, 4.5
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: volte-call
+    question:
+      ja: VoLTE の通話で、網は音声の資源をいつ用意し、着信側はいつ鳴り、網はどう通話を終えるのか
+      en: In a VoLTE call, when does the network set up the voice resources, when does the callee ring, and how does the network end the call
+    setup: deploy/compose with the profile volte; volte10 calls volte12 through the MMTel AS, and the P-CSCF talks Rx to the PCRF of the EPC stub
+    chapter: volte
+    scenes: [09-volte/signalling-path, 09-volte/media, 09-volte/precondition, 09-volte/release]
+    code:
+      - internal/pcscf/setup.go:authorize
+      - internal/epc/pcrf.go:aaRequest
+      - internal/precondition/table.go:Met
+      - internal/pcscf/release.go:PolicyEvent
+      - internal/pcscf/release.go:sendBYEs
+    tests:
+      - internal/ue/volte_epc_test.go:TestVoLTECallOverTheEPCStub
+      - internal/ue/volte_epc_test.go:TestNetworkEndsTheCallWhenItTakesTheBearer
+      - internal/pcscf/policy_test.go:TestUEWithoutIPCANSessionRegistersWithoutPolicyControl
+      - internal/pcscf/policy_test.go:TestTerminatingCallHasItsMediaAuthorised
+      - internal/epc/epc_test.go:TestTheMediaOfACallGetAVoiceBearer
+      - internal/precondition/precondition_test.go:TestVoLTEFlow
+      - internal/pcscf/release_test.go:TestReleasedBearerEndsTheCallWithBYEs
+    standards:
+      - TS 29.214 V20.0.0 4.4.1, 4.4.4, 4.4.5, 4.4.6.1, 4.4.6.2, A.1, A.4
+      - TS 29.213 6.2
+      - TS 24.229 V20.1.0 5.1.3.1, 5.2.8.1.1, 5.2.8.1.2, 6.1.2, L.2.2.5.1B
+      - TS 24.301 V20.1.0 6.4.4.2
+      - RFC 3312 6, 7
+      - GSMA IR.92 v24.0 2.4.1, 2.4.2.3, 2.4.3.1, 2.4.3.2, 3.2.4, 3.2.5
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: interconnect-call
+    question:
+      ja: 通話はどう別の事業者の網へ出ていき、相手網には何が見えるのか
+      en: How does a call leave for another operator's network, and what does that network see
+    setup: deploy/interconnect; UE A1 of network A calls UE B1 of network B through the MMTel AS, IBCF-A, IBCF-B and the two TrGWs
+    chapter: interconnect
+    scenes: [10-interconnect/refpoints, 10-interconnect/exit, 10-interconnect/entry, 10-interconnect/media, 10-interconnect/four-dialogs, 10-interconnect/dialogs]
+    code:
+      - internal/scscf/session.go:routeOriginating
+      - internal/scscf/session.go:exitIBCF
+      - internal/ibcf/ibcf.go:prepare
+      - internal/interconnect/border.go:ExitRequest
+      - internal/interconnect/border.go:EntryRequest
+      - internal/icscf/session.go:telURIOf
+    tests:
+      - internal/scscf/session_test.go:TestOriginatingCallToAnotherNetworkLeavesThroughTheIBCF
+      - internal/scscf/session_test.go:TestHomeNetworkCallsStayInside
+      - internal/icscf/icscf_test.go:TestCallToANumberInASIPURIGoesOnAsATelURI
+      - internal/ibcf/network_test.go:TestCallAcrossTheBorder
+      - internal/ibcf/network_test.go:TestTrustedPeerGetsTheAssertedIdentity
+    standards:
+      - TS 24.229 V20.1.0 4.4, 4.4.1, 5.3.2.1, 5.4.3.2, 5.10.2, 5.10.2.2, 5.10.3, 5.10.3.2, 5.10.4, 5.10.5, 5.10.6, 6.7.1.4.1
+      - TS 29.165 V20.0.0 3.2, 5.1, 5.2.1, 7.1, 8.1
+      - RFC 3261 16.6, 18.1.1
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: interconnect-agreement
+    question:
+      ja: 事業者どうしの取り決めが食い違ったときと、取り決めの外から要求が来たとき、境界はどう振る舞うのか
+      en: How does the border behave when the agreements of two operators do not match, and when a request comes from outside every agreement
+    setup: deploy/interconnect with the profiles network-b-no-message.yaml, network-a-amr-wb-only.yaml and network-b-local-numbers.yaml, and a host at 172.28.2.99 on the link
+    chapter: interconnect
+    scenes: [10-interconnect/mismatch, 10-interconnect/screen]
+    code:
+      - internal/interconnect/screen.go:ScreenMethod
+      - internal/interconnect/number.go:NormalizeNumber
+      - internal/interconnect/codec.go:FilterCodecs
+      - internal/ibcf/ibcf.go:Screen
+    tests:
+      - internal/ibcf/network_test.go:TestMismatchedProfiles
+      - internal/ibcf/network_test.go:TestRequestFromNoPeerIsDiscarded
+      - internal/interconnect/screen_test.go:TestScreenMethod
+      - internal/interconnect/codec_test.go:TestFilterCodecs
+      - internal/interconnect/number_test.go:TestNormalizeNumber
+    standards:
+      - TS 24.229 V20.1.0 5.10.1
+      - TS 29.165 V20.0.0 7.1, 8.1, Table 6.1, Table 6.1.3.1, Annex C
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: interconnect-sms-conference-restart
+    question:
+      ja: ショートメッセージと会議はどう境界を越え、IBCF の台が起動し直すと呼はどうなるのか
+      en: How do short messages and a conference cross the border, and what happens to the calls when an IBCF instance starts again
+    setup: deploy/interconnect; UE A1 sends a short message to UE B1, the MMTel AS of network A invites UE B1 as a focus, and IBCF-A restarts with and without a store
+    chapter: interconnect
+    scenes: [10-interconnect/sms, 10-interconnect/sms-b, 10-interconnect/conference]
+    code:
+      - internal/ibcf/recovery.go:ReleaseLeftovers
+      - internal/ibcf/recovery.go:byeInLeftover
+    tests:
+      - internal/ibcf/network_test.go:TestMessageAcrossTheBorder
+      - internal/ibcf/focus_test.go:TestConferenceFocusAcrossTheBorder
+      - internal/ibcf/network_test.go:TestRestartedInstanceEndsTheCallsItLeft
+    standards:
+      - TS 23.204 V19.1.0 6.3a, 6.4, 6.4a
+      - TS 23.040 V20.0.0 9.2.3.15
+      - TS 24.147 V19.0.0 5.3.1.2, 5.3.1.3.2
+      - TS 24.229 V20.1.0 5.10.2.2, 5.10.3.2, 5.10.5
+      - RFC 3261 12.2.2
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96

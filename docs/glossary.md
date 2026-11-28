@@ -59,6 +59,7 @@ This glossary lists the abbreviations used in this project. Each entry has an En
 | QCI | QoS Class Identifier | A number that names a QoS class in the EPC. Voice uses QCI 1, and IMS signaling uses QCI 5. | EPC の QoS クラスを表す番号。音声は QCI 1、IMS の信号は QCI 5 を使う。 |
 | GBR | Guaranteed Bit Rate | A bearer whose bit rate the network reserves. The voice bearer (QCI 1) is a GBR bearer; the signaling bearer (QCI 5) is not (TS 23.203 6.1.7). | 網がビットレートを確保する bearer。音声の bearer（QCI 1）は GBR で、信号の bearer（QCI 5）は GBR ではない（TS 23.203 6.1.7）。 |
 | VoLTE | Voice over LTE | Voice calls over IMS on 4G access. GSMA IR.92 defines the profile. | 4G のアクセスで IMS を使う音声通話。GSMA IR.92 がプロファイルを定める。 |
+| VoNR | Voice over NR | Voice calls over IMS with the NR radio and the 5GC. GSMA NG.114 defines the profile. | NR の無線と 5GC の上で IMS を使う音声通話。GSMA NG.114 がプロファイルを決める。 |
 | EPS | Evolved Packet System | The 4G system: the LTE radio access and the EPC (TS 23.401). | 4G のシステム。LTE の無線アクセスと EPC からなる（TS 23.401）。 |
 | LTE / NR | Long Term Evolution / New Radio | The radio access of 4G and that of 5G. | 4G と 5G の無線アクセス。 |
 | 5GS | 5G System | The 5G system: the NR radio access and the 5GC (TS 23.501). | 5G のシステム。NR の無線アクセスと 5GC からなる（TS 23.501）。 |

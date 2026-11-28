@@ -16,6 +16,7 @@ What the nodes of IMS take care of, and what registration and a call settle, on 
 4. [Three things that registration settles](registration.md)
 5. [From a number to the other phone](call.md)
 6. [What application servers add](services.md)
+7. [Mobile access and other operators' networks](access-and-borders.md)
 
 ## Intermediate (the conditions of the specifications and the code)
 
@@ -29,6 +30,8 @@ Which decision, state and message change when a condition changes, followed thro
 - [Transactions, dialogs and media negotiation in a call](call-signaling.md)
 - [iFC and the supplementary services of the MMTel AS](mmtel.md)
 - [Announcements, ringback tones and conferences of the MRF](mrf.md)
+- [Registration and calls over VoLTE](volte.md)
+- [Interconnection between networks](interconnect.md)
 
 ## Advanced (design decisions within the specifications)
 
