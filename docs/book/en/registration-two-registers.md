@@ -67,11 +67,11 @@ Here the two nodes each record something different.
 ![The HSS receives the MAR, records this S-CSCF as the one that serves the user, and marks the authentication as pending](figures/04-registration.challenge.assign.svg)
 
 - **The HSS** records the S-CSCF that sent the MAR as the one that serves this user, and marks the authentication as pending. The registration is not done yet.
-- **The S-CSCF** stores the nonce it generated and the H(A1) it got from the HSS as the pending authentication, the challenge. It also stores the Call-ID of the REGISTER it challenged. Then it starts the timer reg-await-auth, which waits for the answer (4 minutes in TS 24.229 Table 7.7.1).
+- **The S-CSCF** stores the nonce it generated and the H(A1) it got from the HSS as the pending authentication, the challenge. It also stores the Call-ID of the REGISTER it challenged. Then it starts the timer reg-await-auth, which waits for the answer (4 minutes in TS 24.229 Table 7.8.1).
 
-The MAA carries H(A1), not the password itself. H(A1) is a hash computed from the user name, the realm and the password (RFC 2617 3.2.2.2). With it alone, the S-CSCF can check the UE's answer. But anyone who knows H(A1) can compute a correct answer in the same realm. It is not the password, yet it is a secret used for the authentication and is handled as one.
+The MAA carries H(A1), not the password itself. H(A1) is a hash computed from the user name, the realm and the password (RFC 7616 3.4.2). With it alone, the S-CSCF can check the UE's answer. But anyone who knows H(A1) can compute a correct answer in the same realm. It is not the password, yet it is a secret used for the authentication and is handled as one.
 
-The S-CSCF answers 401 Unauthorized. WWW-Authenticate carries the realm, the nonce, `algorithm=MD5` and `qop="auth"` (TS 24.229 5.4.1.2.1B). In this procedure, the 401 means that things go as planned. The response code 401 does not always mean success, but a 401 to the first REGISTER is a fixed step: it asks the user for an answer before the registration is accepted.
+The S-CSCF answers 401 Unauthorized. TS 24.229 5.4.1.2.1B asks for one WWW-Authenticate for each digest algorithm the S-CSCF supports, the most preferred first. Each carries the realm, the nonce, the algorithm and the qop. The digest rules are those of RFC 7616 and RFC 8760 (5.4.1.2.2A), where MD5 is kept only for backward compatibility. This S-CSCF offers MD5 alone. The HSS stub hands out only the MD5 H(A1), so this is a simplification. Its one WWW-Authenticate carries the realm, the nonce, `algorithm=MD5` and `qop="auth"`. In this procedure, the 401 means that things go as planned. The response code 401 does not always mean success, but a 401 to the first REGISTER is a fixed step: it asks the user for an answer before the registration is accepted.
 
 ## Why the second REGISTER reaches the same S-CSCF
 
@@ -143,11 +143,11 @@ In this flow, what the three nodes know does not change at the same moment.
 
 The HSS marking the user as registered, the S-CSCF storing the binding and the UE receiving the 200 OK happen at different moments. If a node stops in between, the nodes are left out of step. [What several nodes and failures hand over](design-shared-state.md) looks at how that is handled.
 
-The `rspauth` in the Authentication-Info of the 200 OK proves that the S-CSCF knows H(A1) too (RFC 2617 3.2.3). The UE checks it and learns that the network side is genuine as well.
+The `rspauth` in the Authentication-Info of the 200 OK proves that the S-CSCF knows H(A1) too (RFC 7616 3.5). The UE checks it and learns that the network side is genuine as well.
 
 ## 401 and 403
 
-With a wrong password, everything up to the second REGISTER goes the same way. The paths split in `check` in the S-CSCF: the answer does not match, so the verdict is `wrong`. The S-CSCF answers 403 Forbidden and sends the HSS a SAR with Server-Assignment-Type AUTHENTICATION_FAILURE (9) (TS 24.229 5.4.1.2.3B). For an initial registration, the HSS removes the S-CSCF it recorded, so the next attempt starts again from the first UAR.
+With a wrong password, everything up to the second REGISTER goes the same way. The paths split in `check` in the S-CSCF: the answer does not match, so the verdict is `wrong`. TS 24.229 5.4.1.2.3B allows two answers here: a 403, or a 401 with a new challenge. This implementation chooses the 403. The S-CSCF answers 403 Forbidden and sends the HSS a SAR with Server-Assignment-Type AUTHENTICATION_FAILURE (9). For an initial registration, the HSS removes the S-CSCF it recorded, so the next attempt starts again from the first UAR.
 
 A 401 says "give me an answer". A 403 says "the answer is wrong". An answer on a Call-ID other than that of the challenged REGISTER also fails the first condition in `check` and gets a 403.
 
@@ -156,7 +156,7 @@ A 401 says "give me an answer". A 403 says "the answer is wrong". An answer on a
 This chapter followed a normal initial registration. In these cases, the number of REGISTERs changes.
 
 - **A stale answer.** If the password is right but the nonce is old, the S-CSCF challenges again with a new 401 that has `stale=true`. There are three REGISTERs or more.
-- **An answer after the deadline.** An answer that comes after reg-await-auth runs out is not accepted. The S-CSCF ends the challenge and returns a 401 with a new nonce (TS 24.229 5.4.1.2.3).
+- **An answer after the deadline.** When reg-await-auth runs out, the authentication has failed (TS 24.229 5.4.1.2.3). The S-CSCF ends the challenge and sends the HSS a SAR with Server-Assignment-Type AUTHENTICATION_TIMEOUT. An answer that comes after that is handled as a REGISTER with no authentication pending. It carries a digest response, so the S-CSCF challenges again with a new nonce and `stale=true` (5.4.1.2.2A step 1).
 - **Deregistration.** If the P-CSCF holds an IP association, the deregistering REGISTER carries `ip-assoc-yes`, and the S-CSCF handles it without a challenge. One REGISTER is enough.
 - **Re-registration.** The S-CSCF removed the challenge when it accepted the registration. So a SIP Digest re-registration is challenged with a new 401 too, and there are two REGISTERs again. The 401 to a REGISTER that answers with the earlier nonce has `stale=true` (TS 24.229 5.4.1.2.2A).
 
@@ -167,6 +167,7 @@ The account in this chapter was checked against the code and the tests below. Ea
 - `TestRegistrationWithSIPDigest` in `internal/scscf/scscf_test.go`. The first REGISTER gets a 401, and the REGISTER that answers gets a 200 OK.
 - `TestFirstRegistrationChoosesAnSCSCFByCapability` in `internal/icscf/icscf_test.go`. An I-CSCF that receives a UAA without a Server-Name chooses an S-CSCF by its capabilities.
 - `TestWrongPasswordIsForbidden` and `TestAnswerOnAnotherCallIDIsForbidden` in `internal/scscf/scscf_test.go`. A wrong password leads to a 403 and a SAR with AUTHENTICATION_FAILURE, and an answer on another Call-ID gets a 403.
+- `TestRegistrationRejectsExpiredChallengeBeforeSweep` in `internal/scscf/challenge_deadline_test.go`. An answer that comes after reg-await-auth gets a 401 with a new nonce and `stale=true`, and the HSS receives a SAR with AUTHENTICATION_TIMEOUT.
 - `TestRegisterRefreshAndDeregisterThroughTheWholeIMS` in `internal/ue/ue_test.go`. It runs every node from the P-CSCF to the HSS in one process, and registration, re-registration and deregistration go through.
 
 The figures are diagrams of how this setup behaves, drawn from the guide. They are not captures.

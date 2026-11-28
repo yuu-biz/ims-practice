@@ -29,12 +29,14 @@ units:
       - internal/scscf/scscf_test.go:TestRegistrationWithSIPDigest
       - internal/scscf/scscf_test.go:TestWrongPasswordIsForbidden
       - internal/scscf/scscf_test.go:TestAnswerOnAnotherCallIDIsForbidden
+      - internal/scscf/challenge_deadline_test.go:TestRegistrationRejectsExpiredChallengeBeforeSweep
       - internal/icscf/icscf_test.go:TestFirstRegistrationChoosesAnSCSCFByCapability
       - internal/ue/ue_test.go:TestRegisterRefreshAndDeregisterThroughTheWholeIMS
     standards:
-      - TS 24.229 V18.11.0 5.4.1.2.1, 5.4.1.2.1B, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3B, 5.2.2.3, Table 7.7.1
+      - TS 24.229 V18.11.0 5.4.1.2.1, 5.4.1.2.1B, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3B, 5.2.2.3, Table 7.8.1
       - TS 29.228 V18.0.0 6.1.1, 6.1.1.1, 6.3, 6.7
-      - RFC 2617 3.2.2.2, 3.2.3
+      - RFC 7616 3.4.2, 3.5
+      - RFC 8760 2.3
     evidence: [code, test]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
   - id: registration-routes
@@ -429,7 +431,7 @@ units:
       - internal/kvstore/kvlock/kvlock_test.go:TestStoppedHolder
     standards:
       - RFC 3261 10.3 (the paragraph before the steps, steps 6 and 7), 17.2.2
-      - TS 24.229 V18.11.0 3.1, 5.2.2.2, 5.4.1.2.1, 5.4.1.2.2, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3B, Table 7.7.1
+      - TS 24.229 V18.11.0 3.1, 5.2.2.2, 5.4.1.2.1, 5.4.1.2.2, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3B, Table 7.8.1
       - TS 29.228 V18.0.0 6.1.2.1
     evidence: [code, test, illustration]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96

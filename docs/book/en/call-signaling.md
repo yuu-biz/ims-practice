@@ -4,7 +4,7 @@ The signalling of one call reads best in two units. One is the transaction: a re
 
 A call of this implementation has three dialogs, because the MMTel AS is a B2BUA: it answers the INVITE it gets itself, and sends a new INVITE with a Call-ID of its own. The P-CSCF and the S-CSCF are proxies, which stay on the way of the dialogs by adding Record-Route. The I-CSCF adds no Record-Route, so it carries only the first INVITE and its responses.
 
-The media is settled by the offer in the INVITE and the answer in a reliable 183. A PRACK confirms the 183, and the 200 OK carries no SDP any more. Each time an offer or an answer passes, the P-CSCF rewrites the addresses of the SDP to those of the media relay. A call ended before the answer ends with CANCEL; after the answer, with BYE. When a call fails, the node that makes the response and the condition that decides it differ from case to case. In every case the P-CSCF frees the context in the relay once it sees the INVITE fail or a BYE end the dialog.
+The media is settled by the offer in the INVITE and the answer in a reliable 183. A PRACK confirms the 183, and this UE sends the 200 OK without SDP. Each time an offer or an answer passes, the P-CSCF rewrites the addresses of the SDP to those of the media relay. A call ended before the answer ends with CANCEL; after the answer, with BYE. When a call fails, the node that makes the response and the condition that decides it differ from case to case. In every case the P-CSCF frees the context in the relay once it sees the INVITE fail or a BYE end the dialog.
 
 This chapter builds on [From a number to the other phone](call.md). It ties the way and the jobs of the nodes seen there to the conditions of the specifications, to the functions that decide, and to the tests that check them.
 
@@ -148,7 +148,7 @@ A PRACK is a request within a dialog, so it follows the route set, not the way o
 
 The two UEs settle the media with the offer and answer of RFC 3264. UE 1 puts an offer in the INVITE, and UE 2 an answer in the 183 (RFC 3264 5.1, 6.1). The offer has UE 1's address and RTP port, PCMU and telephone-event; the answer has the one codec that UE 2 chose and UE 2's address.
 
-The SDP in the reliable 183 is the answer, so the 200 OK carries no SDP (RFC 3262 5). The UE decides it as follows.
+The SDP in the reliable 183 is the answer: RFC 3262 5 lets the UAS put the answer in a reliable provisional response. The answer is settled there, so this UE sends the 200 OK without SDP. The UE decides it as follows.
 
 [internal/ue/call.go](../../../internal/ue/call.go)
 

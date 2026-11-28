@@ -21,7 +21,7 @@ The example is the setup of `deploy/compose` with the two phones of the profile 
 
 K and OPc are values of the MILENAGE test sets (TS 35.208 4.3.1, 4.3.3). The EPC stub is not a real EPC. Its messages and their fields are the EMM and ESM ones of TS 24.301, but there is no radio and no NAS encoding: the phones talk to it in JSON over HTTP. The PCRF and the PDN GW share their state inside one node, with no Gx between them.
 
-The specifications are those of the guide: TS 24.229 V20.1.0, TS 29.214 V20.0.0, TS 24.301 V20.1.0, TS 33.203 V20.0.0, TS 33.102 V19.1.0, RFC 3310, RFC 3329, RFC 3312, RFC 4867 and GSMA IR.92 v24.0. The frame numbers in the text (#698 and so on) are those of one run of the e2e script of the VoLTE call in the guide.
+The specifications are those of the guide: TS 24.229 V20.1.0, TS 29.214 V20.0.0, TS 24.301 V20.1.0, TS 33.203 V20.0.0, TS 33.102 V19.1.0, RFC 3310, RFC 3329, RFC 3312, RFC 4867 and GSMA IR.92 v24.0.
 
 ## The attach gives the address of the P-CSCF
 
@@ -140,7 +140,7 @@ func (p *PCSCF) challenged(st *sip.ServerTransaction, final *sip.Message, a *sec
 	}
 ```
 
-The P-CSCF reads each WWW-Authenticate of the 401, takes `ik` and `ck` out when they are there, and writes the value again without them. The keys never travel to the phone: it can compute the same keys from its own K and RAND, so there is no need to send them. A 401 without the keys becomes a 500, because the P-CSCF could not set up associations with the phone (TS 24.229 5.2.2.2).
+The P-CSCF reads each WWW-Authenticate of the 401, takes `ik` and `ck` out when they are there, and writes the value again without them. The keys never travel to the phone: it can compute the same keys from its own K and RAND, so there is no need to send them. TS 24.229 5.2.2.2 item 2 has the P-CSCF forward the 401 only if it has removed `ck` and `ik`, so a 401 without the keys does not reach the phone. The clause does not say what the P-CSCF sends instead. This implementation answers 500, because it could not set up associations with the phone.
 
 Further on, the P-CSCF chooses its SPIs and protected ports, and adds them to the 401 in `Security-Server`. The protected server port is 5064. At the same time it puts temporary associations with IK and CK into the SA table, with the time to wait for the answer as their expiry (TS 33.203 7.2). The 401 reaches the phone over the same pair of ports 5060 as the REGISTER that went out.
 
@@ -202,7 +202,7 @@ The temporary public user identity holds the IMSI, so the HSS of this network ba
 
 ## The Rx session that watches the signalling path
 
-The P-CSCF is the application function (AF) of policy and charging control; the PCRF decides what the access network carries (TS 29.214 clause 4). Once a registration succeeds, the P-CSCF sends an AAR over Rx and asks the PCRF to tell it when the phone loses its signalling bearer (TS 29.214 A.4, #786). It has one Media-Component-Description, number 0, with `Flow-Usage` AF_SIGNALLING. The PCRF finds the phone's IP-CAN session by `Framed-IP-Address` and binds the two.
+The P-CSCF is the application function (AF) of policy and charging control; the PCRF decides what the access network carries (TS 29.214 clause 4). Once a registration succeeds, the P-CSCF sends an AAR over Rx and asks the PCRF to tell it when the phone loses its signalling bearer (TS 29.214 A.4). It has one Media-Component-Description, number 0, with `Flow-Usage` AF_SIGNALLING. The PCRF finds the phone's IP-CAN session by `Framed-IP-Address` and binds the two.
 
 ![After the registration of ue2, a softphone that did not attach, the PCRF answers the AAR with IP-CAN_SESSION_NOT_AVAILABLE](figures/09-volte.signalling-path.notfound.svg)
 
@@ -250,7 +250,7 @@ func (s *setup) authorize(answer []byte) error {
 
 The input `answer` is the SDP answer as the phone sees it. The first condition does nothing for an answer that was authorised already: the same answer comes again in the 2xx after an unreliable 183, and in each retransmission of the 2xx. Next it reads whether the registration has a policy session for its signalling path. Without one, this phone did not come through the EPC, and its calls get no policy control either. With one, `AuthorizeMedia` sends the AAR with the offer and the answer, the phone's address, and the events to be told about (the loss of a bearer, its release, and a failed allocation). If the PCRF refuses, the P-CSCF ends the call there.
 
-The content of the AAR comes from the SDP (TS 29.213 6.2). In the callee's AAR (#1036) one `Flow-Description` is `permit in 17 from 172.28.0.121 to 172.28.0.50 40004`: the other end of the media is the relay, not the other phone. `Max-Requested-Bandwidth-UL` and `-DL` are 80000 and 41000 from b=AS, in bit/s, and `Flow-Status` is `ENABLED` from sendrecv. On hold, the caller's `Flow-Status` becomes `ENABLED-UPLINK` and the callee's `ENABLED-DOWNLINK`. Only the callee's P-CSCF sends `AF-Application-Identifier`, which is a simplification: the caller's would take it from Feature-Caps, and no node writes that.
+The content of the AAR comes from the SDP (TS 29.213 6.2). In the callee's AAR, one `Flow-Description` is `permit in 17 from 172.28.0.121 to 172.28.0.50 40004`: the other end of the media is the relay, not the other phone. `Max-Requested-Bandwidth-UL` and `-DL` are 80000 and 41000 from b=AS, in bit/s, and `Flow-Status` is `ENABLED` from sendrecv. On hold, the caller's `Flow-Status` becomes `ENABLED-UPLINK` and the callee's `ENABLED-DOWNLINK`. Only the callee's P-CSCF sends `AF-Application-Identifier`, which is a simplification: the caller's would take it from Feature-Caps, and no node writes that.
 
 ## The order of the AAA and the bearer
 
@@ -311,7 +311,7 @@ The 200 (INVITE) has no SDP: the answer came in the reliable 183.
 
 The offer of a VoLTE phone lists AMR-WB first and AMR next, each in the two payload formats of RFC 4867. Bandwidth-efficient (96, 98) goes before octet-aligned (97, 99) because IR.92 3.2.5 has the caller prefer it. There is no mode-set, so every mode may be used (IR.92 2.4.3.2). PCMU stays last, so that the phone can talk to a softphone that knows PCMU only. That makes b=AS the value for PCMU, 80, and the uplink bandwidth that the P-CSCF asks the PCRF for takes the same value. volte12 answers `m=audio 60734 RTP/AVP 96 100` with `b=AS:41`: AMR-WB in bandwidth-efficient mode, and telephone-event at 16000 Hz.
 
-This UE neither encodes nor decodes AMR. It sends frames prepared in the storage format of RFC 4867 clause 5, one 20 ms frame per packet. So it cannot follow the CMR, which is one of the simplifications. RTCP goes on the port above RTP (RFC 3550 6.4.1, IR.92 3.2.4), and DTMF as telephone-events (RFC 4733).
+This UE neither encodes nor decodes AMR. It sends frames prepared in the storage format of RFC 4867 clause 5, one 20 ms frame per packet. So it cannot follow the CMR, which is one of the simplifications. RTCP goes on the port above RTP (RFC 3550 11, IR.92 3.2.4), and DTMF as telephone-events (RFC 4733).
 
 ## When the network takes the bearer, the P-CSCF ends the call
 
@@ -339,7 +339,7 @@ func (p *PCSCF) sendBYEs(d Dialog, log *slog.Logger) {
 
 The BYEs are built from the Contact, the tags, the CSeq and the route of the dialog that the P-CSCF saved in its `Store`. The first goes to the other side in the name of the served phone; that is the BYE the standard asks for. The second goes to the served phone in the name of the other side. This implementation adds it, and the code says so with a `SIMPLIFIED:` note: a phone that lost only its voice bearer still has its signalling path, and without a BYE it would stay in a call that the network has ended. Both BYEs carry `Reason: SIP;cause=503;text="Service Unavailable"`. Once both have their answers, the P-CSCF deletes the dialog.
 
-When the bearer is lost before the call is answered, the P-CSCF gives up the INVITE: it answers the caller with 500 and cancels the INVITE towards the callee (TS 24.229 5.2.8.1.1). In a call that ends with an ordinary BYE, the P-CSCF of each side ends its Rx session with an STR, with `Termination-Cause` DIAMETER_LOGOUT (TS 29.214 4.4.4).
+When the voice bearer is lost before the call is answered, the P-CSCF gives up the INVITE: it answers the INVITE with 500 and cancels it towards the callee. TS 24.229 5.2.8.1.1 asks for both steps when the resources for the media are gone, whichever side the P-CSCF serves. It splits them by side only when the signalling bearer is lost: then the P-CSCF of the calling user sends the CANCEL, and the P-CSCF of the called user answers with 500. In a call that ends with an ordinary BYE, the P-CSCF of each side ends its Rx session with an STR, with `Termination-Cause` DIAMETER_LOGOUT (TS 29.214 4.4.4).
 
 ## What this project simplifies
 

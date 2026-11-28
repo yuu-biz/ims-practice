@@ -191,16 +191,16 @@ UE 1 から UE 2 への通話は、ダイアログ C1、C2、C3 の 3 つにな�
 | Call-ID | 1 つの通話に 3 つ。転送した通話ではさらに 3 つ増える。 |
 | P-Charging-Vector の icid-value | 網の中では 3 つとも同じ。ラボはこれで 1 つの通話にまとめる。 |
 | LIR | ダイアログ C2 のもの。 |
-| PRACK と ACK | ダイアログごとに進む。ACK が 200 より先に UE 2 に届くことがある。 |
+| PRACK と ACK | ダイアログごとに進む。200 が UE 1 に届くより先に、ACK が UE 2 に届くことがある。 |
 | BYE | AS が答え、同じ Reason を付けた新しい BYE を次に送る。 |
 
-LIR が C2 のものなのは、S-CSCF が ENUM を引いて I-CSCF に送るのが、UE 1 の AS が送り返した INVITE だからです。ACK が 200 より先に UE 2 に届くことがあるのは、AS が自分の側で受けた 2xx にすぐ ACK を返すからです。P-Charging-Vector は P-CSCF が UE に送るものから消すので、UE との区間には出ません。
+LIR が C2 のものなのは、S-CSCF が ENUM を引いて I-CSCF に送るのが、UE 1 の AS が送り返した INVITE だからです。200 が UE 1 に届くより先に ACK が UE 2 に届くことがあるのは、AS が自分の側で受けた 2xx にすぐ ACK を返すからです。P-Charging-Vector は P-CSCF が UE に送るものから消すので、UE との区間には出ません。
 
 転送した通話では、ダイアログの数が 6 つになります。UE 1 の発信側の C1、UE 2 の AS までの C2、UE 2 の AS から UE 2 への C3（CFU では作られない）に加えて、転送の INVITE の C4、転送元の利用者の発信側のサービスを通った C5、UE 3 の AS から UE 3 への C6 です。手順書のシーケンス図には C1 から C6 までが並んでいます。
 
 ### 転送に気づく S-CSCF
 
-AS が着信側の INVITE を別の宛先に送り返したとき、S-CSCF はそれを転送だと気づき、転送元の利用者の発信側のサービスを続けます（TS 24.229 5.4.3.3 step 3）。
+AS が着信側の INVITE を別の宛先に送り返したとき、S-CSCF はそれを転送だと気づき、着信側の iFC を照らすのをやめます（TS 24.229 5.4.3.3 step 3）。そのあと転送元の利用者の発信側のサービスを動かすかどうかは、標準では決まっていません。S-CSCF の設定で、要求をそのまま送るか（a）、転送のあとの発信側のサービスを照らすか（b）を選びます。この S-CSCF は利用者の iFC で選びます（同じ step の NOTE 6）。この構成では転送元の利用者が ORIGINATING_CDIV の条件を持つので、発信側のサービスを続けます。
 
 [internal/scscf/services.go](../../../internal/scscf/services.go)
 
@@ -211,7 +211,7 @@ AS が着信側の INVITE を別の宛先に送り返したとき、S-CSCF は�
 	}
 ```
 
-入力は送り返された要求 `out` と、ODI に結び付けた状態 `d` です。着信側の場合で、Request-URI が保存した宛先（または served user の別名）と同じでなければ、`retargeted` に進みます。`retargeted` は、served user が ORIGINATING_CDIV の条件を持っていれば、その条件を転送元の利用者のために照らします。この構成では優先度 13 が一致し、INVITE は `orig-cdiv` を付けてもう一度 AS に届きます。そこで AS が動かすのは転送元の利用者の OCB だけで、UE 2 が規制した宛先への転送はここで止まります（TS 24.611 4.6.7）。
+入力は送り返された要求 `out` と、ODI に結び付けた状態 `d` です。着信側の場合で、Request-URI が保存した宛先（または served user の別名）と同じでなければ、`retargeted` に進みます。`retargeted` は、served user が ORIGINATING_CDIV の条件を持っていれば、その条件を転送元の利用者のために照らします。持っていなければ、発信側と同じように要求を送ります。この構成では優先度 13 が一致し、INVITE は `orig-cdiv` を付けてもう一度 AS に届きます。そこで AS が動かすのは転送元の利用者の OCB だけで、UE 2 が規制した宛先への転送はここで止まります（TS 24.611 4.6.7）。
 
 ## 設定は HSS の文書 1 つ
 

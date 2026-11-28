@@ -200,7 +200,7 @@ A diverted call has six dialogs: C1 on UE 1's originating side, C2 up to UE 2's 
 
 ### The S-CSCF notices a diversion
 
-When the AS sends a terminating INVITE back to another target, the S-CSCF takes it as a diversion and goes on with the originating services of the diverting user (TS 24.229 5.4.3.3 step 3).
+When the AS sends a terminating INVITE back to another target, the S-CSCF takes it as a diversion and stops evaluating the iFCs of the terminating case (TS 24.229 5.4.3.3 step 3). Whether it then runs the originating services of the diverting user is not fixed by the standard. The S-CSCF chooses by its configuration: it either sends the request on (a) or evaluates the originating services after retargeting (b). This S-CSCF chooses by the user's iFCs (NOTE 6 of the same step). In this setup the diverting user has criteria of ORIGINATING_CDIV, so the S-CSCF goes on with the originating services.
 
 [internal/scscf/services.go](../../../internal/scscf/services.go)
 
@@ -211,7 +211,7 @@ When the AS sends a terminating INVITE back to another target, the S-CSCF takes 
 	}
 ```
 
-The inputs are the request that came back, `out`, and the state stored under the ODI, `d`. In the terminating case, when the Request-URI is not the stored target (or an alias of the served user), it goes to `retargeted`. When the served user has criteria of ORIGINATING_CDIV, `retargeted` evaluates them for the diverting user. In this setup priority 13 matches, and the INVITE comes to the AS once more with `orig-cdiv`. There the AS runs only the OCB of the diverting user, so a diversion to a target that UE 2 has barred stops here (TS 24.611 4.6.7).
+The inputs are the request that came back, `out`, and the state stored under the ODI, `d`. In the terminating case, when the Request-URI is not the stored target (or an alias of the served user), it goes to `retargeted`. When the served user has criteria of ORIGINATING_CDIV, `retargeted` evaluates them for the diverting user. Without them, it routes the request as the originating case does. In this setup priority 13 matches, and the INVITE comes to the AS once more with `orig-cdiv`. There the AS runs only the OCB of the diverting user, so a diversion to a target that UE 2 has barred stops here (TS 24.611 4.6.7).
 
 ## The settings are one document in the HSS
 

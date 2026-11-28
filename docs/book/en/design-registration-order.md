@@ -14,7 +14,7 @@ This chapter builds on [Why a UE sends REGISTER twice](registration-two-register
 
 The example is the `deploy/compose` setup, with a softphone UE that registers with SIP Digest. The S-CSCF of that setup is one instance and keeps its state in its own process. The later sections put the state of the S-CSCF in a shared store, Valkey (the `deploy/redundancy` setup), and then let several instances share that store. The Compose setup runs one S-CSCF; the behaviour of several instances is what the Go tests check, by running two instances on one store. The S-CSCF of this implementation keeps one Contact for each private identity (TS 24.229 5.4.1.2.2A without reg-id).
 
-Unless it says otherwise, a time is the default of this implementation. reg-await-auth is 4 minutes (TS 24.229 Table 7.7.1); the sweep that looks for what is due runs every second; the time for which one instance holds an expiry it has found (its claim) and the lease of the lock per user are both 15 seconds. The tests run with shorter values.
+Unless it says otherwise, a time is the default of this implementation. reg-await-auth is 4 minutes (TS 24.229 Table 7.8.1); the sweep that looks for what is due runs every second; the time for which one instance holds an expiry it has found (its claim) and the lease of the lock per user are both 15 seconds. The tests run with shorter values.
 
 The specifications cited are TS 24.229 V18.11.0, TS 29.228 V18.0.0 and RFC 3261.
 

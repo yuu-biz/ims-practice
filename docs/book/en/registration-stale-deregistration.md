@@ -105,7 +105,7 @@ The second is the deregistration, `deregister`.
 		return
 ```
 
-If the Contact to deregister differs from the stored Contact, there is nothing to remove, so the S-CSCF answers 481. If it is the same, the S-CSCF compares the order. A deregistration that writes `*` in Contact to remove everything (`wildcard`) skips the check of the Contact, but the order is still compared.
+If the Contact to deregister differs from the stored Contact, there is nothing to remove, so the S-CSCF answers 481. If it is the same, the S-CSCF compares the order. A deregistration that writes `*` in Contact to remove everything (`wildcard`) skips the check of the Contact, but the order is still compared. For this case the rule is step 6 of RFC 3261 10.3, which compares the Call-ID and the CSeq with each binding in the same way.
 
 What matters is that the comparison comes before the side effects. In `accept`, the SAR is sent and the registration rewritten after the comparison. In `deregister`, the deregistering SAR is sent and the registration removed after the comparison. If these came before the comparison, the records of the HSS and the S-CSCF would change even when the request is refused.
 
@@ -117,7 +117,7 @@ If the P-CSCF holds an IP association, the deregistering REGISTER carries `integ
 
 When the S-CSCF finds a request out of order, it returns a 500 in `refuseOutOfOrder`. The Contact, the expiry, the Call-ID and the CSeq of the binding do not change, and no SAR goes to the HSS.
 
-The response code needs a separate look. Step 7 of RFC 3261 10.3 says only that such a request fails. It does not say which response code to return. This implementation chooses 500, the code that the same step gives for binding updates that cannot be committed. The standard does not fix 500 as the only code for this case; it is the choice of this implementation. Sending the same request again is refused for the same reason, so there is no Retry-After.
+The response code needs a separate look. Step 7 of RFC 3261 10.3 (step 6 for Contact `*`) says only that such a request fails. It does not say which response code to return. This implementation chooses 500, the code that step 7 gives for binding updates that cannot be committed. The standard does not fix 500 as the only code for this case; it is the choice of this implementation. Sending the same request again is refused for the same reason, so there is no Retry-After.
 
 On the re-registration side, the challenge that the refused request used was removed when the answer was checked. What remains after the refusal is the binding from before.
 

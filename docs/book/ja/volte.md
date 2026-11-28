@@ -21,7 +21,7 @@ VoLTE の端末は、登録の前に携帯のアクセス網に attach します
 
 K と OPc は MILENAGE の試験データの値です（TS 35.208 4.3.1、4.3.3）。EPC スタブは本物の EPC ではありません。メッセージの名前と項目は TS 24.301 の EMM と ESM のとおりですが、無線も NAS の符号化もなく、端末とは HTTP の上の JSON でやり取りします。PCRF と PDN GW は 1 つのノードの中で状態を共有し、あいだに Gx はありません。
 
-この章が引く仕様の版は、手順書と同じく TS 24.229 V20.1.0、TS 29.214 V20.0.0、TS 24.301 V20.1.0、TS 33.203 V20.0.0、TS 33.102 V19.1.0、RFC 3310、RFC 3329、RFC 3312、RFC 4867、GSMA IR.92 v24.0 です。文中のフレームの番号（#698 など）は、手順書が VoLTE の通話の e2e のスクリプトを 1 回動かしたときのものです。
+この章が引く仕様の版は、手順書と同じく TS 24.229 V20.1.0、TS 29.214 V20.0.0、TS 24.301 V20.1.0、TS 33.203 V20.0.0、TS 33.102 V19.1.0、RFC 3310、RFC 3329、RFC 3312、RFC 4867、GSMA IR.92 v24.0 です。
 
 ## attach で P-CSCF のアドレスを受け取る
 
@@ -140,7 +140,7 @@ func (p *PCSCF) challenged(st *sip.ServerTransaction, final *sip.Message, a *sec
 	}
 ```
 
-P-CSCF は 401 の WWW-Authenticate を 1 つずつ読み、`ik` と `ck` があれば取り出して、その 2 つを外した値に書き直します。鍵が端末まで運ばれることはありません。端末は同じ鍵を自分の K と RAND から計算できるので、送る必要がないためです。鍵の無い 401 は、P-CSCF が端末とアソシエーションを作れないので、500 に変わります（TS 24.229 5.2.2.2）。
+P-CSCF は 401 の WWW-Authenticate を 1 つずつ読み、`ik` と `ck` があれば取り出して、その 2 つを外した値に書き直します。鍵が端末まで運ばれることはありません。端末は同じ鍵を自分の K と RAND から計算できるので、送る必要がないためです。TS 24.229 5.2.2.2 の 2 は、`ck` と `ik` を外したときにだけ、P-CSCF が 401 を端末に送るよう定めています。そのため、鍵の無い 401 は端末に届きません。代わりに何を返すかは、この条項には書かれていません。この実装は、端末とアソシエーションを作れないので、500 を返します。
 
 この先で、P-CSCF は自分の SPI と保護ポートを決め、`Security-Server` に書いて 401 に足します。保護サーバーポートは 5064 番です。同時に、IK と CK を持つ一時的なアソシエーションを SA の表に置き、期限を答えを待つ時間に合わせます（TS 33.203 7.2）。端末に届く 401 は、行きの REGISTER と同じく 5060 番どうしの組です。
 
@@ -202,7 +202,7 @@ volte10 のカードには USIM があり、ISIM がありません。USIM に�
 
 ## 信号の経路を見張る Rx のセッション
 
-P-CSCF は、ポリシーと課金の制御のアプリケーション機能（AF）です。アクセス網が何を運ぶかは PCRF が決めます（TS 29.214 4 章）。登録が成功すると、P-CSCF は Rx で PCRF に AAR を送り、端末が信号の bearer を失ったら知らせるよう頼みます（TS 29.214 A.4、#786）。Media-Component-Description は 1 つで、番号は 0、`Flow-Usage` は AF_SIGNALLING です。PCRF は `Framed-IP-Address` で端末の IP-CAN セッションを見つけて結び付けます。
+P-CSCF は、ポリシーと課金の制御のアプリケーション機能（AF）です。アクセス網が何を運ぶかは PCRF が決めます（TS 29.214 4 章）。登録が成功すると、P-CSCF は Rx で PCRF に AAR を送り、端末が信号の bearer を失ったら知らせるよう頼みます（TS 29.214 A.4）。Media-Component-Description は 1 つで、番号は 0、`Flow-Usage` は AF_SIGNALLING です。PCRF は `Framed-IP-Address` で端末の IP-CAN セッションを見つけて結び付けます。
 
 ![attach していないソフトフォン ue2 の登録のあとの AAR に、PCRF が IP-CAN_SESSION_NOT_AVAILABLE で答える](figures/09-volte.signalling-path.notfound.svg)
 
@@ -250,7 +250,7 @@ func (s *setup) authorize(answer []byte) error {
 
 入力の `answer` は、端末から見た SDP の answer です。最初の条件で、すでに許可を受けた answer なら何もしません。同じ answer は、信頼性の無い 183 のあとの 2xx や、2xx の再送にも入っているためです。次に、登録のときの信号の経路の Rx のセッションがあるかを読みます。無ければ、この端末は EPC を通っていないので、通話にもポリシー制御をかけません。あれば `AuthorizeMedia` が AAR を送ります。offer と answer の両方と、端末のアドレスと、知らせてほしい事象（bearer の喪失、解放、割り当ての失敗）を渡します。PCRF が断れば、P-CSCF は通話をここで終わらせます。
 
-AAR の中身は SDP から作ります（TS 29.213 6.2）。着信側の AAR（#1036）では、`Flow-Description` が `permit in 17 from 172.28.0.121 to 172.28.0.50 40004` で、メディアのもう一方の端はもう一方の端末ではなく中継ノードです。`Max-Requested-Bandwidth-UL` と `-DL` は b=AS から決めた 80000 と 41000（単位は bit/s）、`Flow-Status` は sendrecv から `ENABLED` です。保留すると、発信側の `Flow-Status` は `ENABLED-UPLINK`、着信側は `ENABLED-DOWNLINK` になります。`AF-Application-Identifier` を送るのは着信側の P-CSCF だけで、これは簡略化です。発信側は Feature-Caps から取るはずですが、それを書くノードがありません。
+AAR の中身は SDP から作ります（TS 29.213 6.2）。着信側の AAR では、`Flow-Description` が `permit in 17 from 172.28.0.121 to 172.28.0.50 40004` で、メディアのもう一方の端はもう一方の端末ではなく中継ノードです。`Max-Requested-Bandwidth-UL` と `-DL` は b=AS から決めた 80000 と 41000（単位は bit/s）、`Flow-Status` は sendrecv から `ENABLED` です。保留すると、発信側の `Flow-Status` は `ENABLED-UPLINK`、着信側は `ENABLED-DOWNLINK` になります。`AF-Application-Identifier` を送るのは着信側の P-CSCF だけで、これは簡略化です。発信側は Feature-Caps から取るはずですが、それを書くノードがありません。
 
 ## AAA と bearer の順
 
@@ -311,7 +311,7 @@ func (t *Table) Met() bool {
 
 VoLTE の端末の offer は、AMR-WB を先に、次に AMR を、それぞれ RFC 4867 の 2 つのペイロード形式で並べます。bandwidth-efficient（96、98）を octet-aligned（97、99）より先に置くのは、IR.92 3.2.5 が発信側にそれを優先させるためです。mode-set は付けないので、すべてのモードを使えます（IR.92 2.4.3.2）。最後に PCMU を残しているのは、PCMU しか知らないソフトフォンとも話せるようにするためです。そのため b=AS は PCMU に合わせた 80 になり、P-CSCF が PCRF に求める上りの帯域もこの値になります。volte12 は `m=audio 60734 RTP/AVP 96 100` と `b=AS:41` で答えます。bandwidth-efficient の AMR-WB と、16000 Hz の telephone-event です。
 
-この UE は AMR を符号化も復号もしません。RFC 4867 5 章の格納形式で用意したフレームを、1 パケットに 20 ms のフレーム 1 つずつ送ります。そのため CMR に従えません。これも簡略化の 1 つです。RTCP は RTP の 1 つ上のポートで送り（RFC 3550 6.4.1、IR.92 3.2.4）、DTMF は telephone-event で送ります（RFC 4733）。
+この UE は AMR を符号化も復号もしません。RFC 4867 5 章の格納形式で用意したフレームを、1 パケットに 20 ms のフレーム 1 つずつ送ります。そのため CMR に従えません。これも簡略化の 1 つです。RTCP は RTP の 1 つ上のポートで送り（RFC 3550 11、IR.92 3.2.4）、DTMF は telephone-event で送ります（RFC 4733）。
 
 ## 網が bearer を落とすと P-CSCF が通話を終える
 
@@ -339,7 +339,7 @@ func (p *PCSCF) sendBYEs(d Dialog, log *slog.Logger) {
 
 BYE の材料は、P-CSCF が `Store` に保存したダイアログの Contact、タグ、CSeq、経路です。1 つ目は、サービスを受ける端末の名前で相手の側へ送ります。標準が求めるのはこの BYE です。2 つ目は、相手の名前でサービスを受ける端末へ送ります。これはこの実装が足したもので、コードに `SIMPLIFIED:` の注記があります。音声の bearer だけを失った端末は信号の経路を持ったままなので、BYE が来なければ、網が終えた通話に残り続けるためです。どちらの BYE にも `Reason: SIP;cause=503;text="Service Unavailable"` が付きます。2 つの BYE に答えが来ると、P-CSCF はダイアログを消します。
 
-通話に答える前に bearer を失ったときは、P-CSCF は INVITE をあきらめ、発信側に 500 を返し、着信側への INVITE を CANCEL で取り消します（TS 24.229 5.2.8.1.1）。普通の BYE で終わる通話では、両側の P-CSCF が STR で Rx のセッションを終え、`Termination-Cause` は DIAMETER_LOGOUT です（TS 29.214 4.4.4）。
+通話に答える前に音声の bearer を失ったときは、P-CSCF は INVITE をあきらめ、INVITE に 500 を返し、着信側への INVITE を CANCEL で取り消します。TS 24.229 5.2.8.1.1 は、メディアの資源が無くなったときには、P-CSCF がどちらの側にいても、この 2 つを求めています。側によって分けるのは、信号の bearer を失ったときだけです。そのときは、発信者の P-CSCF が CANCEL を送り、着信者の P-CSCF が 500 を返します。普通の BYE で終わる通話では、両側の P-CSCF が STR で Rx のセッションを終え、`Termination-Cause` は DIAMETER_LOGOUT です（TS 29.214 4.4.4）。
 
 ## 簡略化していること
 

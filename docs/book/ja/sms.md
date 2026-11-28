@@ -219,7 +219,7 @@ UDR で読む IMSI は、あとで SC から届く TFR が受信者を IMSI で�
 
 202 を返した IP-SM-GW は、RP-DATA を確かめます。RP-DA が自分の SC の番号であること、中の SMS-SUBMIT をデコードできること、P-Asserted-Identity に送信者の tel URI があることです。S-CSCF は、送信者を担当するときに tel URI を 2 つ目の P-Asserted-Identity として加えます（TS 24.229 5.4.3.2）。SC は送信者を電話番号で扱うので、IP-SM-GW はこの番号を SC に渡します（TS 24.341 5.3.1.2 NOTE 2）。
 
-IP-SM-GW は SMS-SUBMIT を OFR（MO-Forward-Short-Message、SGd）で SC に渡します（TS 23.204 6.3、TS 29.338 6.2.1）。SC は受け取る前に、受信者の番号を持つ利用者がいるかを SRR（Send-Routing-Info-for-SM、S6c）で HSS に尋ねます。TS 23.040 8.2.2 が SMS-IWMSC に認めている問い合わせです。
+IP-SM-GW は SMS-SUBMIT を OFR（MO-Forward-Short-Message、SGd）で SC に渡します（TS 23.204 6.3、TS 29.338 6.2.1）。SC は受け取る前に、受信者の番号を持つ利用者がいるかを SRR（Send-Routing-Info-for-SM、S6c）で HSS に尋ねます。TS 23.040 8.2.2 は、SMS-IWMSC がこの問い合わせを任意で行えるとしています。そこでは、受信者の IMSI を HLR から取り出し、SMS の網間の取り決め（interworking agreement）があるかを確かめます。HLR が誤りを返したときは、誤りを返します。この SC は、この問い合わせで、HSS が知らない番号を断ります。
 
 ![IP-SM-GW が OFR で SC に渡し、SC が SRR で受信者の番号を HSS に確かめ、SRA が UE 2 の IP-SM-GW と IMSI を返したので、OFA で引き受ける](figures/06-sms.sc-accept.ofa.svg)
 
@@ -292,7 +292,7 @@ UE 2 は 200 を返し、続けて 4 通目の delivery report を送ります�
 
 ![IP-SM-GW が delivery report で配達を見つけて終わらせ、待たせていた TFR への答えの TFA（2001）を SC に返す](figures/06-sms.delivery-report.tfa.svg)
 
-TFA が配達の結果を表すので、IP-SM-GW は TFR を、delivery report が来るまで答えずに持っています。delivery report を待つのは 64 秒までで、TFR への答えは最長 66 秒かかります。待ち時間を過ぎた配達は、「確認できなかった」結果として SC に伝わります。IP-SM-GW のどの台が delivery report を受けても配達を終わらせられるように、配達の途中の状態は台のあいだで共有する保存先にあります（`internal/ipsmgw/network_test.go` の `TestDeliveryReportThroughAnotherIPSMGW`）。
+TFA が配達の結果を表すので、IP-SM-GW は TFR を、delivery report が来るまで答えずに持っています。delivery report を待つのは 64 秒までです。この待ち時間は網の側が RP-ACK を待つ時間で、ここでは Timer F（32 秒）の 2 倍です。RP-DATA を運ぶ MESSAGE と、報告を運ぶ MESSAGE が、それぞれ Timer F まで掛かることがあるためです。TFR への答えは最長 66 秒かかります。64 秒に、1 秒ごとに回る見回りが配達を終えるまでの最長 1 秒と、その回の保存先の操作の 1 秒を足したものです（[internal/ipsmgw/sgd.go](../../../internal/ipsmgw/sgd.go) の `outcomeWait`）。待ち時間を過ぎた配達は、「確認できなかった」結果として SC に伝わります。IP-SM-GW のどの台が delivery report を受けても配達を終わらせられるように、配達の途中の状態は台のあいだで共有する保存先にあります（`internal/ipsmgw/network_test.go` の `TestDeliveryReportThroughAnotherIPSMGW`）。
 
 配達の結果は、MESSAGE への SIP の応答か、delivery report の RP で決まります。MESSAGE が失敗の応答を受けたときの写し方は TS 29.311 6.1.4.4.1 にあり、IP-SM-GW はその表を持っています。
 
@@ -387,7 +387,7 @@ SC のアドレスを MWD に入れ、理由に応じて印を立てます。不
 
 印の違いは、そのあとの SRR への答えに出ます。UNRI が立っているあいだ、前の節の `servingNode` は配達先を返しません。SC をまた失敗する IP-SM-GW へ向かわせないためです。MCEF のときは UNRI が落ちているので配達先が返り、SRA の MWD-Status に MCEF-Set のビットが立ちます（TS 29.338 5.3.3.8）。
 
-`internal/hss/s6c_test.go` の `TestReportSMDeliveryStatusKeepsTheSCAddress` は、不在の RDR で SC のアドレスと UNRI が、メモリ不足の RDR で MCEF が残り、UNRI が落ちることを確かめています。`internal/smsc/smsc_test.go` の `TestDeliveryFailures` は、TFA の結果ごとに、SC がショートメッセージを預かって再送するか、捨てて status report を出すかを確かめています。同じく `TestSendRoutingInfoLeavesOutANodeMarkedNotReachable` は、不在の報告のあとの SRR が 5550 になり、利用者が登録し直すと配達先が戻ることを確かめています。
+`internal/hss/s6c_test.go` の `TestReportSMDeliveryStatusKeepsTheSCAddress` は、不在の RDR で SC のアドレスと UNRI が、メモリ不足の RDR で MCEF が残り、UNRI が落ちることを確かめています。`internal/smsc/smsc_test.go` の `TestDeliveryFailures` は、TFA の結果ごとに、SC がショートメッセージを預かって再送するか、捨てて status report を出すかを確かめています。`internal/hss/s6c_test.go` の `TestSendRoutingInfoLeavesOutANodeMarkedNotReachable` は、不在の報告のあとの SRR が 5550 になり、利用者が登録し直すと配達先が戻ることを確かめています。
 
 ## 戻ったことの知らせと送り直し
 

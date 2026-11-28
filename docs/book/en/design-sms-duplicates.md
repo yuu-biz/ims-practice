@@ -194,7 +194,7 @@ But the `Token` stops only calls to the store. A TFR that the old instance has a
 	defer cancel()
 ```
 
-The lease is 3 minutes by default, so an attempt is cut off at 2 minutes 42 seconds. One attempt holds the routing query to the HSS and the TFR. The IP-SM-GW does not return the TFA until the UE's delivery report comes, so the SC waits up to 90 seconds for the TFA. The lease has to be longer than that.
+The lease is 3 minutes by default, so an attempt is cut off at 2 minutes 42 seconds. One attempt holds the routing query to the HSS and the TFR. The IP-SM-GW does not return the TFA until the UE's delivery report comes, so the SC waits up to 90 seconds for the TFA. That is the 66 seconds that the IP-SM-GW may take to answer a TFR (its 64 seconds for the delivery report, 1 second for the sweep and 1 second for the store), plus 24 seconds for the Diameter round trip and the answer that the IP-SM-GW writes (`scAnswerTimeout` in [cmd/ims/sc.go](../../../cmd/ims/sc.go)). The lease has to be longer than that.
 
 The end of a lease is a time that the instance that claimed it wrote by its own clock. Other instances judge by their own clocks whether that time has passed. When the clocks of the instances differ, the lease gets that much shorter or longer.
 
@@ -278,7 +278,7 @@ These are the limits that came up in this chapter. The values are the defaults o
 | The wait of a copy for the first answer | The Answer timer (5 seconds in this setup) | Answering while the sender still waits | The copy is refused with SC congestion |
 | The lease | 3 minutes | Only one instance at a time delivers | Another instance claims the recipient |
 | One attempt | 9/10 of the lease (2 minutes 42 seconds) | Ending the attempt within the lease | Tried again, as a failure that may pass |
-| The SC's wait for the TFA | 90 seconds | Waiting longer than the IP-SM-GW waits for the delivery report | Tried again, the same way |
+| The SC's wait for the TFA | 90 seconds (66 seconds and a margin of 24) | Waiting longer than the IP-SM-GW waits for the delivery report | Tried again, the same way |
 | The IP-SM-GW's wait for the delivery report | 64 seconds | Waiting for the UE's report | A failure goes to the SC. A report that comes late is answered 488 |
 | The validity period | The TP-VP of the SMS-SUBMIT, or 72 hours without one | The time the SC is responsible for the message (TS 23.040 6.1) | The message is discarded, and a status report tells the sender if it asked for one |
 | The interval between retries | 30 seconds, 2 minutes, 10 minutes, 1 hour, and every hour after that by default. `deploy/compose/sc.yaml` of this setup uses 1 hour | Left to the operator by the standard (TS 23.040 3.2.7 NOTE 5) | The next attempt |

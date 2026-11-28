@@ -219,7 +219,7 @@ A UE that registered without the feature tag gets no PUR. The HSS has no IP-SM-G
 
 After its 202, the IP-SM-GW checks the RP-DATA: that RP-DA is the number of its SC, that the SMS-SUBMIT inside decodes, and that P-Asserted-Identity has a tel URI of the sender. The S-CSCF adds the tel URI as a second P-Asserted-Identity when it serves the sender (TS 24.229 5.4.3.2). The SC deals with the sender by telephone number, and the IP-SM-GW passes that number on (TS 24.341 5.3.1.2 NOTE 2).
 
-The IP-SM-GW hands the SMS-SUBMIT to the SC in an OFR (MO-Forward-Short-Message, SGd; TS 23.204 6.3, TS 29.338 6.2.1). Before the SC takes it, it asks the HSS with an SRR (Send-Routing-Info-for-SM, S6c) whether a user has the recipient's number. TS 23.040 8.2.2 allows the SMS-IWMSC that query.
+The IP-SM-GW hands the SMS-SUBMIT to the SC in an OFR (MO-Forward-Short-Message, SGd; TS 23.204 6.3, TS 29.338 6.2.1). Before the SC takes it, it asks the HSS with an SRR (Send-Routing-Info-for-SM, S6c) whether a user has the recipient's number. TS 23.040 8.2.2 lets the SMS-IWMSC make that query as an option. There it retrieves the recipient's IMSI from the HLR to check that an SMS interworking agreement exists, and returns an error when the HLR returns one. This SC uses the query to refuse a number that the HSS does not know.
 
 ![The IP-SM-GW hands the message to the SC in an OFR; the SC checks the recipient's number with the HSS in an SRR, and the SRA names UE 2's IP-SM-GW and IMSI, so the SC takes the message on in the OFA](figures/06-sms.sc-accept.ofa.svg)
 
@@ -292,7 +292,7 @@ UE 2 answers 200, then sends the fourth MESSAGE, the delivery report. The IP-SM-
 
 ![The IP-SM-GW finds the delivery by the delivery report and ends it, and returns the TFA (2001) to the TFR it held to the SC](figures/06-sms.delivery-report.tfa.svg)
 
-The TFA carries the outcome of the delivery, so the IP-SM-GW holds the TFR unanswered until the delivery report comes. It waits up to 64 seconds for the delivery report, and the answer to the TFR takes up to 66 seconds. A delivery whose wait runs out reaches the SC as one whose outcome could not be confirmed. The state of a delivery in progress is in a store that the instances share, so that any instance of the IP-SM-GW that gets the delivery report can end the delivery (`TestDeliveryReportThroughAnotherIPSMGW` in `internal/ipsmgw/network_test.go`).
+The TFA carries the outcome of the delivery, so the IP-SM-GW holds the TFR unanswered until the delivery report comes. It waits up to 64 seconds for the delivery report. That wait is the time the network side waits for the RP-ACK, which here is twice Timer F (32 seconds): the MESSAGE with the RP-DATA and the MESSAGE with the report may each take that long. The answer to the TFR takes up to 66 seconds: the 64 seconds, up to 1 second until the sweep, which runs every second, ends the delivery, and 1 second for the store operations of that round (`outcomeWait` in [internal/ipsmgw/sgd.go](../../../internal/ipsmgw/sgd.go)). A delivery whose wait runs out reaches the SC as one whose outcome could not be confirmed. The state of a delivery in progress is in a store that the instances share, so that any instance of the IP-SM-GW that gets the delivery report can end the delivery (`TestDeliveryReportThroughAnotherIPSMGW` in `internal/ipsmgw/network_test.go`).
 
 The outcome of the delivery comes from the SIP response to the MESSAGE or from the RP of the delivery report. How a failure response of the MESSAGE maps is in TS 29.311 6.1.4.4.1, and the IP-SM-GW keeps that table.
 
@@ -387,7 +387,7 @@ It puts the SC's address in the MWD and sets the flag that the reason asks for. 
 
 The difference between the flags shows in the next answers to an SRR. While UNRI is set, `servingNode` of the section before names no node, so that the SC is not sent to an IP-SM-GW where it would only fail again. With MCEF, UNRI is clear, so a node is named, and the MWD-Status of the SRA has the bit MCEF-Set (TS 29.338 5.3.3.8).
 
-`TestReportSMDeliveryStatusKeepsTheSCAddress` in `internal/hss/s6c_test.go` checks that an RDR of an absent user leaves the SC's address and UNRI, and one of a full memory MCEF, with UNRI cleared. `TestDeliveryFailures` in `internal/smsc/smsc_test.go` checks, for each result of the TFA, whether the SC holds the short message and tries again, or drops it and sends a status report. `TestSendRoutingInfoLeavesOutANodeMarkedNotReachable`, in the same file as the first, checks that the SRR after a report of an absent user gets 5550, and that the node comes back once the user registers again.
+`TestReportSMDeliveryStatusKeepsTheSCAddress` in `internal/hss/s6c_test.go` checks that an RDR of an absent user leaves the SC's address and UNRI, and one of a full memory MCEF, with UNRI cleared. `TestDeliveryFailures` in `internal/smsc/smsc_test.go` checks, for each result of the TFA, whether the SC holds the short message and tries again, or drops it and sends a status report. `TestSendRoutingInfoLeavesOutANodeMarkedNotReachable`, also in `internal/hss/s6c_test.go`, checks that the SRR after a report of an absent user gets 5550, and that the node comes back once the user registers again.
 
 ## The news that the UE is back, and the resend
 

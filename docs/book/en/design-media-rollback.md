@@ -253,7 +253,9 @@ The far end turns the offer down, and the P-CSCF sends the `Modify` that puts th
 
 The P-CSCF first passes the non-2xx response on to the party that offered, since the response itself is right. Then `answered` sees `stuck` and releases the call. Each party gets a BYE, and the PCRF session and the relay context are released.
 
-## The four failures side by side
+## The failure cases side by side
+
+The table lists the four failures and the cases close to them.
 
 | Failure | Setting of the relay | Where it goes back to | The call |
 | --- | --- | --- | --- |

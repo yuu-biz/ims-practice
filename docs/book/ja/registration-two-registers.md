@@ -67,11 +67,11 @@ REGISTER を受け取った S-CSCF は、HSS に MAR（Multimedia-Auth-Request�
 ![HSS が MAR を受け取り、この S-CSCF を利用者の担当として記録し、認証中の印を付ける](figures/04-registration.challenge.assign.svg)
 
 - **HSS** は、MAR を送ってきた S-CSCF をこの利用者の担当として記録し、認証中の印を付けます。まだ登録が済んだわけではありません。
-- **S-CSCF** は、自分で作った nonce と、HSS から受け取った H(A1) を、待っている認証（チャレンジ）として保存します。認証を求めた REGISTER の Call-ID も一緒に保存します。そして、答えを待つタイマー reg-await-auth（TS 24.229 Table 7.7.1 で 4 分）を始めます。
+- **S-CSCF** は、自分で作った nonce と、HSS から受け取った H(A1) を、待っている認証（チャレンジ）として保存します。認証を求めた REGISTER の Call-ID も一緒に保存します。そして、答えを待つタイマー reg-await-auth（TS 24.229 Table 7.8.1 で 4 分）を始めます。
 
-MAA に入っているのは、パスワードそのものではなく H(A1) です。H(A1) は、ユーザー名、レルム、パスワードから計算したハッシュです（RFC 2617 3.2.2.2）。S-CSCF はこれだけで UE の答えを確かめられます。ただし、H(A1) を知っていれば、同じレルムで正しい答えを作れます。パスワードではないとはいえ、認証に使う秘密の情報として扱います。
+MAA に入っているのは、パスワードそのものではなく H(A1) です。H(A1) は、ユーザー名、レルム、パスワードから計算したハッシュです（RFC 7616 3.4.2）。S-CSCF はこれだけで UE の答えを確かめられます。ただし、H(A1) を知っていれば、同じレルムで正しい答えを作れます。パスワードではないとはいえ、認証に使う秘密の情報として扱います。
 
-S-CSCF は 401 Unauthorized で答えます。WWW-Authenticate に、レルム、nonce、`algorithm=MD5`、`qop="auth"` が入ります（TS 24.229 5.4.1.2.1B）。この 401 は、手順が決まったとおりに進んでいることを表します。401 という応答のコードがいつも成功を表すわけではありませんが、最初の REGISTER への 401 は、登録を受け付ける前に本人の答えを求めるための、決まった一歩です。
+S-CSCF は 401 Unauthorized で答えます。TS 24.229 5.4.1.2.1B は、S-CSCF が使えるダイジェストのアルゴリズムごとに WWW-Authenticate を 1 つずつ入れ、いちばん望むものを先に並べるよう求めています。それぞれに、レルム、nonce、algorithm、qop が入ります。ダイジェストの決まりは RFC 7616 と RFC 8760 のもので（5.4.1.2.2A）、MD5 は前の版との互換のためだけに残っています。この S-CSCF が出すのは MD5 だけです。HSS のスタブが MD5 の H(A1) しか渡さないためで、これは簡略化です。そのため WWW-Authenticate は 1 つで、レルム、nonce、`algorithm=MD5`、`qop="auth"` が入ります。この 401 は、手順が決まったとおりに進んでいることを表します。401 という応答のコードがいつも成功を表すわけではありませんが、最初の REGISTER への 401 は、登録を受け付ける前に本人の答えを求めるための、決まった一歩です。
 
 ## 2 回目が同じ S-CSCF に届く理由
 
@@ -143,11 +143,11 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 
 HSS の「登録済み」と、S-CSCF の登録先の保存と、UE が 200 OK を受け取ることは、別々の時点に起きます。途中でノードが止まると、この食い違いが残ります。その扱いは [複数台と障害で引き継ぐもの](design-shared-state.md) で見ます。
 
-200 OK の Authentication-Info にある `rspauth` は、S-CSCF も H(A1) を知っていることの証明です（RFC 2617 3.2.3）。UE はこれを確かめて、網の側も本物であることを知ります。
+200 OK の Authentication-Info にある `rspauth` は、S-CSCF も H(A1) を知っていることの証明です（RFC 7616 3.5）。UE はこれを確かめて、網の側も本物であることを知ります。
 
 ## 401 と 403 の違い
 
-パスワードが誤っていると、2 回目の REGISTER までは同じように進みます。分かれるのは S-CSCF の `check` で、答えが一致しないので `wrong` になります。S-CSCF は 403 Forbidden で答え、Server-Assignment-Type が AUTHENTICATION_FAILURE（9）の SAR を HSS に送ります（TS 24.229 5.4.1.2.3B）。最初の登録なら、HSS は記録していた担当の S-CSCF を消すので、次の試行はまた最初の UAR から始まります。
+パスワードが誤っていると、2 回目の REGISTER までは同じように進みます。分かれるのは S-CSCF の `check` で、答えが一致しないので `wrong` になります。TS 24.229 5.4.1.2.3B は、このとき 403 で断ることと、新しいチャレンジの 401 で問い直すことの、どちらも認めています。この実装は 403 を選びます。S-CSCF は 403 Forbidden で答え、Server-Assignment-Type が AUTHENTICATION_FAILURE（9）の SAR を HSS に送ります。最初の登録なら、HSS は記録していた担当の S-CSCF を消すので、次の試行はまた最初の UAR から始まります。
 
 401 は「答えをください」で、403 は「答えが違います」です。問いを受けた REGISTER と別の Call-ID で答えた場合も、`check` の最初の条件に当たり、403 になります。
 
@@ -156,7 +156,7 @@ HSS の「登録済み」と、S-CSCF の登録先の保存と、UE が 200 OK �
 この章で見たのは、正常な最初の登録です。次の場合は REGISTER の数が変わります。
 
 - **答えが古いとき。** パスワードは正しいのに nonce が古ければ、S-CSCF は `stale=true` を付けた新しい 401 で問い直します。REGISTER は 3 回以上になります。
-- **答えが期限に遅れたとき。** reg-await-auth が切れたあとの答えは受け付けません。S-CSCF はチャレンジを終え、新しい nonce の 401 を返します（TS 24.229 5.4.1.2.3）。
+- **答えが期限に遅れたとき。** reg-await-auth が切れたら、認証は失敗です（TS 24.229 5.4.1.2.3）。S-CSCF はチャレンジを終え、Server-Assignment-Type が AUTHENTICATION_TIMEOUT の SAR を HSS に送ります。そのあとに届いた答えは、待っている認証の無い REGISTER として扱います。答えを持つ REGISTER なので、S-CSCF は新しい nonce と `stale=true` を付けた 401 で問い直します（5.4.1.2.2A step 1）。
 - **登録の解除。** 解除の REGISTER は、P-CSCF が IP の対応付けを持っていれば `ip-assoc-yes` が付き、S-CSCF は問い直さずに処理します。1 回で済みます。
 - **再登録。** S-CSCF は、登録を受け付けたときにチャレンジを消しています。そのため SIP Digest の再登録も新しい 401 で問い直され、REGISTER はまた 2 回になります。前の nonce で答えてきた REGISTER への 401 には `stale=true` が付きます（TS 24.229 5.4.1.2.2A）。
 
@@ -167,6 +167,7 @@ HSS の「登録済み」と、S-CSCF の登録先の保存と、UE が 200 OK �
 - `internal/scscf/scscf_test.go` の `TestRegistrationWithSIPDigest`。最初の REGISTER が 401 を受け、答えた REGISTER が 200 OK を受けることを確かめています。
 - `internal/icscf/icscf_test.go` の `TestFirstRegistrationChoosesAnSCSCFByCapability`。Server-Name の無い UAA を受けた I-CSCF が、能力で S-CSCF を選ぶことを確かめています。
 - `internal/scscf/scscf_test.go` の `TestWrongPasswordIsForbidden` と `TestAnswerOnAnotherCallIDIsForbidden`。誤ったパスワードで 403 と AUTHENTICATION_FAILURE の SAR になること、別の Call-ID の答えが 403 になることを確かめています。
+- `internal/scscf/challenge_deadline_test.go` の `TestRegistrationRejectsExpiredChallengeBeforeSweep`。reg-await-auth を過ぎた答えが、新しい nonce と `stale=true` の 401 になり、HSS に AUTHENTICATION_TIMEOUT の SAR が届くことを確かめています。
 - `internal/ue/ue_test.go` の `TestRegisterRefreshAndDeregisterThroughTheWholeIMS`。P-CSCF から HSS までのすべてのノードを 1 つのプロセスの中で動かし、登録、再登録、解除が通ることを確かめています。
 
 図は、この構成の動きを手順書から描いた模式図で、キャプチャそのものではありません。
