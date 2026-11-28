@@ -73,6 +73,30 @@ func TestESPConfidentiality(t *testing.T) {
 	}
 }
 
+// TestESPWiresharkSAFile: the keys of the security associations go to
+// the file the esp section names, for a reader of the capture. The path
+// is the one inside the container, so a relative path, which would
+// depend on where the node was started, is refused.
+func TestESPWiresharkSAFile(t *testing.T) {
+	cfg, err := Parse(strings.NewReader(pcscfWithESP))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PCSCF.WiresharkSAFile != "" {
+		t.Errorf("a P-CSCF whose esp section names no file writes %q", cfg.PCSCF.WiresharkSAFile)
+	}
+	cfg, err = Parse(strings.NewReader(pcscfWithESP + "      wireshark_sa_file: /captures/esp_sa\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.PCSCF.WiresharkSAFile != "/captures/esp_sa" {
+		t.Errorf("the file is %q, want /captures/esp_sa", cfg.PCSCF.WiresharkSAFile)
+	}
+	if _, err := Parse(strings.NewReader(pcscfWithESP + "      wireshark_sa_file: esp_sa\n")); err == nil {
+		t.Error("a relative path was accepted")
+	}
+}
+
 // TestESPRefusedWithoutAnAddress: the security associations are bound
 // to the P-CSCF's own address, which it cannot read off a socket that
 // listens on every address, so the configuration has to name it.

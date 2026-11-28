@@ -2,8 +2,11 @@ package pcscf
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/netip"
+	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -601,5 +604,88 @@ func TestESPWithoutConfidentialityPolicy(t *testing.T) {
 	sas, ok, err := h.store.SecurityAssociations(context.Background(), h.ueKey())
 	if err != nil || !ok || sas.UEMechanism.EncryptionAlgorithm != "null" {
 		t.Errorf("the set carries %+v, %v, %v; want null encryption", sas.UEMechanism, ok, err)
+	}
+}
+
+// TestESPKeysForWireshark: a deployment that names a file gets the keys
+// of every set of security associations in it, as rows of Wireshark's
+// ESP SAs table, so that a reader of its capture can see what the ESP
+// carries (TS 33.203 6.2, 6.3). The rows follow the set into the
+// kernel, and the rows of a second set follow the first.
+func TestESPKeysForWireshark(t *testing.T) {
+	h := newESPHarness(t)
+	path := filepath.Join(t.TempDir(), "esp_sa")
+	h.p.cfg.ESP.SAFile = ipsec.NewSAFile(path, quiet())
+	ctx := context.Background()
+	keyed := func(spiUC, spiPC uint32) SecurityAssociations {
+		sas := h.associations(spiUC, spiPC)
+		if !decodeKey(sas.IK[:], testIK) || !decodeKey(sas.CK[:], testCK) {
+			t.Fatalf("the keys of the test are not IK and CK: %q, %q", testIK, testCK)
+		}
+		return sas
+	}
+	if err := h.p.putSecurityAssociations(ctx, keyed(1111, 2222)); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.p.putSecurityAssociations(ctx, keyed(3333, 4444)); err != nil {
+		t.Fatal(err)
+	}
+	text, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the file of the ESP SAs table was not written: %v", err)
+	}
+	rows := strings.Split(strings.TrimSuffix(string(text), "\n"), "\n")
+	if len(rows) != 8 {
+		t.Fatalf("the file holds %d rows, want the four of each set:\n%s", len(rows), text)
+	}
+	// The rows of the second set follow the first's: spi_uc of 3333 is
+	// in the later rows alone.
+	const spiUCOfTheSecondSet = `"0xd05"`
+	if !slices.ContainsFunc(rows[4:], func(r string) bool { return strings.Contains(r, spiUCOfTheSecondSet) }) ||
+		slices.ContainsFunc(rows[:4], func(r string) bool { return strings.Contains(r, spiUCOfTheSecondSet) }) {
+		t.Errorf("the rows are\n%s\nwant those of the second set last", strings.Join(rows, "\n"))
+	}
+	// Each row carries IK_ESP, which is not IK (TS 33.203 Annex I).
+	for i, row := range rows {
+		if strings.Contains(row, testIK) || strings.Contains(row, testCK) {
+			t.Errorf("row %d carries IK or CK itself: %s", i, row)
+		}
+		if !strings.Contains(row, "HMAC-SHA-256-128 [RFC4868]") || !strings.Contains(row, `"NULL",""`) {
+			t.Errorf("row %d is %s, want the algorithms of the agreement", i, row)
+		}
+	}
+}
+
+// TestESPKeysOfASetTheKernelRefused: the rows follow the set into the
+// kernel, so a kernel that refuses it leaves the file without rows for
+// associations that carry nothing. The registration fails instead (TS
+// 33.203 7.2).
+func TestESPKeysOfASetTheKernelRefused(t *testing.T) {
+	h := newESPHarness(t)
+	path := filepath.Join(t.TempDir(), "esp_sa")
+	h.p.cfg.ESP.SAFile = ipsec.NewSAFile(path, quiet())
+	h.p.cfg.ESP.Kernel.Run = func(context.Context, []ipsec.Command) error {
+		return errors.New("Requested type not found")
+	}
+	if err := h.p.putSecurityAssociations(context.Background(), h.associations(1111, 2222)); err == nil {
+		t.Fatal("the P-CSCF kept a set the kernel refused")
+	}
+	if text, err := os.ReadFile(path); !os.IsNotExist(err) {
+		t.Errorf("the file holds %q (%v), want no row", text, err)
+	}
+}
+
+// TestESPWithoutAFileForWireshark: a deployment that names no file
+// writes none, and its registrations go through as they did.
+func TestESPWithoutAFileForWireshark(t *testing.T) {
+	h := newESPHarness(t)
+	if h.p.cfg.ESP.SAFile != nil {
+		t.Fatal("the harness names a file, so this test checks nothing")
+	}
+	if err := h.p.putSecurityAssociations(context.Background(), h.associations(1111, 2222)); err != nil {
+		t.Fatal(err)
+	}
+	if run := h.only(t); len(run) == 0 {
+		t.Error("the kernel ran nothing")
 	}
 }
