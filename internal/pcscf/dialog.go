@@ -93,10 +93,13 @@ type Dialog struct {
 // instance than the re-INVITE, so it is in the Store rather than in the
 // transaction.
 type ResponseOffer struct {
-	// CSeq is the sequence number of the re-INVITE. Its ACK carries the
-	// same one (RFC 3261 13.2.2.4), which tells the ACK that answers
-	// this offer from the ACK of another request.
+	// CSeq is the sequence number of the re-INVITE, and ToUE is true
+	// when it went towards the UE. Its ACK carries the same number (RFC
+	// 3261 13.2.2.4) and goes the same way, which tells the ACK that
+	// answers this offer from the ACK of another request: each party
+	// numbers its own requests (12.2.1.1), so the number alone does not.
 	CSeq uint32
+	ToUE bool
 	// SDP is the offer as the UE sees it, and UE the address of the UE,
 	// for the service information that the PCRF gets with the answer (TS
 	// 29.214 A.1).
@@ -328,9 +331,9 @@ func (d *Dialog) ofAnotherDialog(req *sip.Message, toUE bool) bool {
 // The Dialogs that the Store gives out may share one ResponseOffer, so
 // the one that answering marks is a copy, as for a RelayContext
 // (agreeing).
-func (d *Dialog) answering(ack *sip.Message) (offer *ResponseOffer, first bool) {
+func (d *Dialog) answering(ack *sip.Message, toUE bool) (offer *ResponseOffer, first bool) {
 	cseq, err := sip.ParseCSeq(ack.Get("CSeq"))
-	if err != nil || d.PendingOffer == nil || d.PendingOffer.CSeq != cseq.Number {
+	if err != nil || d.PendingOffer == nil || d.PendingOffer.CSeq != cseq.Number || d.PendingOffer.ToUE != toUE {
 		return nil, false
 	}
 	if !carriesSDP(ack, d.Relay) {

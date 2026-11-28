@@ -688,9 +688,14 @@ func (p *PCSCF) offerInResponse(out *sip.Message, d Dialog, toUE bool, ue netip.
 			// (RFC 3262 5), not in the ACK.
 			return
 		}
-		offer := ResponseOffer{CSeq: cseq.Number, SDP: ueSide(received, resp.Body, !toUE), UE: ue}
+		offer := ResponseOffer{CSeq: cseq.Number, ToUE: toUE, SDP: ueSide(received, resp.Body, !toUE), UE: ue}
 		_, _, err = p.store.UpdateDialog(context.Background(), d.Key, func(d *Dialog) {
-			d.PendingOffer = &offer
+			// A 2xx that comes again until its ACK does (RFC 3261
+			// 13.3.1.4) carries the same offer, and leaves whether the PCRF
+			// has its answer as it was (Dialog.answering).
+			if d.PendingOffer == nil || d.PendingOffer.CSeq != offer.CSeq || d.PendingOffer.ToUE != offer.ToUE {
+				d.PendingOffer = &offer
+			}
 			if d.Relay != nil {
 				d.Relay = d.Relay.agreeing(facingSender(!toUE), sent)
 			}
@@ -957,7 +962,7 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 	first := false
 	d, known, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
 		d.Acknowledged = true
-		offered, first = d.answering(ack)
+		offered, first = d.answering(ack, toUE)
 	})
 	if err != nil {
 		// The ACK goes on, without the charging identifier of the dialog.

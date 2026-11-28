@@ -161,11 +161,49 @@ func TestACKWithTheAnswerSentAgainReachesThePCRFOnce(t *testing.T) {
 	wantLatchings(t, c.relay, agw.Access, "", agw.NAPTRelatch, "")
 }
 
+// TestOfferInThe2xxSentAgainReachesThePCRFOnce: the far end sends the
+// 2xx of a re-INVITE without an offer again (RFC 3261 13.3.1.4) after
+// the ACK with the answer has passed, so the UE sends that ACK again
+// (13.2.2.4). The 2xx carries the offer that the PCRF has the answer
+// of already, and the ACK sent again reaches the PCRF no more (TS
+// 29.214 A.1).
+func TestOfferInThe2xxSentAgainReachesThePCRFOnce(t *testing.T) {
+	pcrf := &fakePolicy{}
+	c := newRawINVITEWith(t, pcrf)
+	c.upCall(t)
+	ct, st := c.reinviteWithoutOffer(t, "2")
+	ok := sip.NewResponse(st.Request, 200, "")
+	ok.Add("Contact", "<"+c.farContact+">")
+	ok.Add("Content-Type", "application/sdp")
+	ok.Body = sdp.Offer("3", netip.MustParseAddrPort("192.0.2.99:6008")).Bytes()
+	st.Respond(ok)
+	first := final(t, ct.Responses(), 3*time.Second)
+
+	ueMoved := netip.MustParseAddrPort("192.0.2.10:4006")
+	c.ackWithAnswer("2", "4", ueMoved)
+	nextRequest(t, "the far end", c.farGot)
+	authorised := len(pcrf.mediaRequests())
+
+	st.Respond(ok)
+	again := final(t, ct.Responses(), 3*time.Second)
+	if string(again.Body) != string(first.Body) {
+		t.Errorf("the 2xx sent again carries\n%s\nwant the SDP of the first 2xx\n%s", again.Body, first.Body)
+	}
+	c.ackWithAnswer("2", "4", ueMoved)
+	nextRequest(t, "the far end", c.farGot)
+	if n := len(pcrf.mediaRequests()); n != authorised {
+		t.Errorf("the PCRF got %d service information for the 2xx and the ACK sent again, want none", n-authorised)
+	}
+}
+
 // TestACKOfAnotherRequestLeavesTheOfferOfThe2xxWaiting: the ACK of the
 // INVITE comes again, as when the far end sent its 200 again, after the
 // 2xx of a re-INVITE without an offer. It carries no answer and names
 // the CSeq of the INVITE, so the offer of that 2xx goes on waiting for
-// its own ACK (RFC 3261 13.2.2.4).
+// its own ACK (RFC 3261 13.2.2.4). So does it for an ACK with SDP from
+// the far end that names the CSeq number of the re-INVITE: the far end
+// numbers its own requests (12.2.1.1), so that ACK is not of the
+// re-INVITE of the UE.
 func TestACKOfAnotherRequestLeavesTheOfferOfThe2xxWaiting(t *testing.T) {
 	pcrf := &fakePolicy{}
 	c := newRawINVITEWith(t, pcrf)
@@ -178,6 +216,14 @@ func TestACKOfAnotherRequestLeavesTheOfferOfThe2xxWaiting(t *testing.T) {
 	if m := nextRequest(t, "the far end", c.farGot); m.Method != sip.ACK {
 		t.Fatalf("the far end got %s, want the ACK of the INVITE sent again", m.Method)
 	}
+	stray := c.fromFarEnd(sip.ACK, "2")
+	stray.Add("Content-Type", "application/sdp")
+	strayMedia := netip.MustParseAddrPort("192.0.2.99:6010")
+	stray.Body = sdp.Offer("5", strayMedia).Bytes()
+	c.p.OnACK(stray)
+	if got := c.relay.remote("1", agw.Core); got == strayMedia {
+		t.Errorf("the core termination sends to %v of the ACK of the far end, want it left as the offer of the 2xx said", got)
+	}
 
 	ueMoved := netip.MustParseAddrPort("192.0.2.10:4006")
 	c.ackWithAnswer("2", "4", ueMoved)
@@ -188,8 +234,12 @@ func TestACKOfAnotherRequestLeavesTheOfferOfThe2xxWaiting(t *testing.T) {
 	if got := c.relay.remote("1", agw.Access); got != ueMoved {
 		t.Errorf("the access termination sends to %v, want the address of the answer %v", got, ueMoved)
 	}
-	if n := len(pcrf.mediaRequests()); n != before+1 {
-		t.Errorf("the PCRF got %d service information for the re-INVITE, want one for the answer of the ACK", n-before)
+	requests := pcrf.mediaRequests()
+	if len(requests) != before+1 {
+		t.Fatalf("the PCRF got %d service information for the re-INVITE, want one for the answer of the ACK", len(requests)-before)
+	}
+	if got := audio(t, requests[len(requests)-1].SDP.Answer); got != ueMoved {
+		t.Errorf("the answer the PCRF authorises names %v, want the UE's new address %v", got, ueMoved)
 	}
 }
 
