@@ -444,9 +444,13 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // final response other than 2xx, or with none, no ACK passes the P-CSCF
 // (RFC 3261 17.1.1.3: the ACK of such a response goes hop by hop), and
 // the release goes on once that response has gone. A failure after the
-// relay took an answer of the request is that of a retransmitted 2xx to
-// a re-INVITE, and changes nothing; once the release is under way, the
-// P-CSCF leaves the responses alone.
+// relay took the answer of the request, in a 2xx or a reliable
+// provisional response, is that of a retransmitted 2xx to a re-INVITE,
+// and changes nothing. One after it took the SDP of a provisional
+// response that is not reliable is not: that SDP is no answer (RFC 3261
+// 13.2.1), so the answer of the request is the one that the relay did
+// not take, and the P-CSCF releases the dialog. Once the release is
+// under way, the P-CSCF leaves the responses alone.
 //
 // SIMPLIFIED: TS 29.214 4.4.2. When the PCRF refuses the changed
 // service information, the P-CSCF only logs it, and the session stays
@@ -460,16 +464,15 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		return nil, nil, nil, err
 	}
 	offer := ueSide(received, out.Body, toUE)
-	// taken is true once the relay has taken an answer to the offer, and
-	// refused once the P-CSCF has set out to release the dialog for one
-	// that it did not take. settled is true once the answer that the relay
-	// took came in a 2xx or a reliable provisional response: only there is
-	// it the answer (RFC 3261 13.2.1). The SDP of a provisional response
-	// that is not reliable may show that answer before it comes, and
-	// previewed is where the relay then sends to the party that answers.
-	// stuck is true once the relay has not gone back after a response
-	// other than 2xx.
-	authorized, taken, refused, settled, stuck := false, false, false, false, false
+	// refused is true once the P-CSCF has set out to release the dialog
+	// for an answer that the relay did not take. settled is true once the
+	// answer that the relay took came in a 2xx or a reliable provisional
+	// response: only there is it the answer (RFC 3261 13.2.1). The SDP of
+	// a provisional response that is not reliable may show that answer
+	// before it comes, and previewed is where the relay then sends to the
+	// party that answers. stuck is true once the relay has not gone back
+	// after a response other than 2xx.
+	authorized, refused, settled, stuck := false, false, false, false
 	var previewed netip.AddrPort
 	// told is the relay context as the responses of this request have
 	// left it: where each termination was last told to send. A response
@@ -518,7 +521,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		}
 		if err != nil {
 			log.Warn("media relay refused the answer", "error", err.Error())
-			if !taken {
+			if !settled {
 				refused = true
 				if out.Method == sip.INVITE {
 					// The mark is in the Store before the 2xx goes on, so
@@ -528,7 +531,6 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 			}
 			return
 		}
-		taken = true
 		if resp.StatusCode < 200 && !resp.Requires(sip.Option100rel) {
 			// The SDP of a provisional response that is not reliable is no
 			// answer (RFC 3261 13.2.1). The relay sends where it says, so
