@@ -695,7 +695,7 @@ func TestAnotherSCSCFTookTheUserOver(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		creds := akaAnswer(ch, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes)
+		creds := akaAnswer(ch, akaPassword(ch, res), sip.IntegrityProtectedYes)
 		if r := h.register(callID, 2, 600000, creds.String()); r.StatusCode != 200 {
 			t.Fatalf("registration got %d, want 200", r.StatusCode)
 		}

@@ -112,16 +112,16 @@ K and OPc are those of MILENAGE test set 1. OPc is derived from the operator's O
 ### The ladder
 
 ```text
-#698  volte10:5060 -> P-CSCF:5060  REGISTER   Security-Client, Require: sec-agree, Authorization with an empty response
+#698  volte10:5060 -> P-CSCF:5060  REGISTER   Security-Client, Require: sec-agree, Authorization with no algorithm and an empty response
 #709  P-CSCF -> I-CSCF             REGISTER   Authorization: ... integrity-protected="no"
 #712  I-CSCF -> HSS                UAR / UAA
 #721  I-CSCF -> S-CSCF             REGISTER
 #724  S-CSCF -> HSS                MAR        SIP-Auth-Data-Item: SIP-Authentication-Scheme Digest-AKAv1-MD5
 #726  HSS -> S-CSCF                MAA 2001   SIP-Authenticate (RAND, AUTN), SIP-Authorization (XRES), Confidentiality-Key, Integrity-Key
-#727  S-CSCF -> I-CSCF             401        WWW-Authenticate: nonce, algorithm=AKAv1-MD5, ik, ck
+#727  S-CSCF -> I-CSCF             401        two WWW-Authenticate: the nonce, algorithm=AKAv2-SHA-256 then AKAv1-MD5, ik, ck
 #734  I-CSCF -> P-CSCF             401
 #737  P-CSCF:5060 -> volte10:5060  401        ik and ck taken out, Security-Server added
-#740  volte10:5062 -> P-CSCF:5064  REGISTER   Security-Client, Security-Verify, Authorization with the response from RES
+#740  volte10:5062 -> P-CSCF:5064  REGISTER   Security-Client, Security-Verify, Authorization with algorithm=AKAv2-SHA-256 and its response
 #749  P-CSCF -> I-CSCF             REGISTER   Authorization: ... integrity-protected="yes"
 #752  I-CSCF -> HSS                UAR / UAA
 #760  I-CSCF -> S-CSCF             REGISTER
@@ -133,16 +133,16 @@ K and OPc are those of MILENAGE test set 1. OPc is derived from the operator's O
 #793  PCRF -> P-CSCF               AAA 2001
 ```
 
-1. **REGISTER without protection (#698).** The UE sends its first REGISTER from port 5060 to the P-CSCF's port 5060, the only REGISTER that goes there (TS 24.229 5.1.1.2.2). It has `Require: sec-agree` and `Proxy-Require: sec-agree` and offers its security associations in `Security-Client: ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=52975;port-s=5062` (RFC 3329 2.3.1, TS 33.203 Annex H). Its Authorization has the private identity as username, `algorithm=AKAv1-MD5`, and an empty nonce and response.
+1. **REGISTER without protection (#698).** The UE sends its first REGISTER from port 5060 to the P-CSCF's port 5060, the only REGISTER that goes there (TS 24.229 5.1.1.2.2). It has `Require: sec-agree` and `Proxy-Require: sec-agree` and offers its security associations in `Security-Client: ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=52975;port-s=5062` (RFC 3329 2.3.1, TS 33.203 Annex H). Its Authorization has the private identity as username and an empty nonce and response, and names no algorithm: the challenge offers the algorithms and the UE chooses.
 2. **The P-CSCF keeps the Security-Client (#709).** It sees Security-Client with sec-agree and chooses IMS AKA (TS 24.229 5.2.2.1). It takes Security-Client out, keeps it, and marks the Authorization `integrity-protected="no"`: nothing has protected this REGISTER (5.2.2.2).
-3. **The S-CSCF asks for a vector (#724).** `integrity-protected="no"` means a first registration with IMS AKA (5.4.1.1). The MAR asks for one item with the scheme `Digest-AKAv1-MD5` (TS 29.229 6.3.9).
+3. **The S-CSCF asks for a vector (#724).** `integrity-protected="no"` means a first registration with IMS AKA (5.4.1.1). The MAR asks for one item with the scheme `Digest-AKAv1-MD5` (TS 29.229 6.3.9). That name covers both versions of Digest AKA: the HSS builds the same vector either way, and the version only decides how the password is derived from it (6.3.9 NOTE 1).
 4. **The HSS makes the vector (#726).** It raises SQN_HE, draws RAND, and computes XRES, CK, IK and AUTN with MILENAGE (TS 33.102 6.3.2, TS 35.206). SIP-Authenticate is RAND followed by AUTN, 32 octets; SIP-Authorization is XRES; Confidentiality-Key and Integrity-Key are CK and IK (TS 29.228 6.3).
-5. **The 401 (#727).** The S-CSCF writes RAND and AUTN into the nonce, base64 encoded (RFC 3310 3.2), and IK and CK in the `ik` and `ck` parameters for the P-CSCF (TS 24.229 5.4.1.2.1A). It keeps RAND and XRES for the answer.
+5. **The 401 (#727).** The S-CSCF writes RAND and AUTN into the nonce, base64 encoded (RFC 3310 3.2), and IK and CK in the `ik` and `ck` parameters for the P-CSCF (TS 24.229 5.4.1.2.1A). There is one WWW-Authenticate per algorithm it offers, the most preferred first: `algorithm=AKAv2-SHA-256`, then `algorithm=AKAv1-MD5`, which the standard keeps for backward compatibility (TS 33.203 6.1.1). Both carry the same nonce, because both stand for the one authentication vector. A REGISTER whose Authorization names one of the two algorithms is answered with that one alone, which is how the independent user agent that speaks AKAv1-MD5 only registers (5.4.1.2.1A item 1 c). The S-CSCF keeps RAND, XRES, IK and CK for the answer.
 6. **The P-CSCF sets up temporary associations (#737).** It takes `ik` and `ck` out of the 401, so that the keys never travel to the UE, and offers its own associations in `Security-Server: ipsec-3gpp;q=0.1;alg=hmac-sha2-256-128;ealg=null;spi-c=...;spi-s=...;port-c=50711;port-s=5064` (5.2.2.2, TS 33.203 7.2).
 7. **The UE checks the network (#740).** Its USIM computes the MAC of AUTN and compares it with the one in AUTN: a match shows that the network knows K. It checks that the SQN is fresh (TS 33.102 6.3.3, C.2), and computes RES, CK and IK.
-8. **REGISTER over the associations (#740).** The UE answers from its protected server port 5062 to the P-CSCF's protected server port 5064 (TS 33.203 7.1). It repeats its Security-Client and mirrors the Security-Server in `Security-Verify`, so that a man in the middle cannot have removed a stronger offer (RFC 3329). The response of the Digest is computed with RES as the password (RFC 3310 3.3).
+8. **REGISTER over the associations (#740).** The UE answers from its protected server port 5062 to the P-CSCF's protected server port 5064 (TS 33.203 7.1). It repeats its Security-Client and mirrors the Security-Server in `Security-Verify`, so that a man in the middle cannot have removed a stronger offer (RFC 3329). It takes the topmost challenge whose algorithm it supports, `AKAv2-SHA-256`, and names that algorithm in its Authorization (TS 24.229 5.1.1.5.1). The password of that version is the base64 of HMAC-SHA-256 over the string `http-digest-akav2-password`, keyed with `RES || IK || CK`, and the digest is SHA-256, so the response is 64 hex digits and proves that the UE holds the session keys and not RES alone (RFC 4169 2.1). With `AKAv1-MD5` the password is RES itself and the digest MD5 (RFC 3310 3.3).
 9. **The P-CSCF checks the agreement (#749).** The REGISTER came to the protected port from the UE's address and port, and Security-Verify matches what it sent. A REGISTER over 1300 bytes comes over TCP from another port, and the P-CSCF takes the UE's port from its Via instead. It marks the Authorization `integrity-protected="yes"`.
-10. **The S-CSCF checks RES (#760, #764).** It computes the Digest with XRES and compares (TS 24.229 5.4.1.2.2). They match, so it sends the SAR and registers the UE.
+10. **The S-CSCF checks RES (#760, #764).** It computes the Digest of the algorithm the UE named, with the password that version derives from XRES and the keys of the vector, and compares; a response for an algorithm the 401 did not offer is refused with 403 (TS 24.229 5.4.1.2.2, 5.4.1.2.3A). They match, so it sends the SAR and registers the UE.
 11. **The 200 OK (#783).** It goes back over the associations, which now become established; their lifetime follows the registration (5.2.2.2). From now on the UE sends every request to port 5064, with that port in the P-CSCF URI of its Route, and the P-CSCF sends to the UE at 5062; the Path that the P-CSCF added names its protected port.
 12. **The signalling path (#786).** Once the UE is registered, the P-CSCF asks the PCRF to tell it when the UE loses its signalling bearer (TS 29.214 A.4). It does so after the initial registration has succeeded, as the flow of TS 29.213 B.1 shows, so a UE that fails to authenticate opens no Rx session. The 200 OK and this AAR leave the P-CSCF in either order.
 
@@ -332,7 +332,7 @@ Wireshark reads each packet with the first row whose addresses and SPI match it,
 
 ### SIPp
 
-SIPp registers with IMS AKA from `images/softphone/sipp/register-aka.xml`. It sends everything from one port, 5060, which is therefore its protected server port too. SIPp 3.7 takes its K and OP as the bytes of their text, so subscriber 11 has printable keys, `ims-practice-K01` and `ims-practice-OP1`; hss.yaml has them in hexadecimal, with the OPc that MILENAGE derives from that OP. SIPp computes the RES and the Digest itself, which checks the S-CSCF's computation against code written by others.
+SIPp registers with IMS AKA from `images/softphone/sipp/register-aka.xml`. It sends everything from one port, 5060, which is therefore its protected server port too. SIPp 3.7 takes its K and OP as the bytes of their text, so subscriber 11 has printable keys, `ims-practice-K01` and `ims-practice-OP1`; hss.yaml has them in hexadecimal, with the OPc that MILENAGE derives from that OP. SIPp computes the RES and the Digest itself, which checks the S-CSCF's computation against code written by others. It speaks AKAv1-MD5 and names it in its first REGISTER, so it is challenged with that algorithm alone, while volte10 and volte12 name none and answer with AKAv2-SHA-256.
 
 ## The identities of a phone without an ISIM
 
@@ -701,7 +701,7 @@ It shows the registrations, the calls, Rx, the MARs and the EPC stub's API. Wire
 | Filter | What it finds |
 | --- | --- |
 | `sip.Security-Client \|\| sip.Security-Server \|\| sip.Security-Verify` | The messages of the security agreement. |
-| `sip.WWW-Authenticate contains "AKAv1-MD5"` | The challenges of IMS AKA. `contains "ck="` finds those that the S-CSCF sends to the P-CSCF. |
+| `sip.WWW-Authenticate contains "AKAv2-SHA-256" \|\| sip.WWW-Authenticate contains "AKAv1-MD5"` | The challenges of IMS AKA. A 401 to a UE that named no algorithm carries one of each. `contains "ck="` finds those that the S-CSCF sends to the P-CSCF. |
 | `udp.port == 5064 \|\| tcp.port == 5064` | What goes over the P-CSCF's protected server port. |
 | `diameter.3GPP-SIP-Authentication-Scheme == "Digest-AKAv1-MD5"` | The MARs and MAAs of IMS AKA. |
 | `diameter.cmd.code in {265, 258, 274, 275}` | Rx: AAR and AAA, RAR and RAA, ASR and ASA, STR and STA. |
@@ -769,7 +769,6 @@ Each item has a `SIMPLIFIED:` comment in the code; `grep -rn "SIMPLIFIED:" inter
 | P-CSCF and UE, TS 33.203 7.4.0 | With ESP, the protected client ports are the one port of each end’s configuration, for every UE and every authentication, where the standard has them change with each authenticated re-registration. | A port of its own for each set of associations would mean a socket for each. The associations of different UEs already differ by the UE’s address. |
 | UE, TS 33.203 7.4.1a | With ESP, after a re-registration that it started over the old associations fails, the UE does not keep the old associations, which 7.4.1a has it keep. They are already gone: the new associations were bound to the same ports and replaced them in the kernel when the UE answered the challenge. The UE forgets them too and registers again unprotected. | The protected client port is the one of the UE's configuration, as the row above says. 7.4.1a asks a UE that takes its associations for no longer active to register again unprotected. |
 | P-CSCF, TS 24.229 5.2.2.3 | A UE is known by the address and port its requests come from, and by the sent-by of its Via for a request over TCP, or for any request with ESP on. | Without ESP a TCP connection comes from a port of the moment, and nothing authenticates that sent-by. With ESP every request comes from the protected client port, which no entry holds, and the security associations authenticate the sender. |
-| S-CSCF, TS 33.203 6.1.1, TS 24.229 5.4.1.2.1A | AKAv1-MD5 only, no AKAv2-SHA-256. | SIPp speaks AKAv1-MD5 only. |
 | AKA, TS 33.102 C.2.2, C.3.4 | No limit L on how old an accepted SQN may be, and IND is not kept per domain. | Profile 2 suggests no L; IMS is one domain with one vector per MAR. |
 | UE, TS 24.301, TS 36.331 | The UE's packets go straight onto the Docker network. | No radio and no tunnel. |
 | UE, TS 24.229 7.2A.4.3 | The access type is always `3GPP-E-UTRAN-FDD`. | The stub says nothing of the duplex mode of its cell. |

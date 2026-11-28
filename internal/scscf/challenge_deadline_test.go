@@ -120,7 +120,7 @@ func TestIMSAKARejectsExpiredChallengeBeforeSweep(t *testing.T) {
 	}
 	passDeadline(t, heldChallenge(t, h))
 
-	creds := akaAnswer(ch, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes)
+	creds := akaAnswer(ch, akaPassword(ch, res), sip.IntegrityProtectedYes)
 	if r := h.register(callID, 2, 3600, creds.String()); r.StatusCode == 200 {
 		t.Fatal("REGISTER accepted after reg-await-auth expired")
 	}

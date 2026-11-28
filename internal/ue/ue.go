@@ -465,8 +465,8 @@ func (u *UE) ha1() string {
 
 // checkRspauth verifies Authentication-Info, which proves the network
 // knows the password too (TS 24.229 5.1.1.5.4, RFC 2617 3.2.3). With
-// IMS AKA the password is RES on this side and XRES on the network's
-// (RFC 3310 3.5).
+// IMS AKA the password comes from RES on this side and from XRES on the
+// network's (RFC 3310 3.5, RFC 4169 2.1).
 func (u *UE) checkRspauth(resp *sip.Message) error {
 	info := resp.Get("Authentication-Info")
 	switch {
@@ -474,21 +474,25 @@ func (u *UE) checkRspauth(resp *sip.Message) error {
 		return nil
 	case u.answer != nil:
 		c := u.answer.creds
-		return u.verifyRspauth(info, sip.HA1(c.Algorithm, u.cfg.PrivateIdentity, c.Realm, aka.DigestPassword(u.answer.res)), c.Realm, c.Nonce)
+		return u.verifyRspauth(info, c, sip.HA1(c.Algorithm, u.cfg.PrivateIdentity, c.Realm, u.answer.password))
 	case u.challenge != nil:
-		return u.verifyRspauth(info, u.ha1(), u.challenge.Realm, u.challenge.Nonce)
+		answered := sip.Credentials{Realm: u.challenge.Realm, Nonce: u.challenge.Nonce, Algorithm: u.challenge.Algorithm}
+		return u.verifyRspauth(info, answered, u.ha1())
 	}
 	return nil
 }
 
-func (u *UE) verifyRspauth(info, ha1, realm, nonce string) error {
+// verifyRspauth checks the rspauth of info: the digest of the
+// credentials answered with an empty method, which the network computes
+// from the same H(A1) (RFC 2617 3.2.3).
+func (u *UE) verifyRspauth(info string, answered sip.Credentials, ha1 string) error {
 	got, err := sip.ParseCredentials("Digest " + info)
 	if err != nil {
 		return fmt.Errorf("Authentication-Info: %w", err)
 	}
 	rspauth, _ := got.AuthParams.Get("rspauth")
 	want, err := sip.DigestResponse(ha1, "", sip.Credentials{
-		Username: u.cfg.PrivateIdentity, Realm: realm, Nonce: nonce,
+		Username: u.cfg.PrivateIdentity, Realm: answered.Realm, Nonce: answered.Nonce, Algorithm: answered.Algorithm,
 		URI: "sip:" + u.cfg.HomeDomain, QOP: "auth", CNonce: got.CNonce, NC: got.NC,
 	})
 	if err != nil || sip.Unquote(rspauth) != want {
