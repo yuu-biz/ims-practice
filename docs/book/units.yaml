@@ -38,7 +38,7 @@ units:
       - RFC 7616 3.4.2, 3.5
       - RFC 8760 2.3
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: registration-routes
     question:
       ja: Path と Service-Route は誰が何のために使うのか
@@ -59,7 +59,7 @@ units:
       - RFC 3327 5.3, 5.4
       - RFC 3608 6.1
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: registration-stale-deregistration
     question:
       ja: 遅れて届いた解除が、新しい登録を消さないのはなぜか
@@ -83,7 +83,7 @@ units:
       - RFC 3261 10.3 steps 6 and 7, 17.1.2, 17.2
       - TS 24.229 V18.11.0 5.4.1.2.2A
     evidence: [code, test, illustration]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: registration
     question:
       ja: 登録で何が決まるのか
@@ -99,7 +99,7 @@ units:
     standards:
       - TS 24.229 V18.11.0 5.1.1.4.1, 5.4.1.2.2F
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: registration-subscriptions
     question:
       ja: 誰が登録の状態を購読し、NOTIFY は何を伝えるのか
@@ -123,7 +123,7 @@ units:
       - RFC 3680 4.4, 4.5
       - RFC 6665 4.4.1
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: registration-third-party
     question:
       ja: S-CSCF はなぜアプリケーションサーバーにも REGISTER を送り、IP-SM-GW はそれで何をするのか
@@ -145,7 +145,7 @@ units:
       - TS 24.341 5.3.2.2, 5.3.3.2
       - TS 29.328 6.1.2
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: registration-ends
     question:
       ja: 登録はどう終わり、終わり方で NOTIFY と Cx と UE の動きはどう変わるのか
@@ -184,7 +184,7 @@ units:
       - TS 29.228 V18.0.0 6.1.1, 6.1.1.1, 6.1.2, 6.1.2.1, 6.1.3, A.4.4.2
       - TS 23.228 5.3.1
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: registration-binding-query
     question:
       ja: Contact の無い REGISTER は何を返し、何を変えないのか
@@ -201,7 +201,7 @@ units:
       - RFC 3261 10.2.3, 10.3 step 8
       - TS 24.229 V18.11.0 5.1.1.4.1
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: registration-lab-view
     question:
       ja: ラボは登録をどう組み立てて見せるのか
@@ -219,7 +219,7 @@ units:
     standards:
       - TS 24.229 V18.11.0 5.4.1.7
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: services-as-invocation
     question:
       ja: S-CSCF はどうやって要求を AS に渡し、AS が送り返した要求をどう続けるのか
@@ -243,7 +243,7 @@ units:
       - TS 23.228 V20.1.0 4.7
       - GSMA IR.92 v24.0 2.3
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: mmtel-ifc-session-case
     question:
       ja: iFC の条件と session case で、AS が動かすサービスとその順はどう決まるのか
@@ -277,7 +277,7 @@ units:
       - TS 29.228 6.1.4.1 step 3
       - GSMA IR.92 v24.0 2.3.4
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: mmtel-cfnr-timer
     question:
       ja: CFNR で CANCEL が出る時刻は何で決まるのか
@@ -298,7 +298,7 @@ units:
       - RFC 3326 2
       - RFC 6228
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: mmtel-ut-conditional-update
     question:
       ja: 2 人が同じ設定の文書を同時に変えると何が起きるのか
@@ -321,7 +321,7 @@ units:
       - TS 29.364 V19.1.0 7.2
       - GSMA IR.92 v24.0 2.3.2 Note 3
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: mrf-early-media-announcement
     question:
       ja: AS はどうやって応答の前に音声を流し、再生の始まりを決めるのか
@@ -345,7 +345,7 @@ units:
       - RFC 4240 3, 5
       - RFC 5009
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: mrf-customized-alerting-tone
     question:
       ja: 着信者が選んだ呼び出し音は、誰がいつ頼み、どう発信者に届くのか
@@ -370,7 +370,7 @@ units:
       - RFC 4796
       - RFC 5009
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: mrf-conference-lifetime
     question:
       ja: 会議の資源はいつ作られていつ消え、戻ってきた参加者の INVITE はどう見分けられるのか
@@ -396,7 +396,7 @@ units:
       - RFC 7647 5
       - GSMA IR.92 v24.0 2.3.3
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: design-registration-order
     question:
       ja: 初回、更新、解除、遅れた要求、認証の時間切れを、どの識別子と状態で分け、それぞれ何を変えてよいか。読む、比べる、書くを、複数の台のあいだで 1 つの手順にするものは何か
@@ -447,7 +447,7 @@ units:
       - TS 24.229 V18.11.0 3.1, 5.2.2.2, 5.4.1.2.1, 5.4.1.2.2, 5.4.1.2.2A, 5.4.1.2.3, 5.4.1.2.3A, 5.4.1.2.3B, 5.4.1.4.1, Table 7.8.1
       - TS 29.228 V18.0.0 6.1.2.1
     evidence: [code, test, illustration]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: design-shared-state
     question:
       ja: 状態を共有した台は、登録、新しい要求、処理中の呼、止まったプロセスの残りのうち、何を引き継げて、何を引き継げないか
@@ -497,7 +497,7 @@ units:
       - TS 29.228 V18.0.0 6.4, 8.1.2
       - TS 29.229 V18.1.0 5.5
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: design-media-rollback
     question:
       ja: メディアの再交渉が失敗したとき、どの状態へ戻し、呼を続けるか終えるか
@@ -547,7 +547,7 @@ units:
       - TS 24.229 V18.11.0 5.2.8.1.2, 5.10.2.4, 5.10.3.4, 6.1.4.2, 6.7.2.1
       - TS 29.214 V20.0.0 4.4.2, A.1
     evidence: [code, test, illustration]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: design-maintenance
     question:
       ja: 保守で外すとき、正常に止めるとき、プロセスが消えるとき、保存先を失うとき、どの仕事を断り、どれを終えるか
@@ -608,7 +608,7 @@ units:
       - TS 29.334 5.17.3.2
       - TS 23.333 8.30
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: overview-nodes-and-paths
     question:
       ja: IMS のノードはそれぞれ何を受け持ち、信号と声はどこを通るのか
@@ -627,7 +627,7 @@ units:
       - TS 29.333, TS 29.334
       - RFC 3263, RFC 6116
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: overview-roles-by-configuration
     question:
       ja: 役割を設定で選ぶとはどういうことで、台数を増やすときに何を意味するのか
@@ -646,7 +646,7 @@ units:
     standards:
       - TS 23.228 V20.1.0
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: observing-observed-and-inferred
     question:
       ja: キャプチャとラボのシーケンス図は、それぞれ何を観測し、何を推定しているのか
@@ -668,7 +668,7 @@ units:
       - TS 24.229 V18.11.0 5.7.5, 5.7.5.1, 5.2.6.3.3
       - RFC 3539 3.4.1
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: observing-transactions-and-dialogs
     question:
       ja: キャプチャの中で、トランザクションとダイアログをどう見分けるのか
@@ -684,7 +684,7 @@ units:
     standards:
       - RFC 3261 8.1.1.7, 12, 16.6, 16.7, 17, 17.1.3, 17.2.3
     evidence: [code, illustration]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: go-reading-excerpts
     question:
       ja: コードの抜き出しに出てくる Go の書き方は、それぞれ何を意味するのか
@@ -711,7 +711,7 @@ units:
       - RFC 3550 5.1
       - TS 24.011 table 7.7
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: call-route
     question:
       ja: 電話番号しか知らない UE の INVITE は、どうやって相手の UE に届くのか
@@ -740,7 +740,7 @@ units:
       - RFC 6116
       - RFC 3261 18.1.1
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: call-media-path
     question:
       ja: 音声はなぜ信号と違う道を通り、誰がその道を作るのか
@@ -760,7 +760,7 @@ units:
       - RFC 3261 15.1.1
       - TS 24.229 V18.11.0 5.1.5
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: call-dialogs
     question:
       ja: 1 回の通話のトランザクションとダイアログは、どのノードを通り、どのノードが何を持つのか
@@ -780,7 +780,7 @@ units:
       - RFC 3261 12, 12.1.2, 12.2.1.1, 17
       - TS 24.229 V18.11.0 5.4.3.4, 5.7.5
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: call-offer-answer
     question:
       ja: 信頼性のある 183 と PRACK と SDP で、メディアはどう決まり、P-CSCF はどこを書き換えるのか
@@ -804,7 +804,7 @@ units:
       - RFC 3312 6
       - TS 24.229 V18.11.0 6.7.2.1
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: call-failures-release
     question:
       ja: 通話が失敗するときと終わるときに、どのノードが応答を決め、何を解放するのか
@@ -838,7 +838,7 @@ units:
       - TS 24.229 V18.11.0 5.1.5, 5.3.2.1, 5.4.3.3
       - TS 29.228 V18.0.0 6.1.4.1
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: access-and-borders
     question:
       ja: 携帯のアクセス網と別の事業者の網は、登録と通話に何を加えるのか
@@ -860,7 +860,7 @@ units:
       - GSMA IR.92 v24.0
       - TS 29.165 V20.0.0
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: volte-registration
     question:
       ja: VoLTE の端末は、P-CSCF をどう見つけ、IMS-AKA で網とどう確かめ合うのか
@@ -898,7 +898,7 @@ units:
       - RFC 3329
       - GSMA IR.92 v24.0 4.4.1, 4.5
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: volte-call
     question:
       ja: VoLTE の通話で、網は音声の資源をいつ用意し、着信側はいつ鳴り、網はどう通話を終えるのか
@@ -928,7 +928,7 @@ units:
       - RFC 3312 6, 7
       - GSMA IR.92 v24.0 2.4.1, 2.4.2.3, 2.4.3.1, 2.4.3.2, 3.2.4, 3.2.5
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: interconnect-call
     question:
       ja: 通話はどう別の事業者の網へ出ていき、相手網には何が見えるのか
@@ -954,7 +954,7 @@ units:
       - TS 29.165 V20.0.0 3.2, 5.1, 5.2.1, 7.1, 8.1
       - RFC 3261 16.6, 18.1.1
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: interconnect-agreement
     question:
       ja: 事業者どうしの取り決めが食い違ったときと、取り決めの外から要求が来たとき、境界はどう振る舞うのか
@@ -977,7 +977,7 @@ units:
       - TS 24.229 V20.1.0 5.10.1
       - TS 29.165 V20.0.0 7.1, 8.1, Table 6.1, Table 6.1.3.1, Annex C
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: interconnect-sms-conference-restart
     question:
       ja: ショートメッセージと会議はどう境界を越え、IBCF の台が起動し直すと呼はどうなるのか
@@ -999,7 +999,7 @@ units:
       - TS 24.229 V20.1.0 5.10.2.2, 5.10.3.2, 5.10.5
       - RFC 3261 12.2.2
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: sms-acknowledgements
     question:
       ja: SIP の 202 と 200、RP-ACK、status report は、それぞれ何が届いたことを伝えるのか
@@ -1033,7 +1033,7 @@ units:
       - TS 29.338 V19.3.0 6.2.1
       - TS 29.311 6.1.4.4.1
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: sms-routing
     question:
       ja: S-CSCF はどの要求を IP-SM-GW に渡し、SC は受信者を受け持つ IP-SM-GW をどう知るのか
@@ -1064,7 +1064,7 @@ units:
       - TS 29.338 V19.3.0 5.2.1.3, 6.3.1.2
       - RFC 3841 7.2.4
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
   - id: sms-holding
     question:
       ja: 受信者が受け取れないとき、SC と HSS は何を覚え、何が送り直しと預かりの終わりを決めるのか
@@ -1101,4 +1101,4 @@ units:
       - TS 29.311 6.1.4.4.1
       - TS 29.338 V19.3.0 5.2.2, 5.2.3, 5.2.3.1, 5.3.3.8, 7.3.3
     evidence: [code, test]
-    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+    verified: 066499154528667ba89da450a9f27ee6bf997000
