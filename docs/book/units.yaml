@@ -80,3 +80,134 @@ units:
       - TS 24.229 V18.11.0 5.4.1.2.2A
     evidence: [code, test, illustration]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  # group g2
+  - id: registration
+    question:
+      ja: 登録で何が決まるのか
+      en: What does registration settle
+    setup: deploy/compose, a softphone that registers with SIP Digest; P-CSCF, I-CSCF, S-CSCF, HSS
+    chapter: registration
+    scenes: [04-registration/overview]
+    code:
+      - internal/scscf/scscf.go:bindingResponse
+    tests:
+      - internal/scscf/scscf_test.go:TestRegistrationWithSIPDigest
+      - internal/ue/ue_test.go:TestRegisterRefreshAndDeregisterThroughTheWholeIMS
+    standards:
+      - TS 24.229 V18.11.0 5.1.1.4.1, 5.4.1.2.2F
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: registration-subscriptions
+    question:
+      ja: 誰が登録の状態を購読し、NOTIFY は何を伝えるのか
+      en: Who subscribes to the registration state, and what does a NOTIFY say
+    setup: deploy/compose, a softphone that registers with SIP Digest; the P-CSCF, the UE and the IP-SM-GW subscribe to the reg event at the S-CSCF
+    chapter: registration-lifecycle
+    scenes: [04-registration/pcscf-subscribe, 04-registration/ue-subscribe]
+    code:
+      - internal/scscf/regevent.go:authorizedSubscriber
+      - internal/scscf/regevent.go:endRegistration
+      - internal/scscf/scscf.go:accept
+      - internal/pcscf/regevent.go:removedByTheNetwork
+    tests:
+      - internal/scscf/regevent_test.go:TestRegEventFollowsTheRegistration
+      - internal/scscf/regevent_test.go:TestRegEventSubscriptionsThatAreRefused
+      - internal/pcscf/regevent_test.go:TestPCSCFSubscribesToTheRegEventAndEndsTheAssociation
+      - internal/pcscf/regevent_test.go:TestRemovedByTheNetwork
+    standards:
+      - TS 24.229 V18.11.0 5.1.1.3, 5.1.1.4.1, 5.2.3, 5.2.5.2, 5.2.6.4.5, 5.4.2.1.1, 5.4.2.1.2
+      - TS 29.228 V18.0.0 6.1.4
+      - RFC 3680 4.4, 4.5
+      - RFC 6665 4.4.1
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: registration-third-party
+    question:
+      ja: S-CSCF はなぜアプリケーションサーバーにも REGISTER を送り、IP-SM-GW はそれで何をするのか
+      en: Why does the S-CSCF send a REGISTER to the application server too, and what does the IP-SM-GW do with it
+    setup: deploy/compose; the iFC of every REGISTER names the IP-SM-GW with SESSION_CONTINUED
+    chapter: registration-lifecycle
+    scenes: [04-registration/third-party]
+    code:
+      - internal/scscf/thirdparty.go:notifyApplicationServers
+      - internal/scscf/thirdparty.go:thirdPartyRegister
+      - internal/ipsmgw/regevent.go:takesShortMessages
+      - internal/ipsmgw/regevent.go:updateHSS
+    tests:
+      - internal/scscf/services_test.go:TestThirdPartyRegister
+      - internal/ipsmgw/regevent_test.go:TestThirdPartyRegisterSubscribesToTheRegistrationState
+      - internal/ipsmgw/regevent_test.go:TestContactWithoutTheFeatureTag
+    standards:
+      - TS 24.229 V18.11.0 5.4.1.5, 5.4.1.7, 5.4.1.7A
+      - TS 24.341 5.3.2.2, 5.3.3.2
+      - TS 29.328 6.1.2
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: registration-ends
+    question:
+      ja: 登録はどう終わり、終わり方で NOTIFY と Cx と UE の動きはどう変わるのか
+      en: How does a registration end, and how do the NOTIFY, the Cx messages and the UE differ by the way it ends
+    setup: deploy/compose, a softphone that registers with SIP Digest; deregistration over the IP association, expiry, removal of the subscription from the HSS, a wrong password
+    chapter: registration-lifecycle
+    scenes: [04-registration/deregister, 04-registration/failures]
+    code:
+      - internal/pcscf/pcscf.go:register
+      - internal/icscf/icscf.go:register
+      - internal/scscf/scscf.go:register
+      - internal/scscf/scscf.go:deregister
+      - internal/scscf/scscf.go:registrationExpired
+      - internal/scscf/scscf.go:deregistrationEvents
+      - internal/scscf/scscf.go:registrationTermination
+      - internal/ue/phone.go:Serve
+    tests:
+      - internal/scscf/scscf_test.go:TestRegistrationWithSIPDigest
+      - internal/scscf/scscf_test.go:TestDeregisteringAnUnregisteredUserGets481
+      - internal/scscf/scscf_test.go:TestDeregistrationWithoutAnSAA
+      - internal/scscf/scscf_test.go:TestRegistrationExpires
+      - internal/scscf/scscf_test.go:TestFailedReauthenticationKeepsTheRegistrationExpiry
+      - internal/scscf/regevent_test.go:TestRegEventReportsAnExpiredContact
+      - internal/scscf/regevent_test.go:TestRegistrationTerminationByTheHSS
+      - internal/scscf/regevent_test.go:TestRegistrationTerminationReasons
+      - internal/ue/regevent_test.go:TestRegEventReportsTheExpiryThroughTheWholeIMS
+      - internal/ue/regevent_test.go:TestRemovedSubscriptionIsDeregisteredThroughTheWholeIMS
+    standards:
+      - TS 24.229 V18.11.0 5.1.1.6.1, 5.1.1.7, 5.2.2.3, 5.3.1.3, 5.4.1.2.3B, 5.4.1.4.1, 5.4.1.5, 5.4.2.1.2
+      - TS 29.228 V18.0.0 6.1.1, 6.1.1.1, 6.1.2, 6.1.2.1, 6.1.3, A.4.4.2
+      - TS 23.228 5.3.1
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: registration-binding-query
+    question:
+      ja: Contact の無い REGISTER は何を返し、何を変えないのか
+      en: What does a REGISTER without a Contact return, and what does it leave alone
+    setup: deploy/compose, a softphone that registers with SIP Digest; the S-CSCF
+    chapter: registration-lifecycle
+    scenes: []
+    code:
+      - internal/scscf/scscf.go:accept
+      - internal/scscf/scscf.go:answerQuery
+    tests:
+      - internal/scscf/scscf_test.go:TestRegisterWithoutContactFetchesTheBinding
+    standards:
+      - RFC 3261 10.2.3, 10.3 step 8
+      - TS 24.229 V18.11.0 5.1.1.4.1
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: registration-lab-view
+    question:
+      ja: ラボは登録をどう組み立てて見せるのか
+      en: How does the Lab build and show a registration
+    setup: deploy/compose with the Lab; the nodes send copies of their messages over HEP
+    chapter: registration-lifecycle
+    scenes: []
+    code:
+      - internal/lab/registrations.go:isThirdPartyRegister
+      - internal/lab/registrations.go:registrationsFromRegisterOK
+      - internal/lab/registrations.go:registrationsFromNotify
+    tests:
+      - internal/lab/registrations_test.go:TestRegistration
+      - internal/lab/registrations_test.go:TestThirdPartyRegisterIsNoRegistrationOfTheUE
+    standards:
+      - TS 24.229 V18.11.0 5.4.1.7
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96

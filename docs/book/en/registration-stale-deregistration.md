@@ -158,4 +158,4 @@ The S-CSCF of this implementation takes a lock per user at the start of handling
 
 To cause this comparison on the setup, a delayed request has to be made in the network, and the guide's usual steps do not do that. You can run the test with `go test ./internal/scscf -run TestRegisterOutOfOrderLeavesTheBindingAlone`. In the slides, the scene "A deregistration that comes late" of the [registration deck](../../../slides/decks/en/04-registration.md) shows the two figures of this chapter in steps.
 
-This is the end of the chapters on registration. Next comes the flow of making a call along the routes that registration set. From a number to the other phone
+The next chapter looks at what follows registration: refresh, deregistration, subscription and removal by the network. [Refresh, deregistration, subscription and removal by the network](registration-lifecycle.md)

@@ -1,6 +1,6 @@
 ---
 title: UE が IMS に登録する流れ
-footer: ims-practice 勉強会 4. 登録
+footer: ims-practice 4. 登録
 lang: ja
 format: visual
 ---
@@ -694,35 +694,26 @@ events:
 
 # UE が IMS に登録する流れ
 
-ims-practice 勉強会 第 4 回（SIP Digest での登録と、アプリケーションサーバーへの第三者 REGISTER）
+（SIP Digest での登録と、アプリケーションサーバーへの第三者 REGISTER）
 
 ---
 
 [layout: summary]
 
-## この回で分かること
+## このデッキで分かること
 
-最初の問い。電話の電源を入れてから最初の通話までに、網の中で何が起きているでしょうか。
+電話の電源を入れてから最初の通話までに、端末は IMS に登録します。このデッキは、その登録を 1 区間ずつ見せます。
 
 - 登録で決まる 3 つのこと。端末の場所、本人であること、後の要求が通る経路。
 - REGISTER が 2 回送られる理由。
 - I-CSCF と S-CSCF が、HSS に何を尋ねるか。
 - 200 OK のどのヘッダを、あとの通話と SMS で使うか。
+- 登録のあとに続くこと。登録の状態の購読、第三者 REGISTER、解除、期限切れ、網からの取り消し。
+- 通話のデッキは、ここで決まる Path、Service-Route、IP の対応付けを使います。
 
+> 本 [登録で決まる 3 つのこと](../../../docs/book/ja/registration.md)、[登録の更新、解除、購読、網からの取り消し](../../../docs/book/ja/registration-lifecycle.md)
 > 手順書 [UE が IMS に登録する流れを追う](../../../docs/guide/ja/registration.md)（`docs/guide/ja/registration.md`）
 > 仕様の版は Release 18 です。TS 24.229 V18.11.0、TS 29.228 V18.0.0、TS 29.229 V18.1.0。
-
----
-
-## 進め方
-
-1. 構成を起動して、登録を 1 回実行する。
-2. キャプチャを Wireshark で開き、フィルタをかける。
-3. シーケンス図で全体を見る。
-4. メッセージを 1 通ずつ開き、スライドに挙げたヘッダと AVP を探す。
-5. 同じ箇所の仕様の条項を、手順書で確かめる。
-
-> 起動とキャプチャの開き方は、手順書 [信号をキャプチャして Wireshark で開く](../../../docs/guide/ja/capture.md) にあります。
 
 ---
 
@@ -764,7 +755,7 @@ steps:
       HSS は 10、I-CSCF は 20、S-CSCF は 30、P-CSCF は 40 です。
 ```
 
-- UE は SIM カードの無いソフトフォンです。識別子は IMC に入っているのと同じように設定で与えられるので（TS 24.229 5.1.1.1B.1）、登録した公開の識別子をほかのリクエストでも使います。この識別子は利用者の番号の SIP URI で、規制されていません。VoLTE の端末は、代わりに規制された一時的な識別子で登録します。VoLTE の回で見ます。
+- UE は SIM カードの無いソフトフォンです。識別子は IMC に入っているのと同じように設定で与えられるので（TS 24.229 5.1.1.1B.1）、登録した公開の識別子をほかのリクエストでも使います。この識別子は利用者の番号の SIP URI で、規制されていません。VoLTE の端末は、代わりに規制された一時的な識別子で登録します。VoLTE のデッキで見ます。
 
 | ノード | アドレス | 登録での役割 |
 | --- | --- | --- |
@@ -776,43 +767,6 @@ steps:
 | DNS | 172.28.0.2 | ホーム網のドメインの NAPTR、SRV、A を持つ。 |
 
 > 手順書 [「登場するノード」](../../../docs/guide/ja/registration.md#登場するノード)。試験用の利用者の識別子とパスワードもここにあります。
-
----
-
-## 実行する
-
-```sh
-docker compose up -d --build
-docker compose logs scscf | grep I-Open        # Diameter の接続が開いたか
-docker compose run --rm ue register -deregister-after 5s
-```
-
-起動してから、I-CSCF と S-CSCF が HSS との Diameter の接続を開くまで待ちます。HSS より先に起動したノードは 30 秒後（Tc）につなぎ直すので、長くて 1 分ほどです。
-
-UE のログで、次の 3 行を探します。
-
-- `"msg":"registered"`。Service-Route と、一緒に登録された識別子が出ます。
-- `"msg":"reg event"` と `"state":"active"`。
-- `"msg":"deregistered"`。
-
-> 手順書 [「登録を実行する」](../../../docs/guide/ja/registration.md#登録を実行する)
-
----
-
-## キャプチャを開く
-
-`captures/` の一番新しいファイルを開き、次の表示フィルタを使います。
-
-```text
-sip || diameter.cmd.code >= 300 || dns.qry.type == 35 || dns.qry.type == 33
-```
-
-- SIP、Cx、NAPTR と SRV の問い合わせが残ります。
-- Diameter の監視（DWR と DWA）は消えます。
-- **Statistics > Flow Graph** で **Limit to display filter** を選ぶと、シーケンス図になります。
-- 手順書のシーケンス図の番号 1 から 10 が、次からのスライドの番号です。
-
-> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/registration.md#キャプチャを開く) と [「シーケンス」](../../../docs/guide/ja/registration.md#シーケンス)。シーケンス図の全体は手順書にあります。
 
 ---
 
@@ -855,12 +809,18 @@ steps:
     show: [sar, saa, ok-s-i, ok-i-p, ok-p-ue]
     active: ok-p-ue
     detail: []
+    checkpoint: true
     text: |
       HSS には 4 回尋ねます。UAR が 2 回、MAR と SAR が 1 回ずつです。
       手順書のシーケンス図の全体には DNS もあります。
+  - id: settled
+    title: 登録で決まった 3 つのこと
+    active: ok-s-i
+    detail: [ok-s-i]
+    text: 場所は Contact、本人であることは 2 回目の答え、経路は Path と Service-Route で決まります。P-Associated-URI は一緒に登録された識別子です。
 ```
 
-キャプチャで同じ形を見ると、DNS の問い合わせ（1 と 2 のあいだ）も並びます。手順書のシーケンス図と同じ番号で、次のスライドから 1 区間ずつ読みます。
+キャプチャで同じ形を見ると、DNS の問い合わせ（1 と 2 のあいだ）も並びます。手順書のシーケンス図と同じ番号で、次のスライドから 1 区間ずつ見ます。
 
 ```ladder
 UE, P-CSCF, I-CSCF, S-CSCF, HSS
@@ -875,6 +835,8 @@ I-CSCF -> S-CSCF: REGISTER
 S-CSCF <-> HSS: SAR, SAA // 9
 UE <-- P-CSCF <-- I-CSCF <-- S-CSCF: 200 OK // 10
 ```
+
+> 本 [登録で決まる 3 つのこと](../../../docs/book/ja/registration.md)、[REGISTER が 2 回送られる理由](../../../docs/book/ja/registration-two-registers.md)
 
 ---
 
@@ -920,7 +882,7 @@ steps:
     focus: [pcscf]
     text: |
       Path はあとで着信を UE に届けるための経路です。
-      P-CSCF の前と後の REGISTER を比べて、足されたものを探します。
+      P-CSCF の前と後の REGISTER の違いは、この 4 つのヘッダです。
   - id: forward
     title: REGISTER が I-CSCF に届く
     show: [reg1-p-i]
@@ -937,7 +899,7 @@ steps:
 
 フィルタは `dns.qry.type == 35 || dns.qry.type == 33` です。
 
-- P-CSCF の前と後の REGISTER を比べて、足されたものを探します。Path は、あとで着信を UE に届けるためのものです。
+- P-CSCF の前と後の REGISTER の違いは、P-CSCF が足すこの 4 つのヘッダです。Path は、あとで着信を UE に届けるためのものです。
 
 > 手順書 [1](../../../docs/guide/ja/registration.md#1-ue-が最初の-register-を送る) と [2](../../../docs/guide/ja/registration.md#2-p-cscf-が-i-cscf-を探して-register-を転送する)。TS 24.229 5.1.1.2.1、5.1.1.2.3、5.2.2.1。RFC 3263、RFC 3327、RFC 3581。
 
@@ -1216,6 +1178,7 @@ steps:
 - UE は発信するときに Service-Route を使います。Path は着信のときに使います。どちらも、登録への応答が戻る Via の一覧とは別のものです。Via はいま送った要求の応答の戻り道で、Path と Service-Route はこのあとの新しい要求の経路です。
 - 着信と発信の INVITE の全体は、通話のデッキでもう一度出てきます。
 
+> 本 [Path と Service-Route の使い分け](../../../docs/book/ja/registration-routes.md)
 > 手順書 [10](../../../docs/guide/ja/registration.md#10-s-cscf-が登録を受け付ける200-ok)。RFC 3327、RFC 3608。
 
 ---
@@ -1271,6 +1234,7 @@ steps:
 
 フィルタは `sip.CSeq.method == "SUBSCRIBE" || sip.CSeq.method == "NOTIFY" || diameter.cmd.code == 302` です。
 
+> 本 [登録の更新、解除、購読、網からの取り消し](../../../docs/book/ja/registration-lifecycle.md)
 > 手順書 [「登録の状態を購読する」](../../../docs/guide/ja/registration.md#登録の状態を購読する)。TS 24.229 5.2.3、5.4.2.1.1、5.4.2.1.2。RFC 3680、RFC 6665。TS 29.228 6.1.4。
 
 ---
@@ -1349,7 +1313,7 @@ steps:
     detail: [pur, pua]
     text: |
       Sh のコマンド 307 で、この利用者の SMS を受け持つことを HSS に書きます。
-      この流れは SMS の回で詳しく読みます。
+      この流れは SMS のデッキで詳しく見ます。
 ```
 
 | 見るもの | 見どころ |
@@ -1358,10 +1322,11 @@ steps:
 | IP-SM-GW の SUBSCRIBE と NOTIFY | IP-SM-GW も reg イベントを購読する。 |
 | PUR と PUA | IP-SM-GW が、自分の番号を Sh で HSS に登録する。 |
 
-- UE はこれを待ちません。200 OK をもう受け取っています。この流れは SMS の回で詳しく読みます。
+- UE はこれを待ちません。200 OK をもう受け取っています。この流れは SMS のデッキで詳しく見ます。
 
 フィルタは `diameter.cmd.code == 307` です。
 
+> 本 [登録の更新、解除、購読、網からの取り消し](../../../docs/book/ja/registration-lifecycle.md)
 > 手順書 [「アプリケーションサーバーにも登録する（第三者 REGISTER）」](../../../docs/guide/ja/registration.md#アプリケーションサーバーにも登録する第三者-register)。TS 24.229 5.4.1.7、5.4.1.7A。TS 24.341 5.3.3.2。TS 29.328 6.1.2。
 
 ---
@@ -1415,6 +1380,7 @@ steps:
 
 - 更新されない登録も同じように終わります。`event="expired"` と、TIMEOUT_DEREGISTRATION の SAR です。手順書の同じ節にあります。
 
+> 本 [登録の更新、解除、購読、網からの取り消し](../../../docs/book/ja/registration-lifecycle.md)
 > 手順書 [「登録の解除」](../../../docs/guide/ja/registration.md#登録の解除)。TS 24.229 5.1.1.6.1、5.4.1.4.1、5.4.2.1.2。
 
 ---
@@ -1497,7 +1463,7 @@ steps:
     only: [rtr]
     focus: [hss, scscf]
     text: |
-      今度は HSS から始まります。RTR は、この勉強会で初めて HSS から始まる Cx の要求です。
+      今度は HSS から始まります。ここまでの Cx の要求は I-CSCF か S-CSCF が送りましたが、RTR は HSS が送ります。
       Reason-Code は PERMANENT_TERMINATION（0）です。
   - id: rejected
     title: UE に rejected の NOTIFY が届く
@@ -1509,15 +1475,16 @@ steps:
       UE は rejected を受けると、登録し直しません。
 ```
 
-| 場合 | 試し方 | 見どころ |
+| 場合 | 起こすもの | 見どころ |
 | --- | --- | --- |
 | パスワードが誤っている | `ue register -password wrong-password` | 手順 8 までは同じ。S-CSCF は 403 を返し、AUTHENTICATION_FAILURE（9）の SAR を送る。 |
-| HSS から加入を削除する | ラボの手順書の「網が登録を取り消す」のとおり、登録中の加入を OAM から削除する。 | HSS が RTR を送る。Reason-Code は PERMANENT_TERMINATION（0）。UE には `event="rejected"` の NOTIFY が届く。 |
+| HSS から加入を削除する | 運用者が、登録中の加入を OAM から削除する。 | HSS が RTR を送る。Reason-Code は PERMANENT_TERMINATION（0）。UE には `event="rejected"` の NOTIFY が届く。 |
 
-- コマンドは `docker compose run --rm` に続けて書きます。
+- 手順書では、`ue` のコマンドを `docker compose run --rm` に続けて実行します。
 - RTR と RTA のフィルタは `diameter.cmd.code == 304` です。
 - HSS の加入者管理の API でも加入を削除できます。API の表は手順書にあります。
 
+> 本 [登録の更新、解除、購読、網からの取り消し](../../../docs/book/ja/registration-lifecycle.md)、[REGISTER が 2 回送られる理由](../../../docs/book/ja/registration-two-registers.md)
 > 手順書 [「パスワードが誤っているとき」](../../../docs/guide/ja/registration.md#パスワードが誤っているとき) と [「加入を削除する（HSS からの登録解除）」](../../../docs/guide/ja/registration.md#加入を削除するhss-からの登録解除)、ラボの手順書 [「網が登録を取り消す」](../../../docs/guide/ja/lab.md#網が登録を取り消す)。TS 24.229 5.4.1.2.3B。TS 29.228 6.1.2.1、6.1.3。
 
 ---
@@ -1526,10 +1493,10 @@ steps:
 
 ## ラボで同じ流れを見る
 
-- <http://localhost:8080> を開き、**Registrations** パネルで識別子を選びます。
-- 最後の REGISTER のシーケンス図が出ます。矢印を選ぶと、メッセージの全文と仕様の条項が出ます。
-- シーケンス図には SIP と Cx が並びます。DNS は出ません。
-- ラボは、ノードが送るコピー（HEP）から図を作ります。IMS の一部ではありません。
+- ラボ（<http://localhost:8080>）の **Registrations** パネルは、登録した識別子ごとに Contact、期限、S-CSCF を並べます。
+- 識別子を選ぶと、最後の REGISTER のシーケンス図が出ます。矢印を選ぶと、メッセージの全文と仕様の条項が出ます。
+- シーケンス図には SIP と Cx が並びます。DNS は出ません。Cx の要求は、同じノードが直前に受けた REGISTER に、ラボが推定で結び付けます。
+- ラボは、ノードが送るコピー（HEP）から図を作ります。IMS の一部ではありません。第三者 REGISTER は行を増やさず、RTR は図に出ません。
 
 [column]
 
@@ -1538,93 +1505,72 @@ steps:
 | Wireshark | すべてのパケット。DNS、TCP、AVP の中身まで。 |
 | ラボ | 1 つの登録や通話を、すぐに図で見る。 |
 
+> 本 [登録の更新、解除、購読、網からの取り消し](../../../docs/book/ja/registration-lifecycle.md)
 > 手順書 [ラボで IMS を見る「各パネルの内容」](../../../docs/guide/ja/lab.md#各パネルの内容) と [「シーケンス図の組み立て方」](../../../docs/guide/ja/lab.md#シーケンス図の組み立て方)
 
 ---
 
-## コードで確かめる
+## 手順を書いたコード
 
 ```ims-scene
 id: code
 nodes: [ue, pcscf, dns, icscf, hss, scscf]
-lead: ノードごとに、手順を書いたファイルがあります。キャプチャで見たヘッダの名前で検索します。
+lead: ノードごとに、手順を書いたファイルと、判断する関数があります。
 steps:
   - id: ue
     title: UE の REGISTER と応答の計算（1、7）
     focus: [ue]
-    text: "`internal/ue/ue.go`"
+    text: "`internal/ue/ue.go` の `Register` です。"
   - id: pcscf
     title: Path と DNS（2）
     focus: [pcscf, dns]
-    text: "`internal/pcscf/pcscf.go`、`internal/sipdns/locate.go`"
+    text: "`internal/pcscf/pcscf.go` の `register` と `pathURI`、`internal/sipdns/locate.go` の `Locate` です。"
   - id: icscf
     title: UAR（3、8）
     focus: [icscf]
-    text: "`internal/icscf/icscf.go`"
+    text: "`internal/icscf/icscf.go` の `register` と `choose` です。"
   - id: scscf
     title: MAR、401、SAR、200 OK（5、6、9、10）
     focus: [scscf]
-    text: "`internal/scscf/scscf.go`"
+    text: "`internal/scscf/scscf.go` の `register`、`challenge`、`check`、`accept`、`deregister` です。"
   - id: hss
     title: HSS の答え
     focus: [hss]
-    text: "`internal/hss/hss.go`"
+    text: "`internal/hss/hss.go` の `userAuthorization`、`multimediaAuth`、`serverAssignment` です。"
   - id: regevent
     title: reg イベント（11 から 14）
     focus: [scscf, pcscf, ue]
-    text: "`internal/scscf/regevent.go`、`internal/pcscf/regevent.go`、`internal/ue/regevent.go`"
+    text: "`internal/scscf/regevent.go`、`internal/pcscf/regevent.go`、`internal/ue/regevent.go` です。"
 ```
 
-| 手順 | 開くファイル |
-| --- | --- |
-| 1、7。UE の REGISTER と応答の計算 | `internal/ue/ue.go` |
-| 2。Path と DNS | `internal/pcscf/pcscf.go`、`internal/sipdns/locate.go` |
-| 3、8。UAR | `internal/icscf/icscf.go` |
-| 5、6、9、10。MAR、401、SAR、200 OK | `internal/scscf/scscf.go` |
-| HSS の答え | `internal/hss/hss.go` |
-| 11 から 14。reg イベント | `internal/scscf/regevent.go`、`internal/pcscf/regevent.go`、`internal/ue/regevent.go` |
+| 手順 | 開くファイル | 判断する関数 |
+| --- | --- | --- |
+| 1、7。UE の REGISTER と応答の計算 | `internal/ue/ue.go` | `Register` |
+| 2。Path と DNS | `internal/pcscf/pcscf.go`、`internal/sipdns/locate.go` | `register`、`pathURI`、`Locate` |
+| 3、8。UAR | `internal/icscf/icscf.go` | `register`、`choose` |
+| 5、6、9、10。MAR、401、SAR、200 OK | `internal/scscf/scscf.go` | `register`、`challenge`、`check`、`accept`、`deregister` |
+| HSS の答え | `internal/hss/hss.go` | `userAuthorization`、`multimediaAuth`、`serverAssignment` |
+| 11 から 14。reg イベント | `internal/scscf/regevent.go`、`internal/pcscf/regevent.go`、`internal/ue/regevent.go` | `subscribe`、`notifyRegistration`、`endRegistration`、`subscribeRegEvent`、`SubscribeRegEvent` |
 
-- キャプチャで見たヘッダの名前、たとえば `Service-Route` でコードを検索します。
-- 手順書の簡略化の表から 1 行を選び、その `SIMPLIFIED:` のコメントを探します。
+- キャプチャで見たヘッダの名前は、コードにもそのまま出てきます。たとえば `Service-Route` は、S-CSCF の `bindingResponse` が 200 OK に入れ、UE の `routeSet` が Route にします。
+- 仕様の手順を簡略化した箇所には `SIMPLIFIED:` のコメントがあり、手順書の簡略化の表に同じ内容があります。
 
 > 手順書 [「このプロジェクトで簡略化していること」](../../../docs/guide/ja/registration.md#このプロジェクトで簡略化していること)
 
 ---
 
-[layout: exercise]
+## 自分で動かす場合
 
-## 振り返り
+このデッキは、読むだけで分かるように書いています。同じ流れを自分のキャプチャで見たいときの手順は、手順書にあります。
 
-1. REGISTER が 2 回送られるのは、なぜですか。
-2. I-CSCF は 1 回の登録で、HSS に何回尋ねますか。答えはどう変わりますか。
-3. HSS は S-CSCF にパスワードを渡しますか。
-4. 200 OK の Path と Service-Route は、それぞれ誰が、いつ使いますか。
-5. 登録の解除で 401 が返らないのは、なぜですか。
-
----
-
-[layout: answers]
-
-## 振り返りの答え
-
-1. 1 回目への答えとして網が認証の問い（nonce）を出し、2 回目で UE がそれに答えるからです。
-2. 2 回です。1 回目は DIAMETER_FIRST_REGISTRATION と Server-Capabilities、2 回目は DIAMETER_SUBSEQUENT_REGISTRATION と Server-Name です。
-3. 渡しません。渡すのは H(A1) です。
-4. S-CSCF は Path を使って、UE あての要求をその UE の P-CSCF 経由で送ります。UE は Service-Route を使って、自分の要求を自分の S-CSCF へ送ります。
-5. P-CSCF がその UE の IP の対応付けを持っていて、`ip-assoc-yes` を付けるからです。
-
----
-
-## 次の回
-
-- 次の回は通話です。この回で決まった Path、Service-Route、IP の対応付けを使います。
-- 後片付けは、次の回を続けて始めるかどうかで選びます。
+- 構成の起動と登録の実行は [「登録を実行する」](../../../docs/guide/ja/registration.md#登録を実行する) にあります。キャプチャの開き方と表示フィルタは [「キャプチャを開く」](../../../docs/guide/ja/registration.md#キャプチャを開く) に、番号の付いたシーケンス図の全体は [「シーケンス」](../../../docs/guide/ja/registration.md#シーケンス) にあります。Wireshark の使い方は [信号をキャプチャして Wireshark で開く](../../../docs/guide/ja/capture.md) にあります。
+- 片付けは手順書 [「後片付け」](../../../docs/guide/ja/registration.md#後片付け) にあります。
 
 ```sh
 docker compose --profile ue --profile phones --profile volte down -v --remove-orphans
 docker compose --profile ue down --rmi all -v --remove-orphans
 ```
 
-1 行目は、ノードと UE を止め、ボリュームを消し、イメージを残します。次の回をビルドし直さずに始められます。2 行目は、イメージも消します。どちらも `-v` で、キャプチャ以外の保存データ（ボリューム）が消えます。
+1 行目は、ノードと UE を止め、ボリュームを消し、イメージを残します。続けて通話のデッキの構成を、ビルドし直さずに起動できます。2 行目は、イメージも消します。どちらも `-v` で、キャプチャ以外の保存データ（ボリューム）が消えます。
 
-> 次の回の手順書は [音声通話の流れを追う](../../../docs/guide/ja/call.md) です。片付けは手順書 [「後片付け」](../../../docs/guide/ja/registration.md#後片付け) にあります。
+> 通話の手順書は [音声通話の流れを追う](../../../docs/guide/ja/call.md) です。

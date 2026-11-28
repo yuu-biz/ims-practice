@@ -2,8 +2,26 @@
 
 [English](../en/README.md)
 
-登録の章:
+3GPP の IMS を学習用に実装したこのリポジトリを題材に、IMS が何をどう決めているかを、図と短いコードで説明する本です。読むだけで分かるように書いています。構成を動かしたり、問いに答えたりする必要はありません。自分で動かしたい人のために、各章の終わりと 自分で動かす に、手順書への案内があります。
 
-- [REGISTER が 2 回送られる理由](registration-two-registers.md)
-- [Path と Service-Route の使い分け](registration-routes.md)
-- [遅れて届いた登録の解除が、新しい登録を消さない理由](registration-stale-deregistration.md)
+読む順は 3 つあります。どれも前から順に読めますが、必要なところから読んでも構いません。各章は、前提にする章を最初に挙げます。
+
+## 入門（全体像）
+
+IMS のノードが何を受け持ち、登録と通話で何が決まるかを、最小の地図と代表的な信号で見ます。
+
+4. [登録で決まる 3 つのこと](registration.md)
+
+## 中級（仕様の条件と実装の対応）
+
+条件が変わると、どの判断、状態、メッセージが変わるかを、仕様の条項と、判断するコードと、それを確かめる試験で追います。
+
+- 登録
+  - [REGISTER が 2 回送られる理由](registration-two-registers.md)
+  - [Path と Service-Route の使い分け](registration-routes.md)
+  - [遅れて届いた登録の解除が、新しい登録を消さない理由](registration-stale-deregistration.md)
+  - [登録の更新、解除、購読、網からの取り消し](registration-lifecycle.md)
+
+## スライドと手順書
+
+同じ問いを図と段階で見せるスライドが [slides/](../../../slides/README.ja.md) にあり、各章は対応するシーンを挙げます。構成を動かす手順と、キャプチャで見るヘッダの一覧は、手順書 [docs/guide/ja/](../../guide/ja/README.md) にあります。

@@ -10,6 +10,8 @@ summary:
   en: Registration, calls, supplementary services, SMS, the MRF, VoLTE and interconnection in IMS, and the design decisions that the specifications leave open, explained with figures and short excerpts of a learning implementation of 3GPP IMS. It is written to be read, with nothing to run.
 topics: [ims, sip, volte, diameter, 3gpp]
 chapters:
+  - registration
   - registration-two-registers
   - registration-routes
   - registration-stale-deregistration
+  - registration-lifecycle
