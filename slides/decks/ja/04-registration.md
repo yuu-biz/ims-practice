@@ -625,7 +625,7 @@ events:
     to: icscf
     proto: SIP
     fields:
-      - 応答のコード: RFC 3261 10.3 は失敗とだけ定める。この実装は 500 を返す
+      - 応答のコード: RFC 3261 10.3 はコードを定めない。この実装は 500
   - id: ord-kept
     do: 登録をそのまま残す
     at: scscf
@@ -641,14 +641,13 @@ events:
     note: (別の Call-ID)
     fields:
       - Call-ID: B
-      - CSeq: 2（CSeq 1 が受けた 401 に答える）
-      - Contact: C
+      - CSeq: 2（401 への答え）
   - id: ord-other-compare
     do: CSeq を比べない
     at: scscf
     fields:
       - Call-ID: 保存した A と違う B
-      - 判断: 認証の答えを確かめ、普通の再登録として進む
+      - 判断: 認証を確かめ、再登録として進む
   - id: ord-other-sar
     msg: SAR
     from: scscf
@@ -1455,7 +1454,7 @@ steps:
     only: [ord-stored, ord-other, ord-other-compare]
     focus: [scscf]
     detail: [ord-other, ord-other-compare]
-    text: Call-ID B の要求は、A の CSeq と比べません。認証の答えが正しければ、普通の再登録として進みます。
+    text: Call-ID が違うので、S-CSCF は CSeq を比べません。
   - id: accepted
     title: SAR を送り、B の値を保存する
     show: [ord-other-sar, ord-other-saa, ord-other-ok]

@@ -625,7 +625,7 @@ events:
     to: icscf
     proto: SIP
     fields:
-      - Status code: RFC 3261 10.3 says only that the request fails. This implementation answers 500
+      - Status code: RFC 3261 10.3 names none. This implementation answers 500
   - id: ord-kept
     do: Keeps the registration as it is
     at: scscf
@@ -641,14 +641,13 @@ events:
     note: (another Call-ID)
     fields:
       - Call-ID: B
-      - CSeq: 2 (it answers the 401 that CSeq 1 got)
-      - Contact: C
+      - CSeq: 2 (the answer to the 401)
   - id: ord-other-compare
     do: Does not compare the CSeq
     at: scscf
     fields:
       - Call-ID: B, not the stored A
-      - Decision: Checks the answer to the challenge and goes on as a re-registration
+      - Decision: Checks the answer and goes on as a re-registration
   - id: ord-other-sar
     msg: SAR
     from: scscf
@@ -1456,7 +1455,7 @@ steps:
     only: [ord-stored, ord-other, ord-other-compare]
     focus: [scscf]
     detail: [ord-other, ord-other-compare]
-    text: A request with Call-ID B is not compared with the CSeq of A. If its answer to the challenge is right, it goes on as a re-registration.
+    text: The Call-ID differs, so the S-CSCF does not compare the CSeq.
   - id: accepted
     title: An SAR, and the values of B are stored
     show: [ord-other-sar, ord-other-saa, ord-other-ok]
