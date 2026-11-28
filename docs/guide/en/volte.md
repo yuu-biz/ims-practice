@@ -216,7 +216,7 @@ Only a message that comes to the protected server port counts as protected. A re
 
 ### The same agreement with ESP
 
-The same network can protect the signalling for real, with the integrity algorithm the two ends agreed on and null encryption. The encryption is the P-CSCF's decision: ESP integrity protection is what TS 33.203 6.3 asks for in every case, while confidentiality is applied only when the local policy of the P-CSCF requires it (5.1.3 item 2, 6.2), and `ealg=null` is a value the security agreement carries (Annex H). So a network with null encryption is a network a real operator may run, and its SIP is still readable.
+The same network can protect the signalling for real, with the integrity algorithm the two ends agreed on and null encryption. The encryption is the P-CSCF's decision: ESP integrity protection is what TS 33.203 6.3 asks for in every case, while confidentiality is applied only when the local policy of the P-CSCF requires it (5.1.3 item 2, 6.2), and `ealg=null` is a value the security agreement carries (Annex H). So a network with null encryption is a network a real operator may run, and its SIP is still readable. [The signalling encrypted](#the-signalling-encrypted) below asks for confidentiality as well.
 
 Start it with the deployment that turns ESP on:
 
@@ -269,6 +269,62 @@ The two `-d` options name the protected ports as SIP over TCP. SIP is registered
 The same dialog has one setting that needs no row at all, **Attempt to detect/decode NULL encrypted ESP payloads** (`esp.enable_null_encryption_decode_heuristic`). It works out the length of the integrity check value instead of being told it: it tries 12, 16, 24 and 32 octets and keeps the first length whose padding and next header come out valid. That is the quickest way to look inside one capture. The row above names the algorithm, which gives the length outright, so nothing is guessed per packet; the checks of this project use the row for that reason.
 
 Three things still differ from a real network with ESP on. The protected client ports are the one port of each end's configuration, the same for every UE and every authentication, where TS 33.203 7.4.0 has them change with each authenticated re-registration. The P-CSCF forwards to the core on the transport the request came in on, so the core sees requests from its protected server port, which no association protects; the P-CSCF's own requests to a UE leave its protected client port, and everything else the port it listens on. And the security associations live in the kernel of the one P-CSCF that set them up, while the SA table can be shared by several: a UE that registered through one of them and then sends to another is answered as though it had no associations, and registers again.
+
+### The signalling encrypted
+
+The confidentiality of the signalling is the P-CSCF's decision (TS 33.203 5.1.3 item 2), and one more file turns it on:
+
+```sh
+docker compose -f compose.yaml -f deploy/esp/esp.yaml \
+  -f deploy/esp/encryption.yaml --profile volte up -d --build
+```
+
+It changes two things of the deployment above, both at the P-CSCF. Its `sec_agree.esp` gains `confidentiality: true`, so it offers `ealg=aes-cbc` at `q=0.2` before `ealg=null` at `q=0.1` and selects AES-CBC for every UE that offers it too (7.2). And it gains `wireshark_sa_file: /captures/esp_sa`, the file of keys that the rest of this section is about, which is why the P-CSCF also mounts the directory of the captures. The UEs change nothing: a UE with a protected client port already offers the encryption algorithm it supports.
+
+AES-CBC with a 128-bit key is the encryption algorithm of RFC 3602, and its key is CK itself: Annex I expands nothing, because CK is already 128 bits long. The integrity algorithm and IK_ESP stay as they were, so each security association now carries two keys:
+
+```sh
+docker compose exec pcscf ip xfrm state
+```
+
+```sh
+ip xfrm state add src 172.28.0.120 dst 172.28.0.40 proto esp spi 0x3b9b0ea3 \
+  reqid 1000017571 mode transport replay-window 32 \
+  auth-trunc 'hmac(sha256)' 0x<IK_ESP> 128 enc 'cbc(aes)' 0x<CK_ESP>
+```
+
+Annex H offers two more encryption algorithms, `aes-gcm` and `aes-gcm-us`, which are AES-GCM of RFC 4106 with a 16-octet integrity check value and differ in how the salt of the cipher is derived. They do the integrity protection themselves, so they go with `alg=null` and no integrity algorithm of their own. Annex H and Annex I mark `aes-cbc` and `aes-gcm` as not recommended, which leaves AES-GCM with the unique salt as the one encryption algorithm the specification recommends; this project implements AES-CBC, the one that keeps the integrity algorithm of the deployment above beside it and whose key needs no derivation. The security agreement carries the value either way (Annex H), so a network with AES-CBC is a network an operator may run.
+
+In the capture there is now nothing readable between a registered VoLTE UE and the P-CSCF. The settings of the deployment above find no SIP any more: they still give the right length for the integrity check value, and what is under it is ciphertext. Only the first REGISTER, its 401 and the traffic between the other nodes are still plain, and the security agreement in those two shows what the two ends settled on, `ealg=aes-cbc` in `Security-Client` and in `Security-Server`.
+
+The keys are not in the capture. The 401 that carries `ik` and `ck` goes no further than the P-CSCF, which takes them out before the response reaches the UE, and Annex I expands IK_ESP from them with a key derivation function anyway. So the P-CSCF writes them down: with `wireshark_sa_file` set, it appends the four security associations of every authentication to that file, in the form of the rows of Wireshark's ESP SAs table, which is where a reader of the capture needs them.
+
+```sh
+cat captures/esp_sa
+```
+
+```text
+"IPv4","172.28.0.121","172.28.0.40","0x4ec1f1d4","AES-CBC [RFC3602]","0x<CK_ESP>","HMAC-SHA-256-128 [RFC4868]","0x<IK_ESP>"
+"IPv4","172.28.0.40","172.28.0.121","0x94c0a72e","AES-CBC [RFC3602]","0x<CK_ESP>","HMAC-SHA-256-128 [RFC4868]","0x<IK_ESP>"
+```
+
+Each row is one association: the two addresses, the SPI, the encryption algorithm with CK_ESP and the integrity algorithm with IK_ESP. The four associations of one authentication share both keys (TS 33.203 6.2, 6.3) and differ in their addresses and SPIs. Nothing is ever removed from the file: a capture outlives the associations it holds, and the rows of every registration it recorded have to stay.
+
+Those keys are the ones of this deployment's test subscribers, written in the clear so that a learner can read the capture. A network of real subscribers writes no such file: that is why the P-CSCF writes one only where the configuration names it, and why the file lives in the directory of the captures, which is as public as the captures themselves.
+
+In **Edit > Preferences > Protocols > ESP**, tick **Attempt to detect/decode encrypted ESP payloads**, open **ESP SAs** and add the rows of the file, one row per association. The columns are the fields of the file, in that order. On the command line each row is one `-o` option, so one option per line of the file brings the SIP of both UEs back, decrypted out of the ESP that carried it:
+
+```sh
+esp_sa=()
+while IFS= read -r row; do esp_sa+=(-o "uat:esp_sa:$row"); done <captures/esp_sa
+tshark -r captures/ims-*.pcap -o esp.enable_encryption_decode:TRUE "${esp_sa[@]}" \
+  -d tcp.port==5062,sip -d tcp.port==5064,sip \
+  -Y 'esp && sip'
+```
+
+The two `-d` options name the protected ports as SIP over TCP, as they do without encryption.
+
+Wireshark reads each packet with the first row whose addresses and SPI match it, so the rows of the two UEs do not get in each other's way, and a row of an earlier registration is simply never matched. A row with `*` in place of an address or an SPI would match any packet, which works for one UE and gives the wrong key to the second.
 
 ### SIPp
 
@@ -571,6 +627,8 @@ With preconditions, the offer and answer of the 183 only make the new parameters
 `scripts/e2e-volte.sh` does everything in this guide and checks each message in the capture, in order. It leaves the capture in `captures/`, the frames of the registrations, the calls, Rx and the EPC stub's API in `e2e-out/volte-ladder.txt`, the AMR-WB recordings in `captures/volte-*.amr`, and the logs of the UEs, with what a UE on the host heard, in `e2e-out/`. It takes about two minutes.
 
 `scripts/e2e-esp.sh` runs a registration and a call with IPsec ESP on the signalling between the UEs and the P-CSCF, and checks the security associations in the kernel as well as the capture. [The same agreement with ESP](#the-same-agreement-with-esp) says how to start that deployment by hand and how to read what it captures.
+
+`scripts/e2e-esp-encryption.sh` runs the same scenario with the confidentiality policy of the P-CSCF on top. It checks that the associations carry AES-CBC, that the settings which read null encryption find no SIP in the capture, and that the keys the P-CSCF wrote decrypt the REGISTERs and the call. [The signalling encrypted](#the-signalling-encrypted) says how to start that deployment and how to read its capture.
 
 ### With the Lab
 

@@ -109,7 +109,7 @@
 - 異常系として、音声の dedicated bearer を EPC スタブの操作で落としたとき、PCRF が RAR か ASR で知らせ、P-CSCF が BYE で呼を切る（IR.92 2.4.2.3、TS 24.229 5.2.8.1.2）。P-CSCF は BYE を作るためにダイアログの情報を `Store` に置く。
 - UE が P-Access-Network-Info を付ける（TS 24.229 L.3.1.1、7.2A.4.3）。IR.92 v24.0 には記述が見つからなかった。
 - プリコンディション（RFC 3312）を使った呼の確立に対応する。
-- IMS-AKA（Milenage、AKAv1-MD5）で認証する。既定では sec-agree と保護ポートの手順を行い、ESP はかけない。ESP（暗号化は null）は上書きの構成で有効にする。
+- IMS-AKA（Milenage、AKAv1-MD5）で認証する。既定では sec-agree と保護ポートの手順を行い、ESP はかけない。ESP は上書きの構成で有効にする。暗号化は null にし、秘匿までかける構成も別の上書きで用意する。
 - SIPp を独立した試験相手にして、AKA の登録を確かめる。
 - GSMA IR.92 の必須の要件を満たす。今の実装との差は [profiles.md](background/profiles.md) の表にまとめてある。
   - AMR と AMR-WB と、その RTP ペイロードの形式（RFC 4867）に対応する。符号化済みのフレームを送り、製品は cgo を使わない。UE の offer には PCMU も残す。
@@ -118,7 +118,7 @@
 - `internal/sip` の基盤（UPDATE、セッションタイマー、199、Reason、OPTIONS、re-INVITE、B2BUA に要る部品）を入れ、付加サービスもその上に作る。
 - 手順書「VoLTE の呼の流れ」を書く。
 
-手順書は [volte.md](guide/ja/volte.md)、スクリプトは `scripts/e2e-volte.sh` です。ESP（暗号化は null）を有効にした構成は `deploy/esp/`、その確認は `scripts/e2e-esp.sh` で、カーネルのアソシエーションとキャプチャの ESP の中の SIP を読みます。作りは [volte-access.md](design/volte-access.md) と [codecs.md](design/codecs.md) にあります。
+手順書は [volte.md](guide/ja/volte.md)、スクリプトは `scripts/e2e-volte.sh` です。ESP（暗号化は null）を有効にした構成は `deploy/esp/`、その確認は `scripts/e2e-esp.sh` で、カーネルのアソシエーションとキャプチャの ESP の中の SIP を読みます。秘匿までかける構成は `deploy/esp/encryption.yaml` を重ねたもので、確認は `scripts/e2e-esp-encryption.sh` です。暗号化されたキャプチャを読むための鍵は P-CSCF が書き出し、その読み方は手順書にあります。作りは [volte-access.md](design/volte-access.md) と [codecs.md](design/codecs.md) にあります。
 
 **完了条件.** CI の試験で IMS-AKA の登録と、プリコンディション付きの通話が成功する。
 
@@ -323,7 +323,7 @@
 - Open5GS と UERANSIM を使う構成。
 - ブラウザから通話できる WebRTC の UE。
 - PSTN への発信（BGCF、MGCF）。
-- TLS を有効にした構成と、暗号化された信号を Wireshark で復号する手順。IMS-AKA の IPsec は `deploy/esp/` の構成で有効にでき、暗号化が null なので復号は要らない。秘匿までかける構成は、ここに残っている。
+- TLS を有効にした構成。IMS-AKA の IPsec を秘匿までかける構成（`deploy/esp/encryption.yaml`）はできており、復号の手順は手順書にある。
 - 網の側の MWI（TS 24.606）と ECT（TS 24.629）。IR.92 は網の対応を任意としている。
 - 保存先の冗長（Valkey の Sentinel、クラスタ）。
 - SLF（Dx）。加入者を別々の HSS に分けて置くときに要る。

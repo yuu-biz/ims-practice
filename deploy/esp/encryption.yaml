@@ -1,0 +1,39 @@
+# The ESP of IMS AKA with confidentiality: the signalling between the
+# VoLTE UEs and the P-CSCF is encrypted as well as integrity protected.
+# This file goes on top of compose.yaml and deploy/esp/esp.yaml, from
+# the root of the repository:
+#
+#   docker compose -f compose.yaml -f deploy/esp/esp.yaml \
+#     -f deploy/esp/encryption.yaml --profile volte up -d --build
+#
+# or, so that every later "docker compose" of the same shell takes all
+# three files:
+#
+#   export COMPOSE_FILE=compose.yaml:deploy/esp/esp.yaml:deploy/esp/encryption.yaml
+#   export COMPOSE_PATH_SEPARATOR=:
+#
+# It changes two things of deploy/esp/esp.yaml, both at the P-CSCF,
+# which is where TS 33.203 5.1.3 item 2 puts the decision. The P-CSCF
+# takes its configuration from deploy/esp/pcscf-encryption.yaml, whose
+# esp section asks for confidentiality and names a file for the keys.
+# And it mounts the directory of the captures, which is where that file
+# goes. The UEs change nothing: a UE with a protected client port
+# already offers the encryption algorithm it supports, as 5.1.3 item 1
+# asks, and sets up whatever the P-CSCF selected.
+#
+# What changes in the capture: between a registered VoLTE UE and the
+# P-CSCF there is no readable SIP left, inside ESP or outside it. The
+# SIP comes back once Wireshark has the rows of captures/esp_sa in its
+# ESP settings; the guides say how (docs/guide/en/volte.md).
+#
+# The keys in that file are those of the test subscribers of this
+# deployment, written in the clear so that a learner can read the
+# capture. A network of real subscribers writes no such file.
+
+services:
+  pcscf:
+    volumes:
+      - ./deploy/esp/pcscf-encryption.yaml:/etc/ims/node.yaml:ro
+      # Where the P-CSCF writes the keys, beside the captures that need
+      # them. The capture container writes the pcap files here.
+      - ./captures:/captures
