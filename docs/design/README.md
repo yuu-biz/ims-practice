@@ -9,7 +9,7 @@
 | [media-control.md](media-control.md) | メディア中継ノードを独自の API と H.248 で制御すること。P-CSCF の通過ごとのコンテキスト。フォークした INVITE の別のダイアログから届き、中継ノードに通せない 2xx と、そのダイアログの中の要求の扱い。網の境界の装置の振る舞い | 通話の基本を先に学べるようにし、実際の網と同じ形で中継を見せるため |
 | [environment-capture.md](environment-capture.md) | ホストとコンテナのあいだを NAT 越しとして扱うこと。ブリッジ全体を 1 つのコンテナでキャプチャすること | ホストのソフトフォンとつなぎ、すべての信号を 1 つの pcap で見るため |
 | [codecs.md](codecs.md) | G.711 から始め、AMR と AMR-WB を符号化済みのフレームで運ぶこと | IR.92 と NG.114 の必須のコーデックに従い、製品に cgo を入れないため |
-| [volte-access.md](volte-access.md) | 最初のアクセス網を EPC にすること。EPC と PCRF のスタブ。既定では ESP をかけず、上書きの構成で ESP（暗号化は null）をかける IMS-AKA。AKAv1-MD5 | VoLTE の手順（ベアラ、Rx、sec-agree）をキャプチャで見せるため |
+| [volte-access.md](volte-access.md) | 最初のアクセス網を EPC にすること。EPC と PCRF のスタブ。既定では ESP をかけず、上書きの構成で ESP（暗号化は null）をかける IMS-AKA。AKAv2-SHA-256 と AKAv1-MD5 | VoLTE の手順（ベアラ、Rx、sec-agree）をキャプチャで見せるため |
 | [lab-oam.md](lab-oam.md) | 学習用の画面の作りと、学習用の画面と OAM を分けること | 学習の道具と保守の装置の受け持ちを分けるため |
 | [sms.md](sms.md) | IP-SM-GW の役割 `ipsmgw` と SC の役割 `sc` で SMS を運ぶこと。2 つのあいだは SGd で、SC を置かない構成では IP-SM-GW の中の SC のスタブを使うこと | 通話の着信と同じ流れで SMS を届け、IP-SM-GW から見た SC を境界の後ろで差し替えられるようにするため |
 | [mmtel-mrf.md](mmtel-mrf.md) | MMTel AS を routeing B2BUA として作り、MRF を自作すること | IR.92 が必須にする付加サービスの信号を見せるため |

@@ -406,7 +406,9 @@ event_to() { echo "ip.src == $epc && ip.dst == $1 && frame contains \"$2\""; }
 echo "SIPp registers with IMS AKA (TS 24.229 5.1.1.2.2, 5.1.1.5.1; TS 33.203 6.1.1, 7.2)"
 expect "REGISTER SIPp -> P-CSCF:5060 with Security-Client" "sip.Method == \"REGISTER\" && ip.src == $sipp && udp.dstport == 5060 && sip.Security-Client"
 expect "MAR for SIPp's subscriber, Digest-AKAv1-MD5" "diameter.cmd.code == 303 && $req && diameter.User-Name == \"001010000000011@$domain\" && diameter.3GPP-SIP-Authentication-Scheme == \"Digest-AKAv1-MD5\""
-expect "401 P-CSCF -> SIPp: AKAv1-MD5 and Security-Server" "sip.Status-Code == 401 && ip.dst == $sipp && sip.WWW-Authenticate contains \"AKAv1-MD5\" && sip.Security-Server"
+# SIPp names AKAv1-MD5 in its first REGISTER, so the 401 offers that one
+# alone (TS 24.229 5.4.1.2.1A item 1 c).
+expect "401 P-CSCF -> SIPp: AKAv1-MD5 alone and Security-Server" "sip.Status-Code == 401 && ip.dst == $sipp && sip.WWW-Authenticate contains \"AKAv1-MD5\" && !(sip.WWW-Authenticate contains \"AKAv2-SHA-256\") && sip.Security-Server"
 expect "REGISTER SIPp -> the protected server port 5064 with Security-Verify" "sip.Method == \"REGISTER\" && ip.src == $sipp && udp.dstport == 5064 && sip.Security-Verify"
 expect "200 OK P-CSCF:5064 -> SIPp" "sip.Status-Code == 200 && sip.CSeq.method == \"REGISTER\" && ip.dst == $sipp && udp.srcport == 5064"
 
@@ -416,18 +418,22 @@ expect "ATTACH ACCEPT: the PDN address, and the P-CSCF in the PCO (container 000
 expect "ATTACH COMPLETE" "$(ue_api 001010000000010 attach-complete)"
 
 echo "volte10 registers with IMS AKA (TS 24.229 5.1.1.2.2, 5.2.2.2, 5.4.1.2.1; TS 33.203 6.1.1, 7.1)"
-expect "REGISTER volte10 -> P-CSCF:5060: To the temporary public identity, Security-Client, sec-agree, AKAv1-MD5 without a response, P-Access-Network-Info" "sip.Method == \"REGISTER\" && ip.src == $va_ip && udp.dstport == 5060 && sip.to.addr == \"$temporary_a\" && sip.Security-Client && sip.Require contains \"sec-agree\" && sip.Authorization contains \"algorithm=AKAv1-MD5\" && sip.Authorization contains \"response=\\\"\\\"\" && sip.P-Access-Network-Info"
+# The first REGISTER names no algorithm (TS 24.229 5.1.1.2.2 item a), so
+# the 401 offers every algorithm of IMS AKA (TS 33.203 6.1.1).
+expect "REGISTER volte10 -> P-CSCF:5060: To the temporary public identity, Security-Client, sec-agree, no algorithm and no response, P-Access-Network-Info" "sip.Method == \"REGISTER\" && ip.src == $va_ip && udp.dstport == 5060 && sip.to.addr == \"$temporary_a\" && sip.Security-Client && sip.Require contains \"sec-agree\" && !(sip.Authorization contains \"algorithm=\") && sip.Authorization contains \"response=\\\"\\\"\" && sip.P-Access-Network-Info"
 reg="$(field sip.Call-ID)"
 expect "MAR S-CSCF -> HSS: Digest-AKAv1-MD5" "diameter.cmd.code == 303 && $req && diameter.User-Name == \"$impi_a\" && diameter.3GPP-SIP-Authentication-Scheme == \"Digest-AKAv1-MD5\""
 expect "MAA 2001 with RAND and AUTN, XRES, CK and IK (TS 29.228 6.3)" "$(answer_to) && diameter.Result-Code == 2001 && diameter.3GPP-SIP-Authenticate && diameter.3GPP-SIP-Authorization && diameter.Confidentiality-Key && diameter.Integrity-Key"
 # The nonce is base64 and can end in "ck=" or "ik=", so the parameters
 # are found by the comma or space before them, which base64 has not.
 expect "401 S-CSCF -> I-CSCF with ck and ik for the P-CSCF" "sip.Status-Code == 401 && ip.src == $scscf && sip.Call-ID == \"$reg\" && sip.WWW-Authenticate matches \"[, ]ck=\" && sip.WWW-Authenticate matches \"[, ]ik=\""
-expect "401 P-CSCF -> volte10: Security-Server, ck and ik removed" "sip.Status-Code == 401 && ip.dst == $va_ip && sip.Security-Server && !(sip.WWW-Authenticate matches \"[, ]ck=\") && !(sip.WWW-Authenticate matches \"[, ]ik=\")"
+expect "401 P-CSCF -> volte10: AKAv2-SHA-256 and AKAv1-MD5, Security-Server, ck and ik removed" "sip.Status-Code == 401 && ip.dst == $va_ip && sip.Security-Server && sip.WWW-Authenticate contains \"AKAv2-SHA-256\" && sip.WWW-Authenticate contains \"AKAv1-MD5\" && !(sip.WWW-Authenticate matches \"[, ]ck=\") && !(sip.WWW-Authenticate matches \"[, ]ik=\")"
 # The answer is close to 1300 bytes: with long SPIs it goes over TCP
 # (RFC 3261 18.1.1), from a port of the moment, and its 200 OK comes
 # back on that connection.
-expect "REGISTER volte10:5062 -> P-CSCF:5064, or over TCP to 5064: Security-Verify and the response from RES" "sip.Method == \"REGISTER\" && ip.src == $va_ip && ((udp.srcport == 5062 && udp.dstport == 5064) || tcp.dstport == 5064) && sip.Security-Verify && !(sip.Authorization contains \"response=\\\"\\\"\")"
+# The UE answers the topmost challenge it supports, AKAv2-SHA-256, whose
+# password binds RES, IK and CK (TS 24.229 5.1.1.5.1, RFC 4169 2.1).
+expect "REGISTER volte10:5062 -> P-CSCF:5064, or over TCP to 5064: Security-Verify and the AKAv2-SHA-256 response" "sip.Method == \"REGISTER\" && ip.src == $va_ip && ((udp.srcport == 5062 && udp.dstport == 5064) || tcp.dstport == 5064) && sip.Security-Verify && sip.Authorization contains \"algorithm=AKAv2-SHA-256\" && !(sip.Authorization contains \"response=\\\"\\\"\")"
 expect "REGISTER P-CSCF -> I-CSCF: integrity-protected=\"yes\"" "sip.Method == \"REGISTER\" && ip.src == $pcscf && sip.Call-ID == \"$reg\" && sip.Authorization contains \"integrity-protected=\\\"yes\\\"\""
 expect "SAR S-CSCF -> HSS" "diameter.cmd.code == 301 && $req && diameter.User-Name == \"$impi_a\""
 expect "200 OK I-CSCF -> P-CSCF" "sip.Status-Code == 200 && sip.Call-ID == \"$reg\" && ip.dst == $pcscf"

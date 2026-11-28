@@ -78,7 +78,7 @@ events:
       - where to: from the UE's 5060 to the P-CSCF's 5060
       - Security-Client: its offer of associations
       - Require: "`sec-agree`, in Proxy-Require too"
-      - Authorization: "`algorithm=AKAv1-MD5`; the nonce and the response are empty"
+      - Authorization: "no algorithm; the nonce and the response are empty"
   - id: pcscf-keep
     do: keeps the Security-Client
     at: pcscf
@@ -128,14 +128,14 @@ events:
     fields:
       - nonce: RAND and AUTN in base64
       - for the P-CSCF: "the parameters `ik` and `ck`"
-      - what it keeps: RAND and XRES
+      - what it keeps: RAND, XRES, IK and CK
   - id: r401-s-i
     msg: "401"
     from: scscf
     to: icscf
     proto: SIP
     fields:
-      - WWW-Authenticate: "the nonce, `algorithm=AKAv1-MD5`, `ik`, `ck`"
+      - WWW-Authenticate: "one per algorithm: `AKAv2-SHA-256` then `AKAv1-MD5`, each with the nonce, `ik`, `ck`"
   - id: r401-i-p
     msg: "401"
     from: icscf
@@ -171,7 +171,7 @@ events:
     fields:
       - where to: from the UE's 5062 to the P-CSCF's 5064
       - Security-Verify: a copy of the P-CSCF's Security-Server
-      - Authorization: the response, with RES as the password
+      - Authorization: "`algorithm=AKAv2-SHA-256`, the response with RES, IK and CK in the password"
   - id: pcscf-verify
     do: checks the agreement
     at: pcscf
@@ -195,7 +195,7 @@ events:
     do: checks the RES
     at: scscf
     fields:
-      - the computation: the Digest with XRES as the password
+      - the computation: the Digest of the algorithm the UE named, from XRES, IK and CK
       - when they match: an SAR tells the HSS of the registration
   - id: sar
     msg: SAR
@@ -879,7 +879,9 @@ steps:
     title: The S-CSCF builds the challenge
     show: [scscf-challenge]
     zoom: [icscf, hss, scscf]
-    text: RAND and AUTN go into the nonce in base64, as they are. The keys go into separate parameters, for the P-CSCF.
+    text: |
+      RAND and AUTN go into the nonce in base64, as they are. The keys go into separate parameters, for the P-CSCF.
+      One WWW-Authenticate per algorithm offered, the preferred one first: AKAv2-SHA-256, then AKAv1-MD5 for backward compatibility.
   - id: back
     title: The 401 comes back to the P-CSCF
     only: [r401-s-i, r401-i-p]
@@ -901,9 +903,9 @@ steps:
 | --- | --- | --- |
 | 698 | UE:5060 → P-CSCF:5060 | `Security-Client`, `Require: sec-agree`. Empty nonce and response. |
 | 709 | P-CSCF → I-CSCF | Security-Client taken out and kept. `integrity-protected="no"`. |
-| 724 | S-CSCF → HSS (MAR) | Asks for one item of the scheme `Digest-AKAv1-MD5`. |
+| 724 | S-CSCF → HSS (MAR) | Asks for one item of the scheme `Digest-AKAv1-MD5`, the scheme of both AKA versions. |
 | 726 | HSS → S-CSCF (MAA) | RAND and AUTN, XRES, CK, IK. |
-| 727 | S-CSCF → I-CSCF (401) | The nonce is RAND and AUTN in base64. `ik` and `ck`. |
+| 727 | S-CSCF → I-CSCF (401) | Two WWW-Authenticate, `AKAv2-SHA-256` first. The nonce is RAND and AUTN in base64. `ik` and `ck`. |
 | 737 | P-CSCF → UE (401) | `ik` and `ck` taken out, `Security-Server` added. |
 
 > Guide: ["The ladder"](../../../docs/guide/en/volte.md#the-ladder), steps 1 to 6. TS 24.229 5.1.1.2.2, 5.2.2.1, 5.2.2.2, 5.4.1.1, 5.4.1.2.1A. RFC 3329 2.3.1. TS 33.203 Annex H, 7.2. TS 29.229 6.3.9. TS 33.102 6.3.2. TS 29.228 6.3. RFC 3310 3.2.
@@ -949,7 +951,7 @@ steps:
     only: [reg2-i-s, scscf-verify]
     zoom: [icscf, hss, scscf]
     checkpoint: true
-    text: It computes the same Digest with the XRES it kept, and compares it with the response that came.
+    text: It builds the password of the algorithm the UE named from the XRES, IK and CK it kept, computes the same Digest, and compares it with the response that came.
   - id: sar
     title: It tells the HSS of the registration (SAR and SAA)
     show: [sar, saa]
@@ -981,9 +983,9 @@ steps:
 | # | Hop | What to look at |
 | --- | --- | --- |
 | 740 | UE | Checks the MAC of AUTN and the SQN; computes RES, CK, IK. |
-| 740 | UE:5062 → P-CSCF:5064 | `Security-Verify` mirrors the Security-Server. The response from RES. |
+| 740 | UE:5062 → P-CSCF:5064 | `Security-Verify` mirrors the Security-Server. `algorithm=AKAv2-SHA-256` and its response. |
 | 749 | P-CSCF → I-CSCF | Agreement checked: `integrity-protected="yes"`. |
-| 760, 764 | S-CSCF, SAR | Computes the Digest with XRES and compares. They match: registered. |
+| 760, 764 | S-CSCF, SAR | Computes the Digest of the algorithm the UE named and compares. They match: registered. |
 | 783 | P-CSCF:5064 → UE:5062 | The 200 OK. The associations are established. |
 | 786 | P-CSCF → PCRF | AAR: the signalling path (in the Rx part). |
 
@@ -998,7 +1000,7 @@ steps:
 - A matching MAC in AUTN shows that the network knows K: the network is authenticated too, a direction that SIP Digest did not have. The UE also checks that the SQN is fresh.
 - Security-Verify lets the P-CSCF check that no man in the middle removed a stronger offer. The 200 OK and the AAR #786 leave the P-CSCF in either order.
 - A refresh and the deregistration go over the associations without a new challenge (TS 24.229 5.1.1.4.2, 5.1.1.6.2).
-- Filters: `sip.Security-Client || sip.Security-Server || sip.Security-Verify`; `sip.WWW-Authenticate contains "AKAv1-MD5"` (with `contains "ck="`, only the 401 from the S-CSCF stays); `udp.port == 5064 || tcp.port == 5064` for the protected port.
+- Filters: `sip.Security-Client || sip.Security-Server || sip.Security-Verify`; `sip.WWW-Authenticate contains "AKAv2-SHA-256" || sip.WWW-Authenticate contains "AKAv1-MD5"` (with `contains "ck="`, only the 401 from the S-CSCF stays); `udp.port == 5064 || tcp.port == 5064` for the protected port.
 
 ---
 
@@ -1044,7 +1046,7 @@ go test ./internal/aka -run TestAuthenticationVectorFromTestSet1 -v
 | For a TCP request, the UE is known by the sent-by of its Via | The INVITE, and a REGISTER over 1300 bytes, go over TCP (RFC 3261 18.1.1) |
 
 - Without ESP the SIP of a VoLTE UE reads in Wireshark as plainly as a softphone's, with no keys to load, and the containers need no NET_ADMIN. The associations go into the SA table of the P-CSCF with IK and CK.
-- AKAv1-MD5 only, because SIPp, the independent peer that checks the S-CSCF, speaks only that; it computes the RES and the Digest with code written by others.
+- The phones answer with AKAv2-SHA-256, whose password binds RES, IK and CK (RFC 4169 2.1). SIPp, the independent peer that checks the S-CSCF, names AKAv1-MD5 in its first REGISTER and is challenged with that one alone; it computes the RES and the Digest with code written by others.
 
 > Guide: ["The security agreement without ESP"](../../../docs/guide/en/volte.md#the-security-agreement-without-esp)
 
@@ -1546,7 +1548,7 @@ volte12 <- EPC and PCRF: DEACTIVATE EPS BEARER CONTEXT REQUEST
 | --- | --- |
 | EPC stub | No NAS encoding, S1-AP, radio, GTP-U, Gx, or authentication of the attach. A bearer is a record. |
 | PCRF | Audio only, with QCI 1. No DRA. |
-| P-CSCF, UE, S-CSCF | No ESP. AKAv1-MD5 only. |
+| P-CSCF, UE, S-CSCF | No ESP. |
 | P-CSCF | Releases at once when a bearer is lost, as each call has one audio stream. A dialog that ends without a BYE stays in the `Store`: the P-CSCF keeps no index of dialogs by UE, so that several P-CSCF nodes can serve the same users. |
 | UE and AMR | CMR and mode-set are not followed. A UE that loses its PDN connection stops. |
 

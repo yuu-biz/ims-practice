@@ -150,7 +150,7 @@ func TestRegistrationProceduresWithIMSAKAAreCounted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	creds := akaAnswer(ch, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes)
+	creds := akaAnswer(ch, akaPassword(ch, res), sip.IntegrityProtectedYes)
 	for cseq, expires := range []int{600000, 600000, 0} {
 		if r := h.register(callID, cseq+2, expires, creds.String()); r.StatusCode != 200 {
 			t.Fatalf("REGISTER %d got %d, want 200", cseq+2, r.StatusCode)

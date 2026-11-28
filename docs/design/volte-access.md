@@ -9,7 +9,7 @@
 - UE と EPC スタブのあいだは TS 24.301 の ESM のメッセージに合わせた HTTP の API にします。
 - UE の IP アドレスは加入者ごとの静的なアドレスにします。
 - IMS-AKA は既定では sec-agree と保護ポートの手順だけを行い、ESP をかけません。ESP（暗号化は null）は上書きの構成で有効にし、秘匿までかける構成はその上に重ねる別の上書きにします。
-- AKA の版は AKAv1-MD5（RFC 3310）だけにします。
+- AKA の版は AKAv2-SHA-256（RFC 4169）と AKAv1-MD5（RFC 3310）の両方にします。
 - P-CSCF と PCRF のあいだは Diameter の Rx（TS 29.214）です。
 
 | 主題 | 作り |
@@ -18,7 +18,7 @@
 | UE の IP アドレス | 加入者ごとの静的なアドレス（TS 23.401 5.3.1.1）にし、今の 1 つのブリッジ（ims0）に置きます。TUN は使いません。TUN はコンテナに NET_ADMIN が要るので、Open5GS と UERANSIM の構成で扱います。1 つのブリッジのままなら、キャプチャ（[environment-capture.md](environment-capture.md)）を変えずに済み、ホスト固有のネットワーク設定にも依りません。GTP-U と SGi を省いたことを `SIMPLIFIED:` に書きます。 |
 | IPsec | ESP は上書きの構成（`deploy/esp/`）で有効にし、既定は無効のままにします。暗号化は null にし、完全性の保護だけをかけます。TS 33.203 6.3 は完全性の保護をどの場合にも求め、秘匿は P-CSCF の方針が求めるときだけです（6.2）。`ealg=null` は sec-agree が運ぶ値の 1 つなので（Annex H）、実際の網にある組み合わせです。カーネルへの設定は `internal/ipsec` が `ip xfrm` のコマンドで行います。学習者が同じコマンドを手で打って `ip xfrm state` で結果を見られるようにするためで、netlink のライブラリを足さずに済みます。P-CSCF と UE のコンテナには NET_ADMIN が要ります。既定にしない理由は下の「ESP を既定にしない理由」に、秘匿までかける構成は「秘匿までかける構成」にあります。 |
 | 平文の AKA | 既定では sec-agree（Security-Client、Security-Server、Security-Verify）と保護ポートの手順はそのまま行い、ESP だけを省きます。学習者がキャプチャで sec-agree の手順を見られるようにするためです。sec-agree を行って ESP だけを省く形は標準に無いので、`SIMPLIFIED:` に理由を書きます。IPsec を使わない AKA は、標準では TLS の上の AKAv2-SHA-256 だけです（TS 24.229 4.2B.1）。ESP を有効にすると、暗号化が null なのでキャプチャの中身は読めたまま、組み合わせは標準どおりになります。 |
-| AKA の版 | AKAv1-MD5（RFC 3310）だけにします。独立した試験相手の SIPp（[ue-simulator.md](ue-simulator.md)）が AKAv2 に対応していないので、同じ AKAv1-MD5 で比べるためです。TS 33.203 6.1.1 は、S-CSCF が AKAv2-SHA-256 と AKAv1-MD5 の両方を示し、UE が AKAv2-SHA-256 に対応することを求めています。AKAv2 を省いたことを `SIMPLIFIED:` に書きます。 |
+| AKA の版 | S-CSCF は AKAv2-SHA-256（RFC 4169）と AKAv1-MD5（RFC 3310）の両方を、AKAv2-SHA-256 を先にして示し、UE が選んだ版で response を確かめます。UE シミュレータは AKAv2-SHA-256 で答えます。TS 33.203 6.1.1 が求める形です。ただし TS 24.229 5.4.1.2.1A の項目 1 c は、401 の algorithm を「Authorization で受け取った値」にすると書いています。そこで、algorithm を指定してきた REGISTER にはその 1 つだけを返し、指定が無いとき（TS 24.229 5.1.1.2.2 の項目 a が UE に求める形）に両方を示します。独立した試験相手の SIPp（[ue-simulator.md](ue-simulator.md)）は AKAv2 に対応しないので、最初の REGISTER で AKAv1-MD5 を指定し、AKAv1-MD5 だけの challenge を受け取ります。2 つの条項が食い違っているので、どちらの条項にも従える形を選びました。 |
 | PCRF スタブ | 役割 `epc` の中に置きます。PGW のスタブとのあいだの Gx はプロセスの中の関数の呼び出しにし、`SIMPLIFIED:` に書きます。P-CSCF とのあいだの Rx は Diameter（TS 29.214）です。 |
 | EPC を通らない UE | ホストのソフトフォンのように EPC を通らない UE では、PCRF が IP-CAN_SESSION_NOT_AVAILABLE を返します。そのとき P-CSCF は、その UE の呼で Rx を使わずに進めます。 |
 | P-CSCF のダイアログ | P-CSCF は、自分で BYE を作るのに要るダイアログの情報（相手の Contact、To と From、CSeq、Route）を `Store` の後ろに置きます。bearer を失ったときに、網の側から呼を切るためです（TS 24.229 5.2.8.1.2）。どの台でもこの情報を読めるように、`Store` の後ろに置きます（[state-redundancy.md](state-redundancy.md)）。 |
@@ -94,4 +94,8 @@ CI の実行と、xfrm を持たないカーネルでの `ip` の試しで分か
 
 ## 採らなかった案
 
-調査は、S-CSCF が AKAv2-SHA-256 と AKAv1-MD5 の両方を出し、UE シミュレータは AKAv2 を選ぶ案を勧めていました。上の「AKA の版」の理由で、AKAv1-MD5 だけにしました。
+401 で常に AKAv2-SHA-256 と AKAv1-MD5 の両方を出す案は採りませんでした。TS 24.229 5.4.1.2.1A の項目 1 c に反し、AKAv1-MD5 しか話さない SIPp が、自分の読めない challenge を先に受け取ることになるためです。SIPp が WWW-Authenticate を 2 つ受けたときにどう振る舞うかは、確かめていません。
+
+RFC 4169 の 4.1 章は両方の版を出すことを避けるよう勧めています。弱い版を選ばせる攻撃を受けるためです。algorithm を指定してきた REGISTER にその 1 つだけを返す形は、この勧めにも沿います。
+
+IPsec の SA の鍵は AKAv2 でも IK と CK のままにします。TS 33.203 は 6.1.1 で IK と CK を P-CSCF に渡し、6.2 と 6.3 で、その鍵を伸ばして ESP の鍵（CK_ESP、IK_ESP）を作ります（伸ばし方は Annex I）。RFC 4169 の 2.2 章は AKAv2 では IK と CK をそのまま別の用途に使わず、IK' と CK' を作るよう求めていますが、TS 33.203 には IK' と CK' の記述がありません。3GPP の仕様に従います。

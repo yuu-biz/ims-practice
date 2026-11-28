@@ -27,4 +27,4 @@ UE と CSCF の両方を自作すると、同じ誤解が両方に入っても�
 
 Alpine の pjsua（画面の無いソフトフォン）も、同じ理由で試験相手に加えています。e2e 試験では、pjsua が SIP Digest で登録し、UE シミュレータからの着信に応答し、UE シミュレータに発信します。
 
-AKA の版を AKAv1-MD5 だけにしたのも、SIPp と同じ版で比べるためです（[volte-access.md](volte-access.md)）。
+SIPp が AKAv1-MD5 しか話さないことは、AKA の版の選び方にも関わります（[volte-access.md](volte-access.md)）。
