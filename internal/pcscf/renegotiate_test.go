@@ -302,6 +302,63 @@ func wantAuthorised(t *testing.T, pcrf *fakePolicy, when string, offer netip.Add
 	}
 }
 
+// TestRejectedOfferAfterAPreviewKeepsTheAuthorisedMedia: the far end
+// shows its answer to a re-INVITE of the UE in a 183 that is not
+// reliable, and then turns the offer down with 488. Only an answer in a
+// 2xx or a reliable provisional response is the answer (RFC 3261
+// 13.2.1), so the session carries the media of the last offer and answer
+// that are done (14.1), and the PCRF keeps the authorisation of those
+// media: the bearer that the network reserved carries what the call
+// carries (TS 29.214 4.4.2). The offer after it is answered, and the
+// PCRF authorises the media of that answer.
+func TestRejectedOfferAfterAPreviewKeepsTheAuthorisedMedia(t *testing.T) {
+	pcrf := &fakePolicy{}
+	c := newRawINVITEWith(t, pcrf)
+	c.st.Respond(c.response(200))
+	if r := final(t, c.ct.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the UE got %d, want the 200 of the far end", r.StatusCode)
+	}
+	c.ack("1")
+	wantAuthorised(t, pcrf, "for the INVITE", ueMedia)
+
+	ct, st := c.reinvite(t, "2", "2", moved)
+	preview := netip.MustParseAddrPort("192.0.2.99:6008")
+	progress := sip.NewResponse(st.Request, 183, "")
+	progress.Add("Contact", "<"+c.farContact+">")
+	progress.Add("Content-Type", "application/sdp")
+	progress.Body = sdp.Offer("3", preview).Bytes()
+	st.Respond(progress)
+	r := next(t, ct.Responses())
+	for r.StatusCode == 100 {
+		r = next(t, ct.Responses())
+	}
+	if r.StatusCode != 183 {
+		t.Fatalf("the UE got %d, want the 183 of the far end", r.StatusCode)
+	}
+	st.Respond(sip.NewResponse(st.Request, 488, ""))
+	if r := final(t, ct.Responses(), 3*time.Second); r.StatusCode != 488 {
+		t.Fatalf("the re-INVITE got %d, want the 488 of the far end", r.StatusCode)
+	}
+	wantAuthorised(t, pcrf, "after the 488", ueMedia)
+	if n := c.relay.held(); n != 1 {
+		t.Fatalf("the relay holds %d contexts after the 488, want the one of the call", n)
+	}
+
+	// The UE offers again, and the far end answers in its 200.
+	movedAgain := netip.MustParseAddrPort("192.0.2.50:4004")
+	ct, st = c.reinvite(t, "3", "4", movedAgain)
+	answer := sip.NewResponse(st.Request, 200, "")
+	answer.Add("Contact", "<"+c.farContact+">")
+	answer.Add("Content-Type", "application/sdp")
+	answer.Body = sdp.Offer("5", preview).Bytes()
+	st.Respond(answer)
+	if r := final(t, ct.Responses(), 3*time.Second); r.StatusCode != 200 {
+		t.Fatalf("the second re-INVITE got %d, want the 200 of the far end", r.StatusCode)
+	}
+	c.ack("3")
+	wantAuthorised(t, pcrf, "for the answered offer", movedAgain)
+}
+
 // TestRejectedOfferAfterAReliableAnswerKeepsTheNewMedia: the far end
 // answers a re-INVITE of the UE in a reliable 183, which the UE
 // acknowledges, and then turns the offer down with 488. An answer in a

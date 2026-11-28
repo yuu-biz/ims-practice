@@ -389,10 +389,18 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 // way back: with the answer the PCRF gets the changed service
 // information in the policy session of the dialog (TS 29.214 A.1,
 // 4.4.2), and the Dialog keeps where the relay now sends to each party
-// (RelayContext.AccessRemote). The second and the third one are for
-// subsequent to call with what ProxyWith returned, before the final
-// response goes on and once it has gone. ue is the address of the served
-// UE.
+// (RelayContext.AccessRemote). An answer in a provisional response that
+// is not reliable is no answer (RFC 3261 13.2.1), and moves the relay
+// alone. What the PCRF gets is the service information of a session
+// whose media are negotiated (TS 29.214 A.1), and the network reserves
+// the resources of the media it names; were this SDP sent as that, a
+// request that then fails would leave the bearer with the media of an
+// offer that the session never took. The INVITE has no earlier media of
+// its own to keep, so the P-CSCF does send the answer of an unreliable
+// 183 to it (setup.authorize), which gives the early media of the call
+// a bearer. The second and the third one are for subsequent to call
+// with what ProxyWith returned, before the final response goes on and
+// once it has gone. ue is the address of the served UE.
 //
 // A final response other than 2xx, or none, leaves the session as it was
 // before the request (RFC 3261 14.1, RFC 3311 5.3): the party that
@@ -508,9 +516,18 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 		}
 		taken = true
 		if resp.StatusCode < 200 && !resp.Requires(sip.Option100rel) {
+			// The SDP of a provisional response that is not reliable is no
+			// answer (RFC 3261 13.2.1). The relay sends where it says, so
+			// that early media of the session being renegotiated reaches the
+			// party that offered, and goBack takes that back when the request
+			// fails. Nothing else of the session follows it: the media that
+			// the dialog keeps and that the PCRF has authorised stay those of
+			// the last offer and answer that are done, which is what the
+			// session carries until this offer is answered.
 			previewed = sent
-		} else if !settled && d.Relay != nil {
-			settled = true
+			return
+		}
+		if !settled && d.Relay != nil {
 			_, _, err := p.store.UpdateDialog(context.Background(), d.Key, func(d *Dialog) {
 				if d.Relay != nil {
 					d.Relay = d.Relay.agreeing(facingSender(toUE), offered).agreeing(facingSender(!toUE), sent)
@@ -523,6 +540,7 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 				log.Warn("the dialog keeps the offer and answer before this one: the store failed", "error", err.Error())
 			}
 		}
+		settled = true
 		// A 2xx to a re-INVITE comes again until its ACK arrives.
 		if authorized || d.PolicySession == "" || p.policy == nil {
 			return
