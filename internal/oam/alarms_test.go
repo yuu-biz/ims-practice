@@ -38,7 +38,7 @@ func TestAlarmsOfEveryNodeMergedWithTheOneThatFailed(t *testing.T) {
 	raise(t, p1, "pcscf", "pcrf.ims.mnc001.mcc001.3gppnetwork.org", maintenance.Major)
 	raise(t, cscf, "scscf", "hss.ims.mnc001.mcc001.3gppnetwork.org", maintenance.Critical)
 	raise(t, cscf, "icscf", "hss.ims.mnc001.mcc001.3gppnetwork.org", maintenance.Major)
-	p2.server.Close()
+	p2.stop()
 	ts := newTestServer(t, Config{}, p1, p2, cscf)
 
 	status, body := ts.call(t, "GET", "/oam/v1/alarms", "")

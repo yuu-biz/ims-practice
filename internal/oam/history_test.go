@@ -225,7 +225,7 @@ func TestRollbackOfAChangeSetWithANodeItChangedNothingOn(t *testing.T) {
 func TestConfigurationChangeErrors(t *testing.T) {
 	a := newFakeNode(t, "pcscf-1", []string{"pcscf"}, retryAfter)
 	down := newFakeNode(t, "pcscf-2", []string{"pcscf"}, retryAfter)
-	down.server.Close()
+	down.stop()
 	ts, path := newHistoryServer(t, a, down)
 
 	_, body := ts.call(t, "PATCH", "/oam/v1/roles/pcscf/config", `{"settings": {"pcscf.listen": "0.0.0.0:5070"}}`)
