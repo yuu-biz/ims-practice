@@ -29,8 +29,6 @@ const (
 	LayoutSection    Layout = "section"
 	LayoutContent    Layout = "content"
 	LayoutTwoColumns Layout = "two-columns"
-	LayoutExercise   Layout = "exercise"
-	LayoutAnswers    Layout = "answers"
 	LayoutSummary    Layout = "summary"
 	// LayoutScene is a slide with a scene. It is not named in a layout
 	// line: a scene block at the top of the body makes it.
@@ -40,7 +38,7 @@ const (
 // Layouts lists the layouts that a "[layout: ...]" line may name.
 var Layouts = []Layout{
 	LayoutTitle, LayoutSection, LayoutContent, LayoutTwoColumns,
-	LayoutExercise, LayoutAnswers, LayoutSummary,
+	LayoutSummary,
 }
 
 // Slide is one slide. Columns has two entries for the two-columns layout

@@ -256,8 +256,6 @@ A label is plain text. A row with a label wider than the diagram, or a participa
 | `section` | `#` on any later slide | Opens a part of the deck, white on the accent colour. |
 | `content` | `##`, the default | The title with a rule under it, and the blocks from top to bottom. Tables, code and ladder diagrams take the whole width. |
 | `two-columns` | `[layout: two-columns]` | The same, with the blocks in two columns of equal width. |
-| `exercise` | `[layout: exercise]` | A content slide in ochre, with the tag "Exercise", for the exercises and "Looking back". |
-| `answers` | `[layout: answers]` | A content slide in green, with the tag "Answers", right after its exercise. |
 | `summary` | `[layout: summary]` | The blocks on a tinted panel, for "What this deck covers". |
 
 Every slide has the footer of the deck at the bottom left, and every slide but the first its number at the bottom right. A slide whose content is too tall gets a smaller text, down to 80%; below that the check fails.

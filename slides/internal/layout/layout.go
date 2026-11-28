@@ -73,10 +73,6 @@ func Slide(d *deck.Deck, s deck.Slide) (Page, error) {
 	accent := ColorAccent
 	tag := ""
 	switch s.Layout {
-	case deck.LayoutExercise:
-		accent, tag = ColorExercise, tagWords[d.Lang]["exercise"]
-	case deck.LayoutAnswers:
-		accent, tag = ColorAnswers, tagWords[d.Lang]["answers"]
 	case deck.LayoutScene:
 		// The page of the longer explanation of a scene.
 		page.Layout = deck.LayoutContent

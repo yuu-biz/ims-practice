@@ -80,7 +80,7 @@ func parse(t *testing.T, body string) *deck.Deck {
 }
 
 func TestContentFitsInsideTheFrame(t *testing.T) {
-	d := parse(t, "[layout: exercise]\n\n## Questions\n\n1. One?\n2. Two?\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n```\ncode\n```\n\n> Guide: x\n")
+	d := parse(t, "[layout: summary]\n\n## Questions\n\n1. One?\n2. Two?\n\n| a | b |\n| --- | --- |\n| 1 | 2 |\n\n```\ncode\n```\n\n> Guide: x\n")
 	pages, problems := Deck(d)
 	if len(problems) > 0 {
 		t.Fatal(problems)
@@ -93,9 +93,6 @@ func TestContentFitsInsideTheFrame(t *testing.T) {
 		if box, ok := e.(*TextBox); ok && box.Role == RoleBody && y+h > BodyBottom {
 			t.Errorf("a text box ends at %.0f, below the body", y+h)
 		}
-	}
-	if !strings.Contains(Text(pages[1]), "Exercise") {
-		t.Error("the exercise slide has no tag")
 	}
 }
 

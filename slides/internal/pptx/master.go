@@ -45,8 +45,8 @@ func theme() string {
 		`<a:dk2>` + srgb(layout.ColorAccent) + `</a:dk2>` +
 		`<a:lt2>` + srgb(layout.ColorPanelFill) + `</a:lt2>` +
 		`<a:accent1>` + srgb(layout.ColorAccent) + `</a:accent1>` +
-		`<a:accent2>` + srgb(layout.ColorExercise) + `</a:accent2>` +
-		`<a:accent3>` + srgb(layout.ColorAnswers) + `</a:accent3>` +
+		`<a:accent2>` + srgb(layout.ColorOchre) + `</a:accent2>` +
+		`<a:accent3>` + srgb(layout.ColorGreen) + `</a:accent3>` +
 		`<a:accent4>` + srgb(layout.ColorMuted) + `</a:accent4>` +
 		`<a:accent5>` + srgb(layout.ColorLifeline) + `</a:accent5>` +
 		`<a:accent6>` + srgb(layout.ColorNoteLine) + `</a:accent6>` +

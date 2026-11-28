@@ -23,7 +23,7 @@ func writeDeck(t *testing.T, path, lang, body string) {
 func TestTranslationsHaveTheSameSlides(t *testing.T) {
 	dir := t.TempDir()
 	writeDeck(t, filepath.Join(dir, "en", "01-a.md"), "en", "---\n\n## One\n\ntext\n")
-	writeDeck(t, filepath.Join(dir, "ja", "01-a.md"), "ja", "---\n\n[layout: answers]\n\n## 一\n\n本文\n")
+	writeDeck(t, filepath.Join(dir, "ja", "01-a.md"), "ja", "---\n\n[layout: summary]\n\n## 一\n\n本文\n")
 	writeDeck(t, filepath.Join(dir, "en", "02-b.md"), "en", "")
 	_, problems := load(dir)
 	if len(problems) != 2 {

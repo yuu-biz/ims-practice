@@ -17,7 +17,7 @@ const sample = "---\ntitle: A sample & more\nfooter: study session 9. Sample\nla
 	"# 表紙\n\n副題\n\n---\n\n" +
 	"## 本文\n\n- 箇条書きと `code` と [リンク](https://example.org/a?b=1&c=2)\n  - 入れ子\n\n" +
 	"| 列 | 値 |\n| --- | --- |\n| a | 1 |\n\n```go\nfunc main() {}\n\n// <end>\n```\n\n---\n\n# 区切り\n\n---\n\n## 図\n\n```ladder\nUE, P-CSCF\nUE -> P-CSCF: REGISTER\nUE <-- P-CSCF: 401\n```\n\n---\n\n" +
-	"[layout: answers]\n\n## 解答\n\n1. 一\n2. 二\n"
+	"[layout: summary]\n\n## まとめ\n\n1. 一\n2. 二\n"
 
 // build writes the pptx of the sample and returns its parts by name.
 func build(t *testing.T) map[string][]byte {
