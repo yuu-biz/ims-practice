@@ -331,16 +331,22 @@ func (p *PCSCF) subsequent(st *sip.ServerTransaction, out *sip.Message, log *slo
 	}
 	kept := known && !other
 	answer, unanswered, answered := func(*sip.Message) {}, func(*sip.Message, error) {}, func(*sip.Message, error) {}
-	if kept && carriesSDP(out, d.Relay) {
-		ue := st.Source.Addr.Addr()
-		if toUE {
-			ue = targets[0].Addr.Addr()
-		}
+	// ue is the address of the served UE as the P-CSCF sees it in this
+	// request: where a request from the UE came from, or where one to the
+	// UE goes.
+	ue := st.Source.Addr.Addr()
+	if toUE {
+		ue = targets[0].Addr.Addr()
+	}
+	switch {
+	case kept && carriesSDP(out, d.Relay):
 		answer, unanswered, answered, err = p.renegotiate(out, d, toUE, ue, log)
 		if err != nil {
 			p.notRelayed(st, d, err, log)
 			return
 		}
+	case kept && withoutOffer(out, d.Relay):
+		answer = p.offerInResponse(out, d, toUE, ue, log)
 	}
 	if kept && isTargetRefresh(out.Method) {
 		renegotiated := answer
@@ -577,6 +583,147 @@ func (p *PCSCF) renegotiate(out *sip.Message, d Dialog, toUE bool, ue netip.Addr
 	return answer, unanswered, answered, nil
 }
 
+// offerInResponse handles the SDP of the responses to out, a re-INVITE
+// within the dialog d that carries no offer of its own. The offer then
+// comes in the 2xx and the answer in the ACK (RFC 3261 13.2.1, 14.1),
+// the other way round from a re-INVITE that offers, which renegotiate
+// handles. ue is the address of the served UE.
+//
+// The function it returns takes each response on its way back. The offer
+// goes through the relay context of the dialog like any other SDP
+// (relaySDP): the termination that faces the party that offered learns
+// where that party now takes its media, and the party that receives the
+// offer hears the address of the other termination (TS 24.229 6.7.2.1).
+// That party is already listening where it offered (RFC 3264 8.3.1), so
+// the Dialog keeps where the relay now sends to it at once, as the offer
+// of a 2xx is answered in the ACK rather than turned down. The offer
+// stays in the Dialog until that ACK brings the answer, which forwardACK
+// then puts through the relay and sends to the PCRF with this offer (TS
+// 29.214 A.1).
+//
+// When the relay does not take the offer, the P-CSCF has no SDP of its
+// own with the relay's address to pass on (TS 24.229 6.7.2.1). The 2xx
+// is the final response of the request and goes on as it came, as a
+// response whose answer the relay did not take does (renegotiate), and
+// the P-CSCF releases the dialog (TS 24.229 5.2.8.1) once the ACK of
+// that 2xx has passed, so that no BYE overtakes it. The Dialog then
+// keeps no offer, and the answer of that ACK goes neither to the relay
+// nor to the PCRF. A failure after the relay took the offer of this
+// request is that of a retransmitted 2xx, and changes nothing.
+//
+// SIMPLIFIED: RFC 3264 and RFC 3262. The offer may also come in a
+// reliable provisional response, with the answer in the PRACK (RFC 3262
+// 5). That offer goes through the relay here, and the answer of the
+// PRACK through renegotiate, which takes the SDP of a PRACK either way;
+// but the PCRF gets no service information for them, since the 2xx of a
+// PRACK carries no SDP to send it with. The UE simulator puts its offer
+// in the INVITE, and no node of this project sends a re-INVITE without
+// one.
+func (p *PCSCF) offerInResponse(out *sip.Message, d Dialog, toUE bool, ue netip.Addr, log *slog.Logger) func(*sip.Message) {
+	cseq, _ := sip.ParseCSeq(out.Get("CSeq"))
+	// told is the relay context as the responses of this request have
+	// left it, which keeps a response that tells it the same again from
+	// asking for latching again (renegotiate).
+	var told *RelayContext
+	if d.Relay != nil {
+		c := *d.Relay
+		told = &c
+	}
+	taken, refused := false, false
+	return func(resp *sip.Message) {
+		if refused || resp.StatusCode >= 300 || !carriesSDP(resp, d.Relay) {
+			return
+		}
+		received := resp.Body
+		sent, err := p.relaySDP(resp, told, !toUE)
+		if err != nil {
+			log.Warn("media relay refused the offer of the response", "status", resp.StatusCode, "error", err.Error())
+			if !taken {
+				refused = true
+				p.release(d.Key, SDPNotRelayed, true, log)
+			}
+			return
+		}
+		if told != nil {
+			told = told.agreeing(facingSender(!toUE), sent)
+		}
+		taken = true
+		if resp.StatusCode < 200 {
+			// The offer of a provisional response is answered in the PRACK
+			// (RFC 3262 5), not in the ACK.
+			return
+		}
+		offer := ResponseOffer{CSeq: cseq.Number, SDP: ueSide(received, resp.Body, !toUE), UE: ue}
+		_, _, err = p.store.UpdateDialog(context.Background(), d.Key, func(d *Dialog) {
+			d.PendingOffer = &offer
+			if d.Relay != nil {
+				d.Relay = d.Relay.agreeing(facingSender(!toUE), sent)
+			}
+		})
+		if err == nil {
+			return
+		}
+		// Without the offer the ACK brings the answer to neither the relay
+		// nor the PCRF, and it goes on as it came, which would take the
+		// media of the party that answers past the relay. So the P-CSCF
+		// releases the dialog, as for an offer that the relay did not take.
+		log.Warn("the answer in the ACK reaches neither the media relay nor the PCRF: the store failed", "error", err.Error())
+		refused = true
+		p.release(d.Key, SDPNotRelayed, true, log)
+	}
+}
+
+// answerInACK points the SDP answer in out, the ACK for the 2xx of a
+// re-INVITE that carried no offer, at the relay context of the dialog d,
+// and gives the PCRF the service information of the media that the offer
+// of that 2xx and this answer agree on (TS 29.214 A.1). offered is what
+// the Dialog kept of that offer, and first is false for an ACK that
+// comes again, whose answer the PCRF has already (Dialog.answering). It
+// reports false when the relay did not take the answer.
+//
+// The P-CSCF then has no answer of its own with the relay's address to
+// pass on (TS 24.229 6.7.2.1), and no response to an ACK is allowed, so
+// the ACK goes no further and the P-CSCF releases the dialog (TS 24.229
+// 5.2.8.1), as it does for an answer in a response that the relay did
+// not take (renegotiate). The party that offered sends its 2xx again
+// until the BYE comes, or until it gives up waiting for the ACK (RFC
+// 3261 13.3.1.4).
+func (p *PCSCF) answerInACK(out *sip.Message, d Dialog, offered ResponseOffer, first, toUE bool, log *slog.Logger) bool {
+	received := out.Body
+	sent, err := p.relaySDP(out, d.Relay, toUE)
+	if err != nil {
+		log.Warn("media relay refused the answer in the ACK", "error", err.Error())
+		return false
+	}
+	if d.Relay != nil {
+		_, _, err := p.store.UpdateDialog(context.Background(), d.Key, func(d *Dialog) {
+			if d.Relay != nil {
+				d.Relay = d.Relay.agreeing(facingSender(toUE), sent)
+			}
+		})
+		if err != nil {
+			// A later offer that gets no 2xx puts the relay back where the
+			// offer and answer before this one said (goBack).
+			log.Warn("the dialog keeps the offer and answer before this one: the store failed", "error", err.Error())
+		}
+	}
+	if !first || d.PolicySession == "" || p.policy == nil {
+		return true
+	}
+	_, err = p.policy.AuthorizeMedia(context.Background(), policy.MediaRequest{
+		Session:   d.PolicySession,
+		UE:        offered.UE,
+		SDP:       policy.OfferAnswer{Offer: offered.SDP, Answer: ueSide(received, out.Body, toUE), UEOffered: toUE},
+		Subscribe: mediaEvents,
+	})
+	if err != nil {
+		log.Warn("the PCRF refused the changed media", "policy_session", string(d.PolicySession), "error", err.Error())
+		return true
+	}
+	log.Info("changed media authorised", "policy_session", string(d.PolicySession))
+	return true
+}
+
 // goBack has side, the termination of rc that faces the party of an
 // offer that got no 2xx, send where the last offer and answer said, when
 // that offer told it to send elsewhere, to offered (renegotiate). It is
@@ -749,10 +896,12 @@ func (p *PCSCF) forwardCANCEL(ref *ims.StackRef, cancel *sip.Message) {
 }
 
 // forwardACK forwards ack from the stack it came to. It notes in the
-// Dialog that the 2xx has its ACK, and sends the BYEs of a release that
-// waited for that ACK (release). RFC 3261 16.3 step 3 answers 483 to a
-// request whose Max-Forwards is used up, but no response to an ACK is
-// allowed (17), so such an ACK is only dropped.
+// Dialog that the 2xx has its ACK, puts the answer of an ACK that
+// carries one through the relay and sends it to the PCRF
+// (answerInACK), and sends the BYEs of a release that waited for that
+// ACK (release). RFC 3261 16.3 step 3 answers 483 to a request whose
+// Max-Forwards is used up, but no response to an ACK is allowed, so such
+// an ACK is only dropped.
 func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 	stack, err := ref.Get()
 	if err != nil {
@@ -764,11 +913,28 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 		return
 	}
 	key := subsequentKey(ack, toUE)
-	d, known, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) { d.Acknowledged = true })
+	// offered is the offer of a 2xx to a re-INVITE without one that this
+	// ACK answers, and first tells that the PCRF has not had that answer
+	// yet. Taking it is one step with the note of the ACK, so that however
+	// many times the ACK comes the PCRF gets the answer once.
+	var offered *ResponseOffer
+	first := false
+	d, known, err := p.store.UpdateDialog(context.Background(), key, func(d *Dialog) {
+		d.Acknowledged = true
+		offered, first = d.answering(ack)
+	})
 	if err != nil {
 		// The ACK goes on, without the charging identifier of the dialog.
 		// A release that waits for it sends its BYEs after ackWait.
 		p.log.Warn("could not note the ACK in the dialog: the store failed", "call_id", ack.Get("Call-ID"), "error", err.Error())
+	}
+	log := p.log.With("method", string(sip.ACK), "call_id", key.CallID)
+	if offered != nil && !p.answerInACK(out, d, *offered, first, toUE, log) {
+		// The answer goes no further than the P-CSCF, so neither does the
+		// ACK that carries it.
+		log.Warn("the answer in the ACK is not pointed at the media relay: the P-CSCF releases the dialog")
+		p.releaseNow(key, log)
+		return
 	}
 	if !toUE && known && d.ICID != "" {
 		// 5.2.6.3.9 step 3.
@@ -781,7 +947,7 @@ func (p *PCSCF) forwardACK(ref *ims.StackRef, ack *sip.Message) {
 	// Only a confirmed dialog waits for an ACK, and its BYEs are the
 	// same whatever the release is for.
 	if known && d.ReleasePending {
-		go p.releaseNow(key, p.log.With("method", string(sip.ACK), "call_id", key.CallID))
+		go p.releaseNow(key, log)
 	}
 }
 

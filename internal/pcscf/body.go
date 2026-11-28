@@ -140,6 +140,16 @@ func carriesSDP(m *sip.Message, rc *RelayContext) bool {
 	return false
 }
 
+// withoutOffer reports whether m, a request within a dialog, is a
+// re-INVITE that carries no offer, and so asks the party it reaches for
+// one: the 2xx then carries the offer and the ACK the answer (RFC 3261
+// 13.2.1, 14.1), and offerInResponse handles them. A body that the
+// P-CSCF cannot read as it is may hold the offer, and carriesSDP has
+// such a body handled as an offer when the call has a relay context.
+func withoutOffer(m *sip.Message, rc *RelayContext) bool {
+	return m.Method == sip.INVITE && !carriesSDP(m, rc)
+}
+
 // refusalOf is the response to req, a request whose SDP the P-CSCF
 // could not point at the relay for err, with toTag in To for a request
 // outside a dialog. The P-CSCF answers 400 (RFC 3261 21.4.1) to an SDP
