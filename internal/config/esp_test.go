@@ -44,6 +44,36 @@ func TestESPDeployment(t *testing.T) {
 	}
 }
 
+// TestESPEncryptionDeployment: the P-CSCF of deploy/esp with
+// deploy/esp/encryption.yaml on top applies confidentiality and names
+// the file of the keys, in the directory of the captures.
+func TestESPEncryptionDeployment(t *testing.T) {
+	cfg, err := Load("../../deploy/esp/pcscf-encryption.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := cfg.PCSCF
+	if c == nil {
+		t.Fatal("deploy/esp/pcscf-encryption.yaml has no pcscf role")
+	}
+	if !c.Confidentiality {
+		t.Error("the P-CSCF of the deployment with encryption applies no confidentiality")
+	}
+	if c.WiresharkSAFile != "/captures/esp_sa" {
+		t.Errorf("it writes the keys to %q, want /captures/esp_sa", c.WiresharkSAFile)
+	}
+	// Everything else is the deployment with ESP, whose ports and
+	// address the security associations need.
+	esp, err := Load("../../deploy/esp/pcscf.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ProtectedServerPort != esp.PCSCF.ProtectedServerPort || c.ProtectedClientPort != esp.PCSCF.ProtectedClientPort ||
+		c.SIP.Listen != esp.PCSCF.SIP.Listen || c.VisitedNetworkID != esp.PCSCF.VisitedNetworkID {
+		t.Errorf("it differs from the P-CSCF of deploy/esp in more than the policy:\n%+v\n%+v", *c, *esp.PCSCF)
+	}
+}
+
 // TestESPConfidentiality: the P-CSCF decides whether the signalling is
 // encrypted (TS 33.203 5.1.3 item 2), and the esp section is where its
 // policy is set. Without it the P-CSCF applies no confidentiality,
