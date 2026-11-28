@@ -27,7 +27,7 @@ func TestAChallengePastItsExpiresIsNotAnswered(t *testing.T) {
 	now := time.Now()
 	must(t, store.PutChallenge(ctx, scscf.Challenge{
 		PrivateIdentity: impi, PublicIdentity: impu, CallID: callID, Realm: realm, Nonce: "n1",
-		Algorithm: "MD5", HA1: sip.HA1("MD5", impi, realm, password),
+		Algorithms: []string{"MD5"}, HA1: sip.HA1("MD5", impi, realm, password),
 		Expires: now.Add(-time.Second), KeepUntil: now.Add(time.Minute),
 	}))
 	if _, ok, err := store.Challenge(ctx, impi); err != nil || !ok {

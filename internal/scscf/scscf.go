@@ -394,7 +394,7 @@ func (s *SCSCF) challenge(st *sip.ServerTransaction, privateID, publicID, server
 		CallID:          st.Request.Get("Call-ID"),
 		Realm:           d.DigestRealm,
 		Nonce:           rand.Text(),
-		Algorithm:       algorithm,
+		Algorithms:      []string{algorithm},
 		HA1:             d.DigestHA1,
 		HSSHost:         originHost(answer),
 		ServerName:      serverName,
@@ -444,7 +444,11 @@ func (s *SCSCF) check(req *sip.Message, c sip.Credentials, ch Challenge) verdict
 	if req.Get("Call-ID") != ch.CallID || c.Realm != ch.Realm || c.CNonce == "" || c.NC == "" {
 		return wrong
 	}
-	want, err := sip.DigestResponse(ch.digestHA1(), sip.REGISTER, c)
+	// Step 3: the algorithm is one that the 401 offered.
+	if !ch.offers(c.Algorithm) {
+		return wrong
+	}
+	want, err := sip.DigestResponse(ch.digestHA1(c.Algorithm), sip.REGISTER, c)
 	if err != nil || subtle.ConstantTimeCompare([]byte(want), []byte(c.Response)) != 1 {
 		return wrong
 	}
@@ -554,7 +558,7 @@ func (s *SCSCF) bindingResponse(reg Registration, expires time.Duration, c sip.C
 		// RFC 2617 3.2.3: rspauth proves that the S-CSCF knows H(A1) too;
 		// with IMS AKA, XRES is the password (RFC 3310 3.5). A REGISTER
 		// that answered no challenge gets none.
-		if ha1 := ch.digestHA1(); ha1 != "" {
+		if ha1 := ch.digestHA1(c.Algorithm); ha1 != "" {
 			rspauth, _ := sip.DigestResponse(ha1, "", c)
 			r.Add("Authentication-Info", fmt.Sprintf(`qop=auth, rspauth="%s", cnonce="%s", nc=%s`, rspauth, c.CNonce, c.NC))
 		}

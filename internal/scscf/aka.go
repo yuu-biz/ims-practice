@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/yuu-biz/ims-practice/internal/aka"
@@ -23,7 +22,7 @@ import (
 func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID, serverName string, c sip.Credentials, protected bool, expires time.Duration,
 	ch Challenge, pending bool, log *slog.Logger) {
 	ctx := context.Background()
-	pending = pending && ch.Algorithm == sip.AlgorithmAKAv1MD5
+	pending = pending && ch.imsAKA()
 	if !protected {
 		// 5.4.1.2.1, last paragraph: an unprotected REGISTER that names the
 		// nonce of the pending challenge tells that the UE found the
@@ -55,7 +54,7 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID, serv
 	// step 3 what Authorization holds and step 4 the response, which
 	// check does.
 	verdict := wrong
-	if strings.EqualFold(c.Algorithm, sip.AlgorithmAKAv1MD5) && c.Response != "" {
+	if c.Response != "" {
 		verdict = s.check(st.Request, c, ch)
 	}
 	switch verdict {
@@ -150,9 +149,9 @@ func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID, ser
 		PublicIdentity:  publicID,
 		CallID:          st.Request.Get("Call-ID"),
 		// 5.4.1.2.1A item 1 a: a globally unique name of the S-CSCF.
-		Realm:     s.cfg.Host,
-		Nonce:     aka.Nonce(av.RAND, av.AUTN),
-		Algorithm: sip.AlgorithmAKAv1MD5,
+		Realm:      s.cfg.Host,
+		Nonce:      aka.Nonce(av.RAND, av.AUTN),
+		Algorithms: []string{sip.AlgorithmAKAv1MD5},
 		// The RAND of the newest 401 replaces any stored before
 		// (5.4.1.2.1A).
 		RAND:       av.RAND,
@@ -164,11 +163,16 @@ func (s *SCSCF) challengeAKA(st *sip.ServerTransaction, privateID, publicID, ser
 		s.storeFailed(st, err, log)
 		return
 	}
-	log.Info("challenged with IMS AKA", "nonce", ch.Nonce, "stale", stale, "resynchronised", resync != nil)
-	challenge := sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: ch.Algorithm, QOP: []string{"auth"}}
-	// 5.4.1.2.1A item 1 c: IK and CK for the P-CSCF (7.2A.1).
-	challenge.SetKeys(hex.EncodeToString(av.IK[:]), hex.EncodeToString(av.CK[:]))
-	s.respond(st, 401, func(r *sip.Message) { r.Add("WWW-Authenticate", challenge.String()) })
+	log.Info("challenged with IMS AKA", "nonce", ch.Nonce, "algorithms", ch.Algorithms, "stale", stale,
+		"resynchronised", resync != nil)
+	s.respond(st, 401, func(r *sip.Message) {
+		for _, algorithm := range ch.Algorithms {
+			challenge := sip.Challenge{Realm: ch.Realm, Nonce: ch.Nonce, Stale: stale, Algorithm: algorithm, QOP: []string{"auth"}}
+			// 5.4.1.2.1A item 1 c: IK and CK for the P-CSCF (7.2A.1).
+			challenge.SetKeys(hex.EncodeToString(av.IK[:]), hex.EncodeToString(av.CK[:]))
+			r.Add("WWW-Authenticate", challenge.String())
+		}
+	})
 }
 
 // resynchronise is TS 24.229 5.4.1.2.3A for a REGISTER with auts: the
