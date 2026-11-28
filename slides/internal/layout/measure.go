@@ -74,6 +74,7 @@ func textWidth(text string, size float64, mono, bold bool) float64 {
 type piece struct {
 	width float64
 	space bool
+	text  string
 }
 
 // noLineStart are the characters that may not begin a line, and
@@ -121,7 +122,7 @@ func pieces(runs []Run, size float64) []piece {
 			switch {
 			case r == ' ' || r == '\u3000':
 				closeCurrent()
-				out = append(out, piece{width: w, space: true})
+				out = append(out, piece{width: w, space: true, text: string(r)})
 				glue, afterPunct, lastNarrow = false, false, false
 				continue
 			case strings.ContainsRune(noLineStart, r):
@@ -140,6 +141,7 @@ func pieces(runs []Run, size float64) []piece {
 				afterPunct = false
 			}
 			current.width += w
+			current.text += string(r)
 			open = true
 			glue = strings.ContainsRune(noLineEnd, r)
 			lastNarrow = !wide(r)
@@ -203,6 +205,83 @@ func wrap(ps []piece, limit float64) int {
 		}
 	}
 	return lines
+}
+
+// WrapText cuts the runs into the lines that a box of the given width
+// shows them in, as countLines counts them: the writers that draw each
+// line themselves, such as an SVG, break the text where the layout
+// measured it. The styles of the runs are not kept.
+func WrapText(runs []Run, size, width float64) []string {
+	limit := width * fillLimit
+	var lines []string
+	var segment []Run
+	flush := func() {
+		// A text that fits the box stays on one line: the measure
+		// counts with some room to spare, which the drawing need not.
+		if runsWidth(segment, size) <= width {
+			text := ""
+			for _, r := range segment {
+				text += r.Text
+			}
+			lines = append(lines, text)
+		} else {
+			lines = append(lines, wrapLines(pieces(segment, size), limit)...)
+		}
+		segment = nil
+	}
+	for _, run := range runs {
+		if run.Break {
+			flush()
+			continue
+		}
+		segment = append(segment, run)
+	}
+	flush()
+	return lines
+}
+
+// wrapLines fills lines as wrap does and returns their text.
+func wrapLines(ps []piece, limit float64) []string {
+	var lines []string
+	var line strings.Builder
+	used, pendingSpace, pending := 0.0, 0.0, ""
+	for _, p := range ps {
+		if p.space {
+			if used > 0 {
+				pendingSpace += p.width
+				pending += p.text
+			}
+			continue
+		}
+		switch {
+		case used == 0:
+			line.WriteString(p.text)
+			used = p.width
+		case used+pendingSpace+p.width <= limit:
+			line.WriteString(pending + p.text)
+			used += pendingSpace + p.width
+		default:
+			lines = append(lines, line.String())
+			line.Reset()
+			line.WriteString(p.text)
+			used = p.width
+		}
+		pendingSpace, pending = 0, ""
+		// A piece wider than a whole line is cut where it reaches the
+		// edge, by the share of its width that fits.
+		for used > limit && limit > 0 {
+			text := []rune(line.String())
+			keep := max(1, int(float64(len(text))*(1-(used-limit)/used)))
+			if keep >= len(text) {
+				break
+			}
+			lines = append(lines, string(text[:keep]))
+			line.Reset()
+			line.WriteString(string(text[keep:]))
+			used -= limit
+		}
+	}
+	return append(lines, line.String())
 }
 
 // longestPiece is the width of the widest piece: a box narrower than it
