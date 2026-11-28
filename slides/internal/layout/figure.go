@@ -13,7 +13,7 @@ import (
 // event, its nodes in focus. The step does not have to be a checkpoint,
 // and the figure does not depend on the steps before it.
 //
-// A map is drawn whole, as on the pages of the pptx; a ladder from its
+// A map is drawn whole, as on the pages of the pptx; a ladder from the
 // first row to the last row that the step draws, without scrolling. The
 // steps are not numbered on the figure: the text beside it is the
 // chapter, not the list of the steps of the scene. Under the diagram are
@@ -34,15 +34,22 @@ func Figure(m *deck.Model, s *deck.Scene, stepID string) (*FigureShapes, error) 
 	step := s.Steps[k]
 	camera := diagram.Bounds
 	if diagram.View == deck.ViewLadder {
-		last := 0
+		// The rows from the first that the step draws to the last: a
+		// step that starts again with "only" leaves no empty rows above
+		// its own.
+		first, last := -1, 0
 		for i, e := range diagram.Events {
 			if slices.Contains(step.Events, e.ID) {
+				if first < 0 {
+					first = i
+				}
 				last = i
 			}
 		}
+		first = max(first, 0)
 		head := ladderTop + ladderHeadH + ladderRowH*0.9
-		camera.Y = 0
-		camera.H = min(head+float64(last+1)*ladderRowH, diagram.Bounds.Y+diagram.Bounds.H)
+		camera.Y = float64(first) * ladderRowH
+		camera.H = min(head+float64(last-first+1)*ladderRowH, diagram.Bounds.Y+diagram.Bounds.H-camera.Y)
 	}
 	f := &FigureShapes{Elements: drawDiagram(diagram, s, step, camera, 1, 0, 0), W: camera.W, H: camera.H}
 	if fields := (builder{scale: figureFieldScale}).fields(m, step.Detail); len(fields) > 0 {

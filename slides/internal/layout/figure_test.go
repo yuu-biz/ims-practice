@@ -34,6 +34,7 @@ const figureSource = "---\ntitle: T\nfooter: F\nlang: en\nformat: visual\n---\n\
 	"  - {id: one, title: One, show: [req], detail: [], text: A sends.}\n" +
 	"  - {id: two, title: Two, show: [ask, tell], text: B asks C.}\n" +
 	"  - {id: three, title: Three, show: [ans], text: B answers.}\n" +
+	"  - {id: again, title: Again, only: [ans], text: B answers again.}\n" +
 	"```\n"
 
 func figureDeck(t *testing.T) *deck.Deck {
@@ -177,6 +178,17 @@ func TestLadderFigureEndsAtItsLastRow(t *testing.T) {
 // TestWrapTextKeepsTheText makes sure that a text too long for its box
 // is cut into several lines that, put back together, are the text:
 // nothing is lost or repeated, in Japanese or in English.
+// A step that starts again with only draws its rows at the top of the
+// figure, without the empty rows of the events that it no longer draws.
+func TestLadderFigureStartsAtItsFirstRow(t *testing.T) {
+	d := figureDeck(t)
+	first := figure(t, d, "lad", "one")
+	again := figure(t, d, "lad", "again")
+	if again.H > first.H+0.01 {
+		t.Errorf("the figure of one row after only is %.0f high, more than the %.0f of the first row", again.H, first.H)
+	}
+}
+
 func TestWrapTextKeepsTheText(t *testing.T) {
 	for _, text := range []string{
 		strings.Repeat("登録の要求は P-CSCF から I-CSCF を通って S-CSCF に届きます。", 4),
