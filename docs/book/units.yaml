@@ -211,3 +211,181 @@ units:
       - TS 24.229 V18.11.0 5.4.1.7
     evidence: [code, test]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  # group g4
+  - id: services-as-invocation
+    question:
+      ja: S-CSCF はどうやって要求を AS に渡し、AS が送り返した要求をどう続けるのか
+      en: How does the S-CSCF hand a request to an AS, and go on with the request that the AS sends back
+    setup: deploy/compose; the iFCs of hss.yaml; the MMTel AS, the IP-SM-GW and the MRF (MRFC and MRFP)
+    chapter: services
+    scenes: [07-mmtel/where, 07-mmtel/ifc, 07-mmtel/odi, 08-mrf/roles]
+    code:
+      - internal/scscf/services.go:invokeApplicationServers
+      - internal/scscf/services.go:invoke
+      - internal/scscf/services.go:fromApplicationServer
+    tests:
+      - internal/scscf/services_test.go:TestPServedUser
+      - internal/scscf/services_test.go:TestRequestBackFromAProxyAS
+      - internal/scscf/services_test.go:TestTerminatingApplicationServer
+      - internal/mmtel/network_test.go:TestPlainCallThroughTheAS
+      - internal/mmtel/charging_network_test.go:TestOneICIDThroughTheIMS
+    standards:
+      - TS 24.229 V20.1.0 5.4.3.2, 5.4.3.3, 5.4.3.4, 5.7.2, 5.7.5
+      - TS 29.228 Annex E, B.2.3
+      - TS 23.228 V20.1.0 4.7
+      - GSMA IR.92 v24.0 2.3
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: mmtel-ifc-session-case
+    question:
+      ja: iFC の条件と session case で、AS が動かすサービスとその順はどう決まるのか
+      en: How do the conditions of the iFCs and the session case decide which services the AS runs, and in which order
+    setup: deploy/compose; UE 1 calls, UE 2 is the served user, UE 3 the target of diversions; one MMTel AS
+    chapter: mmtel
+    scenes: [07-mmtel/ifc, 07-mmtel/sescase, 07-mmtel/odi, 07-mmtel/normal, 07-mmtel/oir, 07-mmtel/cfu, 07-mmtel/cfb, 07-mmtel/cfnl, 07-mmtel/barring, 07-mmtel/cw-hold]
+    code:
+      - internal/ifc/ifc.go:matches
+      - internal/scscf/services.go:retargeted
+      - internal/mmtel/call.go:serve
+      - internal/mmtel/sessioncase.go:terminating
+      - internal/simservs/evaluate.go:international
+    tests:
+      - internal/scscf/services_test.go:TestPServedUser
+      - internal/scscf/services_test.go:TestDefaultHandling
+      - internal/scscf/services_test.go:TestTerminatingApplicationServer
+      - internal/mmtel/relay_test.go:TestINVITEWithoutAServedUser
+      - internal/mmtel/network_test.go:TestCFUSetOverUt
+      - internal/mmtel/network_test.go:TestCFBThroughTheIMS
+      - internal/mmtel/network_test.go:TestCFNLThroughTheIMS
+      - internal/mmtel/network_test.go:TestBarringThroughTheIMS
+      - internal/mmtel/network_test.go:TestHoldThroughTheIMS
+      - internal/simservs/evaluate_test.go:TestEvaluateOutgoingBarring
+    standards:
+      - TS 24.229 V20.1.0 5.4.3.2 steps 3 and 5, 5.4.3.3 steps 2A, 3, 4 and 12, 5.7.5
+      - TS 24.604 V19.0.0 4.5.2.6.1, 4.5.2.6.3, 4.5.2.6.4, Annex C
+      - TS 24.607 V19.1.0 4.5.2.4
+      - TS 24.611 V19.0.0 4.6.7, 4.9.1.4
+      - TS 24.615 V19.0.0 4.5.5.2.3, 4.5.5.3.2
+      - TS 29.228 6.1.4.1 step 3
+      - GSMA IR.92 v24.0 2.3.4
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: mmtel-cfnr-timer
+    question:
+      ja: CFNR で CANCEL が出る時刻は何で決まるのか
+      en: What decides when the CANCEL of CFNR goes out
+    setup: deploy/compose; UE 2 has CFNR to UE 3 and lets UE 1's call ring
+    chapter: mmtel
+    scenes: [07-mmtel/cfnr]
+    code:
+      - internal/mmtel/call.go:attempt
+      - internal/mmtel/diversion.go:noReplyTimer
+      - internal/simservs/mmtelservices.go:NoReplyTimer
+    tests:
+      - internal/mmtel/diversion_test.go:TestCommunicationForwardingNoReply
+      - internal/mmtel/diversion_test.go:TestNoReplyTimerOnlyWithARule
+      - internal/mmtel/network_test.go:TestCFNRThroughTheIMS
+    standards:
+      - TS 24.604 V19.0.0 4.5.2.6.3 item 2, 4.8.1, 4.9.1.1A
+      - RFC 3326 2
+      - RFC 6228
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: mmtel-ut-conditional-update
+    question:
+      ja: 2 人が同じ設定の文書を同時に変えると何が起きるのか
+      en: What happens when two parties change the same settings document at once
+    setup: deploy/compose; UE 2 changes its simservs document over Ut; the document is Sh repository data in the HSS
+    chapter: mmtel
+    scenes: [07-mmtel/document, 07-mmtel/ut]
+    code:
+      - internal/xcap/handler.go:change
+      - internal/xcap/handler.go:precondition
+    tests:
+      - internal/xcap/handler_test.go:TestConcurrentWritersRetry
+      - internal/xcap/handler_test.go:TestWriterBetweenReadAndWrite
+      - internal/xcap/digest_test.go:TestChallengeOrder
+    standards:
+      - RFC 4825 7.11
+      - RFC 7616 3.3
+      - TS 24.623 V19.0.0 5.3.2.2
+      - TS 29.328 V20.0.0 6.1.2.1
+      - TS 29.364 V19.1.0 7.2
+      - GSMA IR.92 v24.0 2.3.2 Note 3
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: mrf-early-media-announcement
+    question:
+      ja: AS はどうやって応答の前に音声を流し、再生の始まりを決めるのか
+      en: How does the AS play audio before the answer, and choose when the play starts
+    setup: deploy/compose; UE 1 bars its outgoing calls and calls UE 2; mmtel.yaml names the MRFC and the announcement notice
+    chapter: mrf
+    scenes: [08-mrf/roles, 08-mrf/early, 08-mrf/announce]
+    code:
+      - internal/mmtel/mrf.go:announcementURI
+      - internal/mmtel/mrf.go:reserveMedia
+      - internal/mmtel/announcement.go:announce
+      - internal/mmtel/announcement.go:earlyMediaOffer
+    tests:
+      - internal/mmtel/mrf_network_test.go:TestAnnouncementBeforeBarring
+      - internal/mmtel/mrf_network_test.go:TestBarringWithoutPCMU
+    standards:
+      - TS 24.229 V20.1.0 5.8.2.2.1, 5.8.3.2.1
+      - TS 24.628 V19.0.0 4.2.4, 4.7.2.1, Annex G
+      - TS 24.611 V19.0.0 4.5.2.4.1
+      - TS 23.333 V19.0.0 6.2.9
+      - RFC 4240 3, 5
+      - RFC 5009
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: mrf-customized-alerting-tone
+    question:
+      ja: 着信者が選んだ呼び出し音は、誰がいつ頼み、どう発信者に届くのか
+      en: Who asks for the tone the callee chose, when, and how does it reach the caller
+    setup: deploy/compose; subscriber 2 has the CAT cat1 from the OAM; UE 1 uses preconditions
+    chapter: mrf
+    scenes: [08-mrf/cat]
+    code:
+      - internal/mmtel/cat.go:startAlertingTone
+      - internal/mmtel/mrf.go:reserveMedia
+    tests:
+      - internal/mmtel/cat_test.go:TestGatewayModelOrder
+      - internal/mmtel/cat_test.go:TestNoToneForAWaitingCall
+      - internal/mmtel/cat_test.go:TestAnnouncementForAWaitingCall
+      - internal/mmtel/mrf_network_test.go:TestCustomizedAlertingTone
+      - internal/mmtel/mrf_network_test.go:TestCustomizedAlertingToneWithPreconditions
+      - internal/mmtel/mrf_network_test.go:TestLocalRingbackWithoutCAT
+    standards:
+      - TS 24.182 V19.0.0 4.5.2, 4.5.5.3.7, 4.6.11, 4.8
+      - TS 24.628 V19.0.0 4.7.2.1, Annex G
+      - TS 24.615 V19.0.0 4.5.5.2.3, 4.5.5.3.2
+      - RFC 4796
+      - RFC 5009
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: mrf-conference-lifetime
+    question:
+      ja: 会議の資源はいつ作られていつ消え、戻ってきた参加者の INVITE はどう見分けられるのか
+      en: When are the resources of a conference made and released, and how is the INVITE of a party that comes back told apart
+    setup: deploy/compose with the phones profile; phone1 merges its calls with phone2 and phone3; the MMTel AS is the focus
+    chapter: mrf
+    scenes: [08-mrf/psi, 08-mrf/mix, 08-mrf/rejoin]
+    code:
+      - internal/mmtel/call.go:serve
+      - internal/mmtel/conference.go:joinConference
+      - internal/mmtel/conference.go:left
+      - internal/mmtel/conference.go:end
+    tests:
+      - internal/mmtel/conference_network_test.go:TestThreeWayConference
+      - internal/mmtel/conference_network_test.go:TestRejoinWithTheConferenceURI
+      - internal/mmtel/conference_test.go:TestJoinWithTheConferenceURI
+    standards:
+      - TS 24.147 V19.0.0 4, 5.3.1.3.3, 5.3.1.4.1, 5.3.2.4.1, 5.3.2.7
+      - TS 23.228 V20.1.0 4.3.6, 5.4.12.3
+      - TS 23.003 13.5
+      - TS 23.333 V19.0.0 6.2.9
+      - RFC 4575 5.7, 8.2
+      - RFC 7647 5
+      - GSMA IR.92 v24.0 2.3.3
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96

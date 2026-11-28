@@ -1,6 +1,6 @@
 ---
 title: MRF による音声ガイダンス、呼び出し音、会議
-footer: ims-practice 勉強会 8. MRF
+footer: ims-practice 8. MRF
 lang: ja
 format: visual
 ---
@@ -316,15 +316,15 @@ events:
 
 # MRF による音声ガイダンス、呼び出し音、会議
 
-ims-practice 勉強会 第 8 回（MRFC と MRFP、音声ガイダンス、着信側が選ぶ呼び出し音、3 人の会議）
+MRF（MRFC と MRFP、音声ガイダンス、着信側が選ぶ呼び出し音、3 人の会議）
 
 ---
 
 [layout: summary]
 
-## この回で分かること
+## このデッキで分かること
 
-最初の問い。電話をかけると、相手が鳴っているあいだに短い旋律が聞こえます。その旋律は相手が選んだものです。流しているのはどのノードで、流すと決めたのはどのノードでしょうか。
+最初の問い。電話をかけると、相手が鳴っているあいだに短い旋律が聞こえます。その旋律は相手が選んだものです。流しているのはどのノードで、流すと決めたのはどのノードでしょうか。流すと決めるのは着信者の MMTel AS で、流すのは MRF の MRFP です。AS は Mr' で MRFC に頼み、MRFC が MRFP を動かします。
 
 - MRF とは何か。なぜ MRFC と MRFP の 2 つのノードに分かれるか。
 - AS がサービスを頼む方法。Mr' で送る RFC 4240 の Request-URI。
@@ -332,6 +332,7 @@ ims-practice 勉強会 第 8 回（MRFC と MRFP、音声ガイダンス、着�
 - 音声ガイダンス、着信側が選んだ呼び出し音、2 つ目の着信を、キャプチャのどこで見るか。
 - 3 人の会議の作り方と、音声を混ぜるノード。
 
+> 本 [MRF の音声ガイダンス、呼び出し音、会議](../../../docs/book/ja/mrf.md)
 > 手順書 [MRF による音声ガイダンス、呼び出し音、会議](../../../docs/guide/ja/mrf.md)（`docs/guide/ja/mrf.md`）
 > 仕様の版は手順書の冒頭にあります。TS 23.228 V20.1.0、TS 24.229 V20.1.0、TS 24.182 V19.0.0、TS 24.628 V19.0.0、TS 24.615 V19.0.0、TS 24.147 V19.0.0、TS 23.333 V19.0.0、RFC 4240、RFC 4575、GSMA IR.92 v24.0 などです。
 
@@ -365,7 +366,7 @@ steps:
     text: MRFP は IMS-AGW と同じ中継に、音声ガイダンスと混ぜ合わせを加えたものです。
 ```
 
-- CSCF は経路を決め、前の回の AS は通話を変えます。どちらも音声は作りません。IMS の中で自分からメディアを作るノードが MRF です（TS 23.228 4.7）。音声ガイダンス、トーン、会議の混ぜ合わせた音声を作ります。
+- CSCF は経路を決め、付加サービスのデッキの AS は通話を変えます。どちらも音声は作りません。IMS の中で自分からメディアを作るノードが MRF です（TS 23.228 4.7）。音声ガイダンス、トーン、会議の混ぜ合わせた音声を作ります。
 - **MRFC** は SIP を話します。AS が INVITE でサービスを頼むと、MRFC はそれに要るメディアの資源を決めます。
 - **MRFP** は RTP を扱います。ターミネーションに音声を流し、複数のターミネーションの音声を足し合わせて、それぞれに混ぜ合わせた音声を返します（TS 23.333 6.2.9）。
 
@@ -493,41 +494,6 @@ steps:
 
 ---
 
-## 実行する
-
-```sh
-docker compose up -d --build
-
-# 音声ガイダンス。UE 1 が発信を規制してから UE 2 にかける
-docker compose run --rm ue xcap set baoc on
-docker compose run --rm ue call tel:+12025550102
-docker compose run --rm ue xcap set baoc off
-
-# 2 つ目の着信と会議。ラボから操作する
-docker compose --profile phones up -d phone1 phone2 phone3
-```
-
-- 呼び出し音は、OAM から加入者 2 に `cat1` を設定してから、http://localhost:8080 のラボで `phone1` から `phone2` にかけます。
-- `scripts/e2e-mrf.sh` は、この回のすべてを実行してキャプチャで確かめます。キャプチャ、通話と MRF のフレーム、呼び出し音のあいだに UE 1 が受け取った音声、UE のログが残ります。
-
-> 手順書 [「動かしてみる」](../../../docs/guide/ja/mrf.md#動かしてみる) と [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
-
----
-
-## キャプチャを開く
-
-```text
-(sip && !(sip.CSeq.method in {"REGISTER", "SUBSCRIBE", "NOTIFY", "MESSAGE"})) || (sip.Event contains "conference") || (http && ip.addr == 172.28.0.86)
-```
-
-- 通話、会議の SUBSCRIBE と NOTIFY、MRFP の制御の API が残ります。
-- **Telephony > RTP > RTP Streams** に MRFP のストリームが並び、**Play Streams** で再生できます。
-- RTP の中には、それを説明する SDP を Wireshark が読む前に流れ始めるものがあります。すべてを復号するには **Analyze > Enabled Protocols > RTP > rtp_udp** を有効にします。
-
-> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/mrf.md#キャプチャを開く)
-
----
-
 ## 通話を断る前の音声ガイダンス
 
 ```ims-scene
@@ -569,7 +535,7 @@ steps:
     title: 流し終えた MRFC が BYE を送る
     show: [an-bye]
     checkpoint: true
-    text: ACK から BYE までを測ります。1.08 秒で、WAV ファイルの長さと同じです。
+    text: 手順書のキャプチャでは、ACK から BYE までが 1.08 秒です。`notice` の WAV ファイルの長さと同じです。
   - id: reject
     title: AS が 603 で通話を断る
     show: [an-603-as-s, an-603-s-p, an-603-p-ue]
@@ -591,7 +557,7 @@ UE 1 <-- P-CSCF <-- MMTel AS: 603、Reason cause=603
 
 - UE 1 は自分の発信を規制しているので、UE 1 の AS は通話を断ります（TS 24.611 4.5.2.4.1）。断る前に `notice` を流します（TS 24.628 4.2.4）。
 - AS は PRACK を待ってから ACK を送ります。UE 1 が SDP を受け取る前に、音声ガイダンスのフレームが失われないようにするためです。
-- ACK から BYE までを測ります。1.08 秒で、WAV ファイルの長さと同じです。
+- 手順書のキャプチャでは、ACK から BYE までが 1.08 秒です。`notice` の WAV ファイルの長さと同じで、再生が終わると MRFC が BYE を送るからです。
 
 > 手順書 [「通話を断る前の音声ガイダンス」](../../../docs/guide/ja/mrf.md#通話を断る前の音声ガイダンス)
 
@@ -689,8 +655,8 @@ steps:
 | MRFC | `repeat=forever` の INVITE | 無し |
 | MRFP | 応答前に UE 1 へ届く RTP | 無し |
 
-- 呼び出し音を止めると、UE 1 は自分の呼び出し音を流します（TS 24.628 4.7.2.1）。e2e のスクリプトのキャプチャには、この 2 つの通話が続けて残ります。見比べてください。
-- なぜ見比べるのか。呼び出し音が増やすフレームと、ほかは何も変わらないことの、両方が分かるからです。
+- 呼び出し音を止めると、UE 1 は自分の呼び出し音を流します（TS 24.628 4.7.2.1）。e2e のスクリプトのキャプチャには、この 2 つの通話が続けて残ります。
+- 2 つを並べると、呼び出し音が増やすのは MRFC とのダイアログ、UPDATE、MRFP の RTP だけで、ほかは何も変わらないことが分かります。
 - スクリプトは、UE 1 が受け取った最初の 1 秒を、MRFP が PCMU に符号化した `cat1.wav` と比べます。1 バイトも違いません。
 
 > 手順書 [「CAT（着信側の利用者が選ぶ呼び出し音）」](../../../docs/guide/ja/mrf.md#cat着信側の利用者が選ぶ呼び出し音)
@@ -826,7 +792,7 @@ steps:
 | maximum-user-count | 6 人です。7 人目には 403 を返します。 |
 | REFER の NOTIFY | REFER はそれぞれ refer イベントの購読を作ります（RFC 3515 2.4.4）。すぐに `100 Trying` を、最終応答は `terminated;reason=noresource` を付けた最後の NOTIFY で知らせます（2.4.7）。 |
 
-- キーに UE の Contact を使わないのはなぜか。Contact はその UE のアドレスで、NOTIFY はほかの網の購読者を含むすべての購読者に届くからです。
+- キーに UE の Contact を使わないのはなぜか。Contact はその UE のアドレスで、NOTIFY はほかの網の購読者を含むすべての購読者に届くからです。参加者が両方の網にいる会議は [網間接続の手順書](../../../docs/guide/ja/interconnect.md) にあります。
 - この NOTIFY の内容は、ラボの各カードの **Conference** の行に並びます。
 
 フィルタは `sip.Event contains "conference"` です。
@@ -904,23 +870,6 @@ steps:
 
 ---
 
-## ラボから動かす
-
-```sh
-docker compose --profile phones up -d --build
-```
-
-1. OAM から加入者 2 に呼び出し音 `cat1` を設定すると、Subscribers の欄にあるその行の Alerting tone (CAT) が変わります。`phone1` で `phone2` にかけると、`phone1` の Session の行に、網からの early media で呼び出したと表示されます。
-2. もう一度 `phone1` で `phone2` にかけて応答させ、次に `phone3` で `phone1` にかけます。`phone1` のカードに、新しい着信が `waiting` と表示されます。
-3. **Answer** を押すと、`phone2` との通話を保留にして `phone3` に応答します。**Swap** で通話を切り替えます。
-4. **Merge** を押すと会議ができます。3 台のカードの **Conference** の行に、3 人の利用者が並びます。
-
-- 通話のシーケンス図には、通話のダイアログと並んで、AS と MRFC のダイアログも描かれます。どちらも P-Charging-Vector の icid-value が同じだからです。
-
-> 手順書 [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
-
----
-
 ## 簡略化していること
 
 | 場所 | 主なもの |
@@ -930,17 +879,14 @@ docker compose --profile phones up -d --build
 | AS。呼び出し音 | プリコンディションの付いた着信者の 183 をそのまま発信者に渡し、発信者のプリコンディションを確かめずに呼び出し音を始める。 |
 | AS。会議 | AS が受け持つ利用者は誰でも会議を作れ、会議のポリシーが無い。参加者を外すようフォーカスに頼む REFER は 403 で断る。 |
 
-```sh
-grep -rn "SIMPLIFIED:" internal/mmtel internal/mrfc internal/netann internal/agw
-```
-
+- どの項目にも、コードに `SIMPLIFIED:` で始まるコメントがあります。
 - PCMU だけなのはなぜか。会議で混ぜるのは復号した音声で、ここには AMR の復号器が無いからです。UE シミュレータは PCMU を offer に入れます。
 
 > 手順書 [「このプロジェクトで簡略化していること」](../../../docs/guide/ja/mrf.md#このプロジェクトで簡略化していること)。項目ごとの仕様の条項と理由は手順書の表にあります。
 
 ---
 
-## コードで確かめる
+## コードの場所
 
 | 見たもの | 開く場所 |
 | --- | --- |
@@ -952,73 +898,50 @@ grep -rn "SIMPLIFIED:" internal/mmtel internal/mrfc internal/netann internal/agw
 | MRFP。ターミネーション、音声ガイダンス、混ぜ合わせ | `internal/agw` |
 | Swap、Merge と、会議の UE の側 | `internal/ue` の `phone_conference.go`、`conference.go` |
 
+- 判断を読むなら、`internal/mmtel/mrf.go` の `reserveMedia`（SDP の無い INVITE）、`internal/mmtel/announcement.go` の `announce`（183、ACK、BYE の順）、`internal/mmtel/call.go` の `serve`（P-Served-User の有無）です。
 - `internal/mmtel` の `mrf_network_test.go` と `conference_network_test.go` が、同じ流れを 1 つのプロセスの中の IMS 全体で動かします。
 
-> 手順書 [「コードの場所」](../../../docs/guide/ja/mrf.md#コードの場所)
+> 本 [MRF の音声ガイダンス、呼び出し音、会議](../../../docs/book/ja/mrf.md)。手順書 [「コードの場所」](../../../docs/guide/ja/mrf.md#コードの場所)
 
 ---
 
-[layout: exercise]
+## 自分で動かす場合（音声ガイダンスとラボ）
 
-## 演習
-
-1. UE 1 の発信を規制して UE 2 にかけます。AS から MRFC への ACK から、MRFC の BYE までの時間を測ります。何秒で、それを決めているのは何でしょうか。
-2. 加入者 2 に呼び出し音 `cat1` を設定してかけます。呼び出し音だと示す SDP の属性と、それを認めるヘッダはどれでしょうか。
-3. 会議のあいだ、MRFP と agw の間の RTP のストリームを数えます。どちら向きにも 3 つあるのはなぜでしょうか。
-4. 会議イベントパッケージの NOTIFY を開きます。`<endpoint>` の `entity` が、その UE の Contact ではないのはなぜでしょうか。
-5. 終わった会議の URI に発信します。何が返るでしょうか。
-
-1 では、「実行する」のスライドの形で `ue xcap` と `ue call` を実行します。
-
----
-
-[layout: answers]
-
-## 演習の答え
-
-1. 1.08 秒ほどです。`notice` の WAV ファイルの長さで、再生が終わると MRFC が BYE を送ります。
-2. 示すのは `a=content:g.3gpp.cat`、認めるのは `P-Early-Media: sendonly` です。
-3. 参加者が 3 人だからです。それぞれが自分の音声を MRFP に送り、ほかの 2 人の和を受け取ります。
-4. Contact はその UE のアドレスで、NOTIFY はほかの網の購読者を含む、会議のすべての購読者に届くからです。
-5. 404 です。作った人が抜けた時点で会議は終わり、その URI も残っていません。
-
----
-
-[layout: exercise]
-
-## 振り返り
-
-1. 何を流すかを決めるのはどのノードで、流すのはどのノードですか。
-2. 音声ガイダンスを頼む INVITE に SDP が付かないのはなぜですか。
-3. 通話に応答する前に、発信者はどうやって音声を聞くのですか。
-4. AS が PRACK を待ってから MRFC に ACK を送るのはなぜですか。
-5. AS は、フォーカス宛ての INVITE と、利用者のサービスのための INVITE をどうやって見分けますか。
-6. MRFP は会議の参加者それぞれに何を送りますか。
-
----
-
-[layout: answers]
-
-## 振り返りの答え
-
-1. 決めるのは MMTel AS で、Mr' で頼みます。MRFC がその要求を受け、MRFP が音声を作ります。
-2. MRFC が MRFP のターミネーションの offer を 200 で返し、AS が ACK で答えるためです。こうして AS が再生を始める時機を決められます。
-3. AS が発信者の offer に MRFP の SDP で自分から答え、`P-Early-Media: sendonly` で early media を認めるからです。
-4. 発信者が SDP を受け取る前に、音声ガイダンスのフレームが失われないようにするためです。
-5. P-Served-User で見分けます。フォーカスに INVITE を届けるフィルタ条件は無いので、フォーカス宛てのものには付きません。
-6. ほかの参加者が送る音声の和です。参加者ごとに 1 つずつ作ります。
-
----
-
-## 次の回
-
-- 次は VoLTE の回です。アクセス網、IMS-AKA、Rx でのポリシー制御、VoLTE の通話を扱います。
-- 網どうしの境界と、参加者が両方の網にいる会議は、最後の回で [網間接続の手順書](../../../docs/guide/ja/interconnect.md) と一緒に読みます。
+ここから先は、構成を動かしたい人のための案内です。読むだけなら要りません。
 
 ```sh
+docker compose up -d --build
+
+# 音声ガイダンス。UE 1 が発信を規制してから UE 2 にかける
+docker compose run --rm ue xcap set baoc on
+docker compose run --rm ue call tel:+12025550102
+docker compose run --rm ue xcap set baoc off
+
+# 2 つ目の着信と会議。ラボから操作する
+docker compose --profile phones up -d phone1 phone2 phone3
+```
+
+- 呼び出し音は、OAM から加入者 2 に `cat1` を設定してから、http://localhost:8080 のラボで `phone1` から `phone2` にかけます。`phone1` の Session の行に、網からの early media で呼び出したと出ます。
+- ラボでは、`phone1` が通話中に `phone3` からの着信を受けると `waiting` と出ます。**Answer**、**Swap**、**Merge** で、保留、切り替え、会議を操作します。ラボは `docker compose --profile phones up -d --build` でも動かせます。
+- `scripts/e2e-mrf.sh` は、このデッキのすべてを実行してキャプチャで確かめます。
+
+> 手順書 [「動かしてみる」](../../../docs/guide/ja/mrf.md#動かしてみる) と [ラボで IMS を見る「UE シミュレータを操作する」](../../../docs/guide/ja/lab.md#ue-シミュレータを操作する)
+
+---
+
+## 自分で動かす場合（キャプチャと後片付け）
+
+```text
+(sip && !(sip.CSeq.method in {"REGISTER", "SUBSCRIBE", "NOTIFY", "MESSAGE"})) || (sip.Event contains "conference") || (http && ip.addr == 172.28.0.86)
+```
+
+- 通話、会議の SUBSCRIBE と NOTIFY、MRFP の制御の API が残ります。**Telephony > RTP > RTP Streams** に MRFP のストリームが並び、**Play Streams** で再生できます。すべての RTP を復号するには **Analyze > Enabled Protocols > RTP > rtp_udp** を有効にします。
+
+```sh
+grep -rn "SIMPLIFIED:" internal/mmtel internal/mrfc internal/netann internal/agw
 docker compose --profile ue --profile phones down -v --remove-orphans
 ```
 
-- このコマンドは、両方のプロファイルの UE とノードを止め、イメージは残します。次の回を、ビルドし直さずに始められます。
+- 1 行目は簡略化した箇所のコメントを一覧します。2 行目は両方のプロファイルの UE とノードを止め、イメージは残します。
 
-> 手順書の一覧は [docs/guide/](../../../docs/guide/) にあります。
+> 手順書 [「キャプチャを開く」](../../../docs/guide/ja/mrf.md#キャプチャを開く)。手順書の一覧は [docs/guide/](../../../docs/guide/) にあります。

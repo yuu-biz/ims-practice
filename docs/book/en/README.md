@@ -11,6 +11,7 @@ There are three ways to read it. Each can be read from the front, but any chapte
 What the nodes of IMS take care of, and what registration and a call settle, on the smallest map and with typical signals.
 
 4. [Three things that registration settles](registration.md)
+6. [What application servers add](services.md)
 
 ## Intermediate (the conditions of the specifications and the code)
 
@@ -21,6 +22,8 @@ Which decision, state and message change when a condition changes, followed thro
   - [Which request follows Path and which follows Service-Route](registration-routes.md)
   - [Why a late deregistration does not remove a newer registration](registration-stale-deregistration.md)
   - [Refresh, deregistration, subscription and removal by the network](registration-lifecycle.md)
+- [iFC and the supplementary services of the MMTel AS](mmtel.md)
+- [Announcements, ringback tones and conferences of the MRF](mrf.md)
 
 ## The slides and the guides
 

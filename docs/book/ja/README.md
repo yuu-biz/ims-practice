@@ -11,6 +11,7 @@
 IMS のノードが何を受け持ち、登録と通話で何が決まるかを、最小の地図と代表的な信号で見ます。
 
 4. [登録で決まる 3 つのこと](registration.md)
+6. [アプリケーションサーバーが加えるサービス](services.md)
 
 ## 中級（仕様の条件と実装の対応）
 
@@ -21,6 +22,8 @@ IMS のノードが何を受け持ち、登録と通話で何が決まるかを�
   - [Path と Service-Route の使い分け](registration-routes.md)
   - [遅れて届いた登録の解除が、新しい登録を消さない理由](registration-stale-deregistration.md)
   - [登録の更新、解除、購読、網からの取り消し](registration-lifecycle.md)
+- [iFC と MMTel AS の付加サービス](mmtel.md)
+- [MRF の音声ガイダンス、呼び出し音、会議](mrf.md)
 
 ## スライドと手順書
 
