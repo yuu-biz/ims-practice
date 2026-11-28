@@ -46,15 +46,19 @@ type ESP struct {
 	Kernel *ipsec.Kernel
 }
 
-// SIMPLIFIED: TS 33.203 7.1 and TS 24.229 5.1.1.5.1. IPsec ESP is an
-// option, and it is off unless AKA.ESP is set. Then the UE agrees on
-// security associations with the P-CSCF, derives IK and CK, and sends
-// every protected message from its protected server port to the
-// P-CSCF's; its protected client port is agreed but never bound. With
-// AKA.ESP it binds that port, sends its requests from it and puts the
-// four security associations of the agreement into the kernel
-// (internal/ipsec). internal/pcscf/secagree.go gives the reasons and
-// what is left out either way.
+// SIMPLIFIED: TS 33.203 5.1.3, 7.1 and TS 24.229 5.1.1.5.1. IPsec ESP
+// is an option, and it is off unless AKA.ESP is set. Then the UE agrees
+// on security associations with the P-CSCF, derives IK and CK, and
+// sends every protected message from its protected server port to the
+// P-CSCF's; its protected client port is agreed but never bound, and
+// its Security-Client offers no encryption algorithm, where TS 33.203
+// 5.1.3 item 1 has the UE always offer the ones it supports. With
+// AKA.ESP it binds that port, sends its requests from it, offers the
+// encryption algorithm as well and puts the four security associations
+// of the agreement into the kernel (internal/ipsec). A UE that sets no
+// ESP up encrypts nothing whatever it offered.
+// internal/pcscf/secagree.go gives the reasons and what is left out
+// either way.
 
 // securityAssociations is the UE's side of the agreement with the
 // P-CSCF: an entry of its SA table (TS 33.203 7.1 rule 5).
@@ -350,10 +354,21 @@ func (u *UE) newSecurityClient(old *securityAssociations) []ims.IPsec3GPP {
 		portC = esp.ProtectedClientPort
 	}
 	var client []ims.IPsec3GPP
-	for _, t := range ims.SupportedTransforms {
+	for _, t := range ims.SupportedTransforms(u.confidentiality()) {
 		client = append(client, ims.IPsec3GPP{Transform: t, SPIC: spiC, SPIS: spiS, PortC: portC, PortS: portS})
 	}
 	return client
+}
+
+// confidentiality says whether the UE offers an encryption algorithm.
+// TS 33.203 5.1.3 item 1 has it always offer one, and it does wherever
+// it sets ESP up; a UE that sets none up encrypts nothing whatever it
+// offered, so it offers null encryption alone.
+func (u *UE) confidentiality() ims.Confidentiality {
+	if u.esp() == nil {
+		return ims.WithoutConfidentiality
+	}
+	return ims.WithConfidentiality
 }
 
 // readChallenge reads a 401 as TS 24.229 5.1.1.5.1 asks: the topmost

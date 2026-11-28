@@ -87,6 +87,10 @@ type akaOptions struct {
 	// item 2). Its protected server port stays the one of its contact
 	// and of its Via.
 	uePortC bool
+	// confidentiality gives the P-CSCF the policy of TS 33.203 5.1.3
+	// item 2, and the UE the encryption algorithm to offer for it. It
+	// needs esp: only a P-CSCF that sets ESP up encrypts anything.
+	confidentiality bool
 }
 
 func newAKAHarnessOf(t *testing.T, o akaOptions) *akaHarness {
@@ -148,6 +152,9 @@ func newAKAHarnessOf(t *testing.T, o akaOptions) *akaHarness {
 	}
 	if o.esp {
 		cfg.ESP = quietESP(t)
+		if o.confidentiality {
+			cfg.ESP.Confidentiality = ims.WithConfidentiality
+		}
 	}
 	h.store = NewMemoryStore()
 	var store Store = h.store
@@ -183,8 +190,12 @@ func newAKAHarnessOf(t *testing.T, o akaOptions) *akaHarness {
 	if h.uePortC != 0 {
 		portC = h.uePortC
 	}
-	h.securityClient = fmt.Sprintf("ipsec-3gpp;alg=hmac-sha2-256-128;ealg=null;spi-c=1111;spi-s=2222;port-c=%d;port-s=%d",
-		portC, h.ueProtected.LocalAddr().Port())
+	var mechanisms []string
+	for _, t := range ims.SupportedTransforms(ims.Confidentiality(o.confidentiality)) {
+		mechanisms = append(mechanisms, fmt.Sprintf("ipsec-3gpp;alg=%s;ealg=%s;spi-c=1111;spi-s=2222;port-c=%d;port-s=%d",
+			t.Algorithm, t.EncryptionAlgorithm, portC, h.ueProtected.LocalAddr().Port()))
+	}
+	h.securityClient = strings.Join(mechanisms, ", ")
 	return h
 }
 
@@ -344,12 +355,13 @@ func TestIMSAKASecurityAgreement(t *testing.T) {
 		t.Errorf("WWW-Authenticate to the UE = %s, want no keys", r.Get("WWW-Authenticate"))
 	}
 	server, err := ims.IPsec3GPPMechanisms(r, "Security-Server")
-	if err != nil || len(server) != len(ims.SupportedTransforms) {
+	offered := ims.SupportedTransforms(ims.WithoutConfidentiality)
+	if err != nil || len(server) != len(offered) {
 		t.Fatalf("Security-Server = %v (%v)", r.GetAll("Security-Server"), err)
 	}
 	ps := uint16(h.protected.LocalAddr().Port())
 	for i, m := range server {
-		if m.Transform != ims.SupportedTransforms[i] || m.PortS != ps || m.PortC == ps || m.SPIC == 1111 || m.SPIS == 2222 || m.SPIC == m.SPIS {
+		if m.Transform != offered[i] || m.PortS != ps || m.PortC == ps || m.SPIC == 1111 || m.SPIS == 2222 || m.SPIC == m.SPIS {
 			t.Errorf("Security-Server %d = %+v", i, m)
 		}
 	}
