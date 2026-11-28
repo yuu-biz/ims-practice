@@ -1,6 +1,6 @@
 ---
 title: このリポジトリのパッケージ構成
-footer: ims-practice 勉強会 1. パッケージ構成
+footer: ims-practice 1. パッケージ構成
 lang: ja
 format: visual
 ---
@@ -67,20 +67,21 @@ events:
 
 # このリポジトリのパッケージ構成
 
-ims-practice 勉強会 第 1 回（どのノードとどの仕様が、コードのどこにあるか）
+（どのノードとどの仕様が、コードのどこにあるか）
 
 ---
 
 [layout: summary]
 
-## この回で分かること
+## このデッキで分かること
 
 - 実行ファイルが 3 つだけで、その 1 つが IMS のどのノードにもなること。
 - どのノードが、どのパッケージに書いてあるか。
 - どの仕様が、どのパッケージに書いてあるか。
 - コードをどこから読み始めればよいか。
 
-> 信号の流れは次の回から読みます。この回は、そのときに開くファイルを探せるようにする回です。
+> 信号の流れは、登録や通話のデッキと本の章で読みます。このデッキは、そのときに開くファイルの場所を示します。
+> 本 [IMS が受け持つ仕事](../../../docs/book/ja/overview.md)
 > 全体の説明は [README.ja.md](../../../README.ja.md) に、略語は [用語集](../../../docs/glossary.md) にあります。
 
 ---
@@ -90,7 +91,7 @@ ims-practice 勉強会 第 1 回（どのノードとどの仕様が、コード
 | 場所 | 中身 |
 | --- | --- |
 | `cmd/` | 実行ファイルの入口。`ims`、`ue`、`oss` の 3 つ。 |
-| `internal/` | 実装のすべて。この回の主題。 |
+| `internal/` | 実装のすべて。このデッキの主題。 |
 | `deploy/compose/` | ノードごとの設定ファイルと、DNS のゾーン。 |
 | `compose.yaml` | ノードを 1 つの Docker のネットワークに並べる。 |
 | `docs/` | 手順書（`docs/guide/`）と用語集。 |
@@ -262,6 +263,7 @@ steps:
 | `reginfo`、`ifc` | reg イベントの XML と、初期フィルタ条件 | RFC 3680、TS 29.228 |
 
 - 識別子は仕様の用語のままです。たとえば `cx.ServerAssignmentRequest` です。`cx` と `sh` では、AVP が仕様の順に Go の構造体のフィールドになります。
+- 1 つのメッセージでも、形と送る判断は別のパッケージです。UAR の AVP を仕様の順に並べるのは `cx`、UAR を送ると決めるのは `icscf` です。
 
 ---
 
@@ -273,7 +275,7 @@ steps:
 | `config` | YAML の設定を、検証済みの値にする。誤った設定は起動のときに断る。 |
 | `hep`、`hepagent` | 信号の写しをラボへ送る（HEP3）。 |
 | `g711`、`wav` | G.711 μ-law と WAV。UE シミュレータの音声。 |
-| `epc`、`policy`、`rx`、`milenage`、`aka`、`amr`、`rtcp`、`precondition` | VoLTE の通話で使う部品。この回では扱わない。 |
+| `epc`、`policy`、`rx`、`milenage`、`aka`、`amr`、`rtcp`、`precondition` | VoLTE の通話で使う部品。このデッキでは扱わない。 |
 | `nas`、`fivegc`、`n5`、`nhss`、`sbi` など | どの役割も起動しない部品。使うのはそれぞれの試験だけ。 |
 
 - どの役割も起動しない部品は、`cmd/` のどのコマンドからも import されていません。`go list -deps ./cmd/...` に出てこないことで確かめられます。
@@ -377,7 +379,8 @@ steps:
 grep -rn "SIMPLIFIED:" internal cmd
 ```
 
-- `internal/scscf/scscf.go` の先頭で、3 つとも見つかります。
+- `internal/scscf/scscf.go` では 3 つとも見つかります。パッケージのコメントは先頭に、条項番号と `SIMPLIFIED:` は関数のコメントにあります。
+- `SIMPLIFIED:` の数はコードが変わるたびに変わるので、このデッキには書きません。上の `grep` が今の一覧を出します。
 
 > 手順書 [UE が IMS に登録する流れを追う「このプロジェクトで簡略化していること」](../../../docs/guide/ja/registration.md#このプロジェクトで簡略化していること)
 
@@ -418,18 +421,18 @@ steps:
 ```
 
 
-| 順 | ノード | 開くファイル | 探すもの |
+| 順 | ノード | ファイル | そこにあるもの |
 | --- | --- | --- | --- |
-| 1 | UE | `internal/ue/ue.go` | REGISTER を組み立てるところ |
-| 2 | P-CSCF | `internal/pcscf/pcscf.go`、`internal/sipdns/locate.go` | Path を付けるところ、I-CSCF を DNS で探すところ |
-| 3 | I-CSCF | `internal/icscf/icscf.go` | UAR を送るところ |
-| 4 | S-CSCF | `internal/scscf/scscf.go` | MAR と SAR を送るところ、401 と 200 を返すところ |
-| 5 | HSS | `internal/hss/hss.go` | UAR、MAR、SAR に答えるところ |
+| 1 | UE | `internal/ue/ue.go` | REGISTER を組み立てるところ（`newREGISTER`） |
+| 2 | P-CSCF | `internal/pcscf/pcscf.go`、`internal/sipdns/locate.go` | Path を付けるところ、I-CSCF を DNS で探すところ（`register`、`pathURI`、`Locate`） |
+| 3 | I-CSCF | `internal/icscf/icscf.go` | UAR を送るところ（`register`） |
+| 4 | S-CSCF | `internal/scscf/scscf.go` | MAR と SAR を送るところ、401 と 200 を返すところ（`challenge` が MAR と 401、`accept` が SAR と 200） |
+| 5 | HSS | `internal/hss/hss.go` | UAR、MAR、SAR に答えるところ（`userAuthorization`、`multimediaAuth`、`serverAssignment`） |
 
 - メッセージの形は `internal/cx/messages.go` にあります。
-- 2 人 1 組で、表の「探すもの」を見つけます。見つけたら、その近くのコメントにある条項番号を読み上げます。
+- どの関数の近くのコメントにも、その手順の条項番号があります。
 
-> 登録の回で、同じ流れをキャプチャで読みます。手順書は [UE が IMS に登録する流れを追う](../../../docs/guide/ja/registration.md) です。
+> 登録のデッキで、同じ流れをキャプチャで読みます。手順書は [UE が IMS に登録する流れを追う](../../../docs/guide/ja/registration.md) です。
 
 ---
 
@@ -438,6 +441,7 @@ steps:
 - `internal/ue` の試験は、IMS 全体を 1 つのプロセスの中で動かし、登録と通話を確かめます。
 - `internal/ipsmgw` の試験は、同じ方法で SMS を確かめます。
 - `scripts/e2e-*.sh` のスクリプトは、シナリオごとに Compose の構成を動かし、キャプチャに期待するメッセージがあるかを確かめます。
+- 自分で動かすときは、リポジトリのルートで次のコマンドを実行します。読むだけなら要りません。
 
 ```sh
 MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/src" -v ims-practice-gomod:/go/pkg/mod \
@@ -446,32 +450,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -v "$PWD:/src" -v ims-practice-gomod:/go/pkg/
 
 ---
 
-[layout: exercise]
-
-## 振り返り
-
-1. S-CSCF と I-CSCF を 1 台で動かすには、何を変えますか。
-2. UAR の AVP を並べているのは、どのパッケージですか。UAR を送るのは、どのパッケージですか。
-3. `SIMPLIFIED:` のコメントは、今いくつありますか。
-4. P-CSCF のコードが `sip` を使うのと、`sip` が `pcscf` を使うのと、どちらが正しい向きですか。
-
----
-
-[layout: answers]
-
-## 振り返りの答え
-
-1. 設定ファイルの `roles` に両方を書きます。コードは変えません。
-2. 並べているのは `cx`、UAR を送るのは `icscf` です。
-3. 「コードを読む 3 つの手がかり」の `grep` で数えます。数はコードが変わると変わります。
-4. `pcscf` が `sip` を使います。逆はありません。
-
----
-
-## 次の回と参考資料
-
-- 次の回は網の地図です。ノードと、その間のインタフェースと、地図のどこをどの回が開くかを見ます。
-- 登録の回までに、[信号をキャプチャして Wireshark で開く](../../../docs/guide/ja/capture.md) の手順を一度試しておいてください。
+## 参考資料
 
 | 文書 | 場所 |
 | --- | --- |

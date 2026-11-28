@@ -1,6 +1,6 @@
 ---
 title: The map of this IMS
-footer: ims-practice study session 2. The map of the network
+footer: ims-practice 2. The map of the network
 lang: en
 format: visual
 ---
@@ -54,20 +54,21 @@ events:
 
 # The map of this IMS
 
-ims-practice study session 2 (the nodes, the reference points between them, and which session opens each part)
+(the nodes, the reference points between them, and which chapter opens each part)
 
 ---
 
 [layout: summary]
 
-## What you will know after this session
+## What this deck covers
 
 - Which nodes an IMS is made of, and what each one is for.
 - Which interface joins two nodes, and which protocol runs on it.
 - Where SIP ends and Diameter, HTTP, H.248 and RTP begin.
-- Which session and which guide opens each part of the map.
+- Which chapter of the book and which guide opens each part of the map.
 
-> No capture is read in this session. It draws the map that the later sessions follow.
+> This deck reads no capture. It draws the map that the other decks and the chapters of the book follow.
+> Book: [What IMS does](../../../docs/book/en/overview.md)
 > The guides are in [docs/guide/en/](../../../docs/guide/en/), the abbreviations in the [glossary](../../../docs/glossary.md).
 
 ---
@@ -111,6 +112,12 @@ steps:
     text: |
       The media relay (IMS-AGW) and the MRF.
       With a node for each job, each job can get as many instances as it needs.
+  - id: core
+    title: The four in every registration and every call inside the network
+    focus: [pcscf, icscf, scscf, hss]
+    text: |
+      The P-CSCF, the I-CSCF, the S-CSCF and the HSS take part in every registration and every call inside this network.
+      The other nodes join for a service, an access or the border.
 ```
 
 
@@ -163,6 +170,7 @@ steps:
 ```
 
 - Every request of a UE enters at the P-CSCF. The hops after it carry SIP on port 5060, so one message looks much the same at each of them.
+- A REGISTER, for example, enters at the P-CSCF over Gm and goes on to the I-CSCF and the S-CSCF over Mw. On the way the I-CSCF and the S-CSCF ask the HSS over Cx.
 - A phone meets two of these interfaces: Gm, and Ut for its own settings. What is to the right of the P-CSCF is the operator's business.
 - An AS sits in the path, not at its end: the MMTel AS sends the request back to the S-CSCF, which goes on with the next criterion. The IP-SM-GW answers it instead, because the short message ends there.
 
@@ -227,9 +235,9 @@ steps:
 | TrGW | 172.28.0.91 | The media relay at the border. The IBCF controls it. |
 | Lab | 172.28.0.60 | Draws each registration and call as a ladder, from copies that the nodes send it (HEP). Not part of the IMS. |
 | OAM server | 172.28.0.65 | Operates every node through its maintenance API, and serves the OAM screen. Not part of the IMS, and it sends no signaling. |
-| capture | host network | tcpdump on the bridge. It writes the files that every session reads. |
+| capture | host network | tcpdump on the bridge. It writes the files that every deck reads. |
 
-- The IBCF and the TrGW come with the second network, which `deploy/interconnect/compose.yaml` adds on top of `compose.yaml`. Session 10 reads the border in the captures of both networks and of the link between them.
+- The IBCF and the TrGW come with the second network, which `deploy/interconnect/compose.yaml` adds on top of `compose.yaml`. The deck on interconnection reads the border in the captures of both networks and of the link between them.
 - The Lab, the OAM server and the capture are outside the IMS. No call waits for an answer from any of them: the copies go to the Lab over UDP, and tcpdump only listens.
 
 > Guides: [Connect two IMS networks, "The two networks"](../../../docs/guide/en/interconnect.md#the-two-networks) and [Watch the IMS in the Lab, "These APIs are this project's own"](../../../docs/guide/en/lab.md#these-apis-are-this-projects-own)
@@ -393,18 +401,20 @@ steps:
 
 ---
 
-## Which session opens which part of the map
+## Where to read each part of the map
 
 | Part of the map | Where to read it |
 | --- | --- |
-| Gm, Mw, Cx, and the CSCFs with the HSS | session 4, registration |
-| ENUM, the media relay, both sides of one call | session 5, the call |
-| ISC, Sh, SGd and S6c, the IP-SM-GW and the SC | session 6, SMS |
-| Ut and the MMTel AS | session 7, the supplementary services |
-| Rx, the EPC stub, IMS AKA | session 9, VoLTE |
-| Mr', Mp and the MRF | session 8, the MRF |
-| Mx, Ici, Izi and the border | session 10, two networks joined at the border |
-| HEP and the Lab | session 3, captures and the Lab |
+| Gm, Mw, Cx, and the CSCFs with the HSS | the deck on registration; in the book, "Three things that registration settles" |
+| ENUM, the media relay, both sides of one call | the deck on the call; in the book, "From a number to the other phone" |
+| ISC, Sh, SGd and S6c, the IP-SM-GW and the SC | the deck on SMS; in the book, "Delivering SMS and reporting on it" |
+| Ut and the MMTel AS | the deck on the supplementary services; in the book, "iFC and the supplementary services of the MMTel AS" |
+| Rx, the EPC stub, IMS AKA | the deck on VoLTE; in the book, "Registration and calls over VoLTE" |
+| Mr', Mp and the MRF | the deck on the MRF; in the book, "Announcements, ringback tones and conferences of the MRF" |
+| Mx, Ici, Izi and the border | the deck on interconnection; in the book, "Interconnection between networks" |
+| HEP and the Lab | the deck on captures and the Lab; in the book, "Watching the signalling" |
+
+- The introduction of the book ([contents](../../../docs/book/en/README.md)) first goes through the whole map with one registration and one call.
 
 > Guide: [Guides, "The order to read them in"](../../../docs/guide/en/README.md#the-order-to-read-them-in)
 
@@ -424,42 +434,3 @@ steps:
 - The table of the capture guide has the address of every service, and the table under it every Diameter connection. Both are checked against `compose.yaml`, so neither can go stale.
 
 > Guide: [Guides, "What the Compose project starts"](../../../docs/guide/en/README.md#what-the-compose-project-starts)
-
----
-
-[layout: exercise]
-
-## Looking back
-
-1. Which nodes does a REGISTER pass, and on which reference points?
-2. Which protocol runs on Cx, on Ut and on Mp in this project?
-3. Why can the I-CSCF not say by itself which S-CSCF serves a user?
-4. Someone calls a number that no ENUM record names. Who answers, and what?
-5. Which address does a UE have to know, and how does it learn it?
-
----
-
-[layout: answers]
-
-## Looking back: answers
-
-1. The P-CSCF over Gm, then the I-CSCF and the S-CSCF over Mw. On the way the I-CSCF and the S-CSCF ask the HSS over Cx.
-2. Cx is Diameter and Ut is HTTP with XCAP. Mp is H.248 in the standard, and a small HTTP API here.
-3. It keeps no state. The HSS is where the S-CSCF of a user is written down.
-4. The S-CSCF, with 404. A larger network would send the call out towards the telephone network.
-5. The address of its P-CSCF. A softphone has it in its configuration, a VoLTE UE is given it by the access network when it attaches.
-
----
-
-## Next session
-
-- Next are the two ways of watching this map at work: a capture in Wireshark, and the Lab.
-- Registration follows them. It crosses Gm, Mw and Cx, and at its end ISC and Sh as well.
-- Before then, start the system once and watch the Diameter connections come up.
-
-```sh
-docker compose up -d --build
-docker compose logs scscf | grep I-Open
-```
-
-> The guides of the next session are [Capture signaling and open it in Wireshark](../../../docs/guide/en/capture.md), which has the commands above, and [Watch the IMS in the Lab](../../../docs/guide/en/lab.md).

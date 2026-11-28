@@ -10,6 +10,9 @@ There are three ways to read it. Each can be read from the front, but any chapte
 
 What the nodes of IMS take care of, and what registration and a call settle, on the smallest map and with typical signals.
 
+1. [How to read this book](preface.md)
+2. [What IMS does](overview.md)
+3. [Watching the signalling](observing.md)
 4. [Three things that registration settles](registration.md)
 5. [From a number to the other phone](call.md)
 6. [What application servers add](services.md)
@@ -35,6 +38,10 @@ What the standards settle is told apart from what an implementation or an operat
 - [What several nodes and failures hand over](design-shared-state.md)
 - [When a media renegotiation fails](design-media-rollback.md)
 - [Taking a node out for maintenance, and losing it](design-maintenance.md)
+
+## Appendices
+
+- [Go for reading the code](go-reading.md)
 
 ## The slides and the guides
 

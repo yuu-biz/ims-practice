@@ -590,6 +590,109 @@ units:
       - TS 23.333 8.30
     evidence: [code, test]
     verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: overview-nodes-and-paths
+    question:
+      ja: IMS のノードはそれぞれ何を受け持ち、信号と声はどこを通るのか
+      en: What does each IMS node take care of, and where do the signalling and the voice go
+    setup: deploy/compose, softphone UEs that register with SIP Digest; UE 1 registers and calls UE 2 through the P-CSCF, the I-CSCF, the S-CSCF, the HSS, the MMTel AS and the media relay
+    chapter: overview
+    scenes: [02-network/jobs, 02-network/sip-points, 02-network/diameter-points, 04-registration/overview, 05-call/overview, 05-call/media]
+    code: []
+    tests:
+      - internal/ue/ue_test.go:TestRegisterRefreshAndDeregisterThroughTheWholeIMS
+      - internal/ue/call_test.go:TestCallThroughTheWholeIMS
+    standards:
+      - TS 23.228 V20.1.0 4.7
+      - TS 24.229 V18.11.0 5.7.5
+      - TS 24.623 V19.0.0
+      - TS 29.333, TS 29.334
+      - RFC 3263, RFC 6116
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: overview-roles-by-configuration
+    question:
+      ja: 役割を設定で選ぶとはどういうことで、台数を増やすときに何を意味するのか
+      en: What does choosing a role by configuration mean, and what does it mean for running several instances
+    setup: deploy/compose, one cmd/ims node per role; the redundant setup of deploy/redundancy for the shared store
+    chapter: overview
+    scenes: [01-packages/one-binary, 01-packages/state]
+    code:
+      - internal/config/config.go:knownRoles
+      - internal/config/config.go:Config
+      - cmd/ims/main.go:run
+      - internal/scscf/store.go:Store
+    tests:
+      - internal/config/config_test.go:TestParseCombinedRoles
+      - internal/config/config_test.go:TestParseRejects
+    standards:
+      - TS 23.228 V20.1.0
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: observing-observed-and-inferred
+    question:
+      ja: キャプチャとラボのシーケンス図は、それぞれ何を観測し、何を推定しているのか
+      en: What does a capture observe, and what does the ladder of the Lab observe and what does it infer
+    setup: deploy/compose; the capture container on the bridge ims0, and the Lab receiving HEP copies on UDP 9060
+    chapter: observing
+    scenes: [03-captures/one-file, 03-captures/copies, 03-captures/one-arrow, 03-captures/infer, 03-captures/dialogs]
+    code:
+      - internal/lab/causes.go:callIDOf
+      - internal/lab/causes.go:causeWindow
+      - internal/lab/message.go:direction
+      - internal/lab/store.go:joinCall
+    tests:
+      - internal/lab/causes_test.go:TestCxMessagesGetTheCallIDOfTheirCause
+      - internal/lab/causes_test.go:TestCxLinkDoesNotDependOnArrivalOrder
+      - internal/lab/causes_test.go:TestRxSessionsGetTheCallIDOfTheirCause
+      - internal/lab/calls_test.go:TestCallThroughTheASIsOneCall
+    standards:
+      - TS 24.229 V18.11.0 5.7.5, 5.7.5.1, 5.2.6.3.3
+      - RFC 3539 3.4.1
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: observing-transactions-and-dialogs
+    question:
+      ja: キャプチャの中で、トランザクションとダイアログをどう見分けるのか
+      en: How are transactions and dialogs told apart in a capture
+    setup: an illustration with short values; UE 1, the P-CSCF, the S-CSCF and the originating MMTel AS of deploy/compose
+    chapter: observing
+    scenes: [03-captures/transactions]
+    code:
+      - internal/sip/stack.go:clientKey
+      - internal/sip/stack.go:serverKey
+      - internal/sip/dialog.go:DialogID
+    tests: []
+    standards:
+      - RFC 3261 8.1.1.7, 12, 16.6, 16.7, 17, 17.1.3, 17.2.3
+    evidence: [code, illustration]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
+  - id: go-reading-excerpts
+    question:
+      ja: コードの抜き出しに出てくる Go の書き方は、それぞれ何を意味するのか
+      en: What does each form of Go in the excerpts of code mean
+    setup: the Go code of the repository, Go 1.27.4 as in go.mod
+    chapter: go-reading
+    scenes: [00-go/interfaces, 00-go/goroutines, 00-go/locks, 00-go/terms]
+    code:
+      - internal/scscf/scscf.go:HSS
+      - internal/pcscf/session.go:Relay
+      - internal/diameter/peer.go:Request
+      - internal/diameter/peer.go:Connect
+      - internal/scscf/scscf.go:lockFailed
+      - internal/ims/locks.go:UserLocker
+      - internal/ims/expiry.go:DueIndex
+      - internal/rtp/rtp.go:Marshal
+      - internal/sms/rp.go:ParseRP
+      - internal/sms/rp.go:RPAck
+    tests:
+      - internal/sms/rp_test.go:TestRPMessages
+      - internal/sms/rp_test.go:Example
+      - internal/rtp/rtp_test.go:TestRoundTrip
+    standards:
+      - RFC 3550 5.1
+      - TS 24.011 table 7.7
+    evidence: [code, test]
+    verified: bfb57a7611a0632a51f56ceba892141f43d22d96
   - id: call-route
     question:
       ja: 電話番号しか知らない UE の INVITE は、どうやって相手の UE に届くのか

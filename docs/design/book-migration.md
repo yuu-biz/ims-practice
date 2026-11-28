@@ -130,6 +130,116 @@
 | The same call with the tone off | "Compare them" became a sentence that says what the pair shows | 再編集 | `slides/decks/en/08-mrf.md#the-same-call-with-the-tone-off` `docs/book/en/mrf.md#the-answer-stops-it-and-moves-the-media-to-the-callee` | `nothing else of the call changes` |
 | What this project simplifies | The command that lists SIMPLIFIED moved to an optional slide | 移動 | `slides/decks/en/08-mrf.md#run-it-yourself-the-capture-and-clean-up` | `grep -rn "SIMPLIFIED:" internal/mmtel internal/mrfc` |
 
+## ja/00-go.md
+
+| 旧の見出し | 内容 | 扱い | 行き先 | 確かめる語 |
+| --- | --- | --- | --- | --- |
+| この回で分かること | 回の番号を外し、試験の動かし方の項目は終わりの任意の 2 枚への案内にした。このデッキが任意であることと、本の章への案内を足した | 再編集 | `slides/decks/ja/00-go.md#このデッキで分かること` | `このデッキで分かること`、`コードを読むための Go` |
+| 試験を動かす | 試験を選んで動かすコマンドの表は、任意の再現としてデッキの終わりに移した。試験の名前と `-run` の読み方は本の付録の試験の節に書いた | 移動 | `slides/decks/ja/00-go.md#自分で動かす場合試験を選ぶ`、`docs/book/ja/go-reading.md#表駆動の試験` | `go test -count=1 ./internal/sms`、`名前の空白は` |
+| コンテナの Go とホストの Go | コンテナとホストの Go の動かし方は、任意の再現としてデッキの終わりに移した。push の前の実行の指示は外した | 移動 | `slides/decks/ja/00-go.md#自分で動かす場合コンテナの-go-とホストの-go` | `GOTOOLCHAIN=auto go test ./...`、`ims-practice-gomod` |
+| 読む順番 | 試験に `t.Log` を足して流す指示を外した。読者にコードを変えて実行させる指示で、読む順の知識はほかの項目に残っている | 削除 | | `t.Log` |
+| 演習 | 5 つの課題を、著者が関数、試験の行、結果を示す説明に変えた | 課題から解説へ | `docs/book/ja/go-reading.md#構造体とメソッド`、`docs/book/ja/go-reading.md#小さなインタフェース`、`docs/book/ja/go-reading.md#ロックは利用者ごとにかける`、`docs/book/ja/go-reading.md#バイト列を組み立てる`、`docs/book/ja/go-reading.md#表駆動の試験`、`docs/book/ja/go-reading.md#自分で動かす場合` | `challenge`、`pcscf.Relay`、`RPSMMA`、`go test ./internal/rtp`、`rtp.Packet.Marshal` |
+| 演習の答え | 401 を返す行、RP-SMMA の行とそのバイトの意味、Relay を満たす 2 つの型とファイル、Lock がエラーを返す 2 つの場合と 500、版のビットを壊したときの失敗を、デッキの説明のスライドと本の付録に書いた。失敗の文は著者が流した結果の全文にした | 課題から解説へ | `docs/book/ja/go-reading.md#構造体とメソッド`、`docs/book/ja/go-reading.md#小さなインタフェース`、`docs/book/ja/go-reading.md#ロックは利用者ごとにかける`、`docs/book/ja/go-reading.md#バイト列を組み立てる`、`docs/book/ja/go-reading.md#表駆動の試験`、`docs/book/ja/go-reading.md#自分で動かす場合`、`slides/decks/ja/00-go.md#表駆動の試験` | `internal/scscf/aka.go`、`internal/agw/api.go`、`lockFailed`、`rtp: version 1, want 2`、`06 09`、`go test -run 'TestRPMessages/RP-SMMA_9' -v ./internal/sms`、`grep -rn "401" internal/scscf` |
+| 演習の答え | 失敗の文を省略した形で書いていた。著者が流した結果の全文 `first bytes 0x40 0x80, want V=2 and M set` と、続く `Unmarshal` の失敗に置き換えた | 訂正 | `docs/book/ja/go-reading.md#バイト列を組み立てる` | `first bytes ... want V=2 and M set` |
+| 演習の答え | `*mediactl.Controller` を controller_mp.go の型としていた。型の宣言は controller.go にあり、メソッドは controller_mp.go と controller_relay.go に分かれている | 訂正 | `docs/book/ja/go-reading.md#小さなインタフェース` | `internal/h248/mediactl/controller_mp.go` |
+| 演習の答え | 読者の作業ツリーのファイルを戻すコマンド。本の付録は、見たあとで元に戻すことだけを書く | 削除 | | `git checkout internal/rtp/rtp.go` |
+| 次の回と参考資料 | 次の回の案内を外し、参考資料の表と Go の公式の入口を残した | 再編集 | `slides/decks/ja/00-go.md#参考資料` | `A Tour of Go`、`Effective Go` |
+
+## en/00-go.md
+
+| 旧の見出し | 内容 | 扱い | 行き先 | 確かめる語 |
+| --- | --- | --- | --- | --- |
+| What you will know after this session | 回の番号を外し、試験の動かし方の項目は終わりの任意の 2 枚への案内にした。このデッキが任意であることと、本の章への案内を足した | 再編集 | `slides/decks/en/00-go.md#what-this-deck-covers` | `What this deck covers`、`Go for reading the code` |
+| Running the tests | 試験を選んで動かすコマンドの表は、任意の再現としてデッキの終わりに移した。試験の名前と `-run` の読み方は本の付録の試験の節に書いた | 移動 | `slides/decks/en/00-go.md#running-it-yourself-choosing-the-tests`、`docs/book/en/go-reading.md#table-driven-tests` | `go test -count=1 ./internal/sms`、`A space of the name becomes` |
+| Go in a container, Go on the host | コンテナとホストの Go の動かし方は、任意の再現としてデッキの終わりに移した。push の前の実行の指示は外した | 移動 | `slides/decks/en/00-go.md#running-it-yourself-go-in-a-container-go-on-the-host` | `GOTOOLCHAIN=auto go test ./...`、`ims-practice-gomod` |
+| Reading order | 試験に `t.Log` を足して流す指示を外した。読者にコードを変えて実行させる指示で、読む順の知識はほかの項目に残っている | 削除 | | `t.Log` |
+| Exercises | 5 つの課題を、著者が関数、試験の行、結果を示す説明に変えた | 課題から解説へ | `docs/book/en/go-reading.md#structs-and-methods`、`docs/book/en/go-reading.md#small-interfaces`、`docs/book/en/go-reading.md#a-lock-per-user-none-for-the-whole-role`、`docs/book/en/go-reading.md#building-bytes`、`docs/book/en/go-reading.md#table-driven-tests`、`docs/book/en/go-reading.md#running-it-yourself` | `challenge`、`pcscf.Relay`、`RPSMMA`、`go test ./internal/rtp`、`rtp.Packet.Marshal` |
+| Exercises: answers | 401 を返す行、RP-SMMA の行とそのバイトの意味、Relay を満たす 2 つの型とファイル、Lock がエラーを返す 2 つの場合と 500、版のビットを壊したときの失敗を、デッキの説明のスライドと本の付録に書いた。失敗の文は著者が流した結果の全文にした | 課題から解説へ | `docs/book/en/go-reading.md#structs-and-methods`、`docs/book/en/go-reading.md#small-interfaces`、`docs/book/en/go-reading.md#a-lock-per-user-none-for-the-whole-role`、`docs/book/en/go-reading.md#building-bytes`、`docs/book/en/go-reading.md#table-driven-tests`、`docs/book/en/go-reading.md#running-it-yourself`、`slides/decks/en/00-go.md#table-driven-tests` | `internal/scscf/aka.go`、`internal/agw/api.go`、`lockFailed`、`rtp: version 1, want 2`、`06 09`、`go test -run 'TestRPMessages/RP-SMMA_9' -v ./internal/sms`、`grep -rn "401" internal/scscf` |
+| Exercises: answers | 失敗の文を省略した形で書いていた。著者が流した結果の全文 `first bytes 0x40 0x80, want V=2 and M set` と、続く `Unmarshal` の失敗に置き換えた | 訂正 | `docs/book/en/go-reading.md#building-bytes` | `first bytes ... want V=2 and M set` |
+| Exercises: answers | `*mediactl.Controller` を controller_mp.go の型としていた。型の宣言は controller.go にあり、メソッドは controller_mp.go と controller_relay.go に分かれている | 訂正 | `docs/book/en/go-reading.md#small-interfaces` | `internal/h248/mediactl/controller_mp.go` |
+| Exercises: answers | 読者の作業ツリーのファイルを戻すコマンド。本の付録は、見たあとで元に戻すことだけを書く | 削除 | | `git checkout internal/rtp/rtp.go` |
+| Next session, and where to read more | 次の回の案内を外し、参考資料の表と Go の公式の入口を残した | 再編集 | `slides/decks/en/00-go.md#where-to-read-more` | `A Tour of Go`、`Effective Go` |
+
+## ja/01-packages.md
+
+| 旧の見出し | 内容 | 扱い | 行き先 | 確かめる語 |
+| --- | --- | --- | --- | --- |
+| この回で分かること | 回の言い方を外し、信号の流れを読む場所を登録と通話のデッキと本の章にした。本の章への案内を足した | 再編集 | `slides/decks/ja/01-packages.md#このデッキで分かること` | `このデッキで分かること`、`IMS が受け持つ仕事` |
+| リポジトリの一番上 | 回の言い方をデッキの言い方にした | 訂正 | `slides/decks/ja/01-packages.md#リポジトリの一番上` | `実装のすべて。この回の主題。` |
+| そのほかのパッケージ | 回の言い方をデッキの言い方にした | 訂正 | `slides/decks/ja/01-packages.md#そのほかのパッケージ` | `VoLTE の通話で使う部品。この回では扱わない。` |
+| コードを読むときの手がかり | 3 つの手がかりが scscf.go の先頭にあるとしていた。先頭にあるのはパッケージのコメントで、条項番号と SIMPLIFIED: は関数のコメントにある | 訂正 | `slides/decks/ja/01-packages.md#コードを読むときの手がかり` | `の先頭で、3 つとも見つかります` |
+| REGISTER をコードで追う | 2 人 1 組で探す課題を外し、表の各行に、そこを受け持つ関数の名前を書いた | 課題から解説へ | `slides/decks/ja/01-packages.md#trace`、`docs/book/ja/overview.md#コードの場所` | `newREGISTER`、`serverAssignment`、`役割の名前のパッケージ` |
+| 振り返り | 4 つの問いの答えを、説明のスライドと本の章に書いた | 課題から解説へ | `slides/decks/ja/01-packages.md#one-binary`、`slides/decks/ja/01-packages.md#プロトコルのパッケージ`、`slides/decks/ja/01-packages.md#コードを読むときの手がかり`、`slides/decks/ja/01-packages.md#layers`、`docs/book/ja/overview.md#役割は設定で選ぶ` | `roles`、`UAR を送ると決めるのは`、`SIMPLIFIED:`、`逆はありません` |
+| 振り返りの答え | 2 つの役割は roles に書くだけでコードは変わらない、AVP を並べるのは cx で送るのは icscf、SIMPLIFIED: の数はコードとともに変わる、pcscf が sip を使い逆は無い、を説明のスライドと本の章に書いた | 課題から解説へ | `slides/decks/ja/01-packages.md#one-binary`、`slides/decks/ja/01-packages.md#プロトコルのパッケージ`、`slides/decks/ja/01-packages.md#コードを読むときの手がかり`、`slides/decks/ja/01-packages.md#layers`、`docs/book/ja/overview.md#役割は設定で選ぶ` | `コードは変えません`、`icscf`、`数はコードが変わるたびに変わる`、`pcscf` |
+| 次の回と参考資料 | 次の回と、手順を試しておく指示を外し、参考資料の表を残した。手順書は表と各スライドの案内に残っている | 再編集 | `slides/decks/ja/01-packages.md#参考資料` | `README.ja.md`、`docs/guide/ja/` |
+
+## en/01-packages.md
+
+| 旧の見出し | 内容 | 扱い | 行き先 | 確かめる語 |
+| --- | --- | --- | --- | --- |
+| What you will know after this session | 回の言い方を外し、信号の流れを読む場所を登録と通話のデッキと本の章にした。本の章への案内を足した | 再編集 | `slides/decks/en/01-packages.md#what-this-deck-covers` | `What this deck covers`、`What IMS does` |
+| The top of the repository | 回の言い方をデッキの言い方にした | 訂正 | `slides/decks/en/01-packages.md#the-top-of-the-repository` | `All of the implementation. The subject of this session.` |
+| The other packages | 回の言い方をデッキの言い方にした | 訂正 | `slides/decks/en/01-packages.md#the-other-packages` | `Parts of the VoLTE call. Not covered in this session.` |
+| Three handles for reading the code | 3 つの手がかりが scscf.go の先頭にあるとしていた。先頭にあるのはパッケージのコメントで、条項番号と SIMPLIFIED: は関数のコメントにある | 訂正 | `slides/decks/en/01-packages.md#three-handles-for-reading-the-code` | `The top of` |
+| Follow one REGISTER through the code | 2 人 1 組で探す課題を外し、表の各行に、そこを受け持つ関数の名前を書いた | 課題から解説へ | `slides/decks/en/01-packages.md#trace`、`docs/book/en/overview.md#where-the-code-is` | `newREGISTER`、`serverAssignment`、`the package named after the role` |
+| Looking back | 4 つの問いの答えを、説明のスライドと本の章に書いた | 課題から解説へ | `slides/decks/en/01-packages.md#one-binary`、`slides/decks/en/01-packages.md#the-protocol-packages`、`slides/decks/en/01-packages.md#three-handles-for-reading-the-code`、`slides/decks/en/01-packages.md#layers`、`docs/book/en/overview.md#a-role-is-chosen-by-configuration` | `roles`、`decides to send the UAR`、`SIMPLIFIED:`、`never the other way` |
+| Looking back: answers | 2 つの役割は roles に書くだけでコードは変わらない、AVP を並べるのは cx で送るのは icscf、SIMPLIFIED: の数はコードとともに変わる、pcscf が sip を使い逆は無い、を説明のスライドと本の章に書いた | 課題から解説へ | `slides/decks/en/01-packages.md#one-binary`、`slides/decks/en/01-packages.md#the-protocol-packages`、`slides/decks/en/01-packages.md#three-handles-for-reading-the-code`、`slides/decks/en/01-packages.md#layers`、`docs/book/en/overview.md#a-role-is-chosen-by-configuration` | `The code does not change`、`icscf`、`changes whenever the code changes`、`pcscf` |
+| Next session, and where to read more | 次の回と、手順を試しておく指示を外し、参考資料の表を残した。手順書は表と各スライドの案内に残っている | 再編集 | `slides/decks/en/01-packages.md#where-to-read-more` | `README.md`、`docs/guide/en/` |
+
+## ja/02-network.md
+
+| 旧の見出し | 内容 | 扱い | 行き先 | 確かめる語 |
+| --- | --- | --- | --- | --- |
+| この回で分かること | 回の言い方を外し、地図を開くものを本の章と手順書にした。本の章への案内を足した | 再編集 | `slides/decks/ja/02-network.md#このデッキで分かること` | `このデッキで分かること`、`IMS が受け持つ仕事` |
+| 信号の通り道 | 振り返りの答えにあった REGISTER の通るノードと参照点を、このスライドに書いた | 課題から解説へ | `slides/decks/ja/02-network.md#backbone` | `Gm で P-CSCF に入り` |
+| 網の境界と、網を外から見る道具 | 回の言い方をデッキの言い方にした | 訂正 | `slides/decks/ja/02-network.md#網の境界と網を外から見る道具` | `ブリッジ上の tcpdump。どの回でも読むキャプチャのファイルを書く。` |
+| どの回で地図のどこを扱うか | 回の番号を、地図の部分を読むデッキと本の章の名前にした。入門の章が地図の全体を先に通すことを足した | 再編集 | `slides/decks/ja/02-network.md#地図のどこをどこで読むか` | `登録のデッキ`、`信号を観測する`、`網間接続のデッキ` |
+| どの回で地図のどこを扱うか | 回の番号は、開発の順の番号なので外した | 訂正 | `slides/decks/ja/02-network.md#地図のどこをどこで読むか` | `第 4 回。登録`、`第 5 回。通話`、`第 6 回。SMS`、`第 7 回。付加サービス`、`第 9 回。VoLTE`、`第 8 回。MRF`、`第 10 回。境界でつながる 2 つの網`、`第 3 回。キャプチャとラボ` |
+| 振り返り | 5 つの問いの答えを、説明のスライドと本の章に書いた | 課題から解説へ | `slides/decks/ja/02-network.md#backbone`、`slides/decks/ja/02-network.md#ue-の近くのノード`、`slides/decks/ja/02-network.md#ホーム網のノード`、`slides/decks/ja/02-network.md#この地図に無いもの`、`docs/book/ja/overview.md#1-回の登録で決まること`、`docs/book/ja/overview.md#参照点とプロトコル` | `Gm で P-CSCF に入り`、`自分では状態を持たない`、`404`、`UE が知っていなければならないアドレスは、P-CSCF だけ` |
+| 振り返りの答え | REGISTER の経路、Cx、Ut、Mp のプロトコル、I-CSCF が状態を持たないこと、ENUM のレコードが無い番号への 404、UE が知るアドレスを、説明のスライドと本の章に書いた | 課題から解説へ | `slides/decks/ja/02-network.md#backbone`、`slides/decks/ja/02-network.md#ue-の近くのノード`、`slides/decks/ja/02-network.md#ホーム網のノード`、`slides/decks/ja/02-network.md#この地図に無いもの`、`docs/book/ja/overview.md#1-回の登録で決まること`、`docs/book/ja/overview.md#参照点とプロトコル` | `Mp`、`XCAP`、`自分では状態を持たない`、`404` |
+| 次回 | 次の回の案内を外した。システムを起動して Diameter の接続を見るコマンドは手順書にある | 移動 | `docs/guide/ja/README.md#最初のコマンド`、`docs/book/ja/overview.md#自分で動かす場合` | `I-Open`、`docker compose up -d --build` |
+
+## en/02-network.md
+
+| 旧の見出し | 内容 | 扱い | 行き先 | 確かめる語 |
+| --- | --- | --- | --- | --- |
+| What you will know after this session | 回の言い方を外し、地図を開くものを本の章と手順書にした。本の章への案内を足した | 再編集 | `slides/decks/en/02-network.md#what-this-deck-covers` | `What this deck covers`、`What IMS does` |
+| The spine of the signaling | 振り返りの答えにあった REGISTER の通るノードと参照点を、このスライドに書いた | 課題から解説へ | `slides/decks/en/02-network.md#backbone` | `enters at the P-CSCF over Gm` |
+| The border, and what watches from outside | 回の言い方をデッキの言い方にした | 訂正 | `slides/decks/en/02-network.md#the-border-and-what-watches-from-outside` | `tcpdump on the bridge. It writes the files that every session reads.` |
+| Which session opens which part of the map | 回の番号を、地図の部分を読むデッキと本の章の名前にした。入門の章が地図の全体を先に通すことを足した | 再編集 | `slides/decks/en/02-network.md#where-to-read-each-part-of-the-map` | `the deck on registration`、`Watching the signalling`、`the deck on interconnection` |
+| Which session opens which part of the map | 回の番号は、開発の順の番号なので外した | 訂正 | `slides/decks/en/02-network.md#where-to-read-each-part-of-the-map` | `session 4, registration`、`session 5, the call`、`session 6, SMS`、`session 7, the supplementary services`、`session 9, VoLTE`、`session 8, the MRF`、`session 10, two networks joined at the border`、`session 3, captures and the Lab` |
+| Looking back | 5 つの問いの答えを、説明のスライドと本の章に書いた | 課題から解説へ | `slides/decks/en/02-network.md#backbone`、`slides/decks/en/02-network.md#the-nodes-at-the-edge`、`slides/decks/en/02-network.md#the-nodes-of-the-home-network`、`slides/decks/en/02-network.md#what-this-map-leaves-out`、`docs/book/en/overview.md#what-one-registration-settles`、`docs/book/en/overview.md#reference-points-and-protocols` | `enters at the P-CSCF over Gm`、`404`、`The only network address that the UE knows` |
+| Looking back: answers | REGISTER の経路、Cx、Ut、Mp のプロトコル、I-CSCF が状態を持たないこと、ENUM のレコードが無い番号への 404、UE が知るアドレスを、説明のスライドと本の章に書いた | 課題から解説へ | `slides/decks/en/02-network.md#backbone`、`slides/decks/en/02-network.md#the-nodes-at-the-edge`、`slides/decks/en/02-network.md#the-nodes-of-the-home-network`、`slides/decks/en/02-network.md#what-this-map-leaves-out`、`docs/book/en/overview.md#what-one-registration-settles`、`docs/book/en/overview.md#reference-points-and-protocols` | `Mp`、`XCAP`、`asks the HSS`、`404` |
+| Next session | 次の回の案内を外した。システムを起動して Diameter の接続を見るコマンドは手順書にある | 移動 | `docs/guide/en/README.md#the-first-commands`、`docs/book/en/overview.md#running-it-yourself` | `I-Open`、`docker compose up -d --build` |
+
+## ja/03-captures.md
+
+| 旧の見出し | 内容 | 扱い | 行き先 | 確かめる語 |
+| --- | --- | --- | --- | --- |
+| この回で分かること | 最初の問いに、同じスライドで答えた。回の言い方を外し、本の章への案内を足した | 再編集 | `slides/decks/ja/03-captures.md#このデッキで分かること`、`docs/book/ja/observing.md#観測したことと推定したこと` | `答え。キャプチャはブリッジを通ったパケットそのもの`、`信号を観測する` |
+| キャプチャは 1 つのファイルにまとまる | 起動のコマンドを手順書に任せた。回の番号を網間接続の構成と言い換えた | 移動 | `docs/guide/ja/capture.md#システムを起動する`、`docs/book/ja/observing.md#キャプチャはブリッジを通ったものを写す` | `docker compose up -d --build`、`3 つのブリッジ` |
+| Wireshark で開く | ファイルの開き方とライブで見る方法は手順書に任せた。開いている途中でも読めること、ファイルが残ること、Flow Graph の使い方はデッキと本の章に残した | 移動 | `docs/guide/ja/capture.md#キャプチャのファイルを開く`、`docs/guide/ja/capture.md#通信をライブで見る`、`slides/decks/ja/03-captures.md#one-file`、`docs/book/ja/observing.md#表示フィルタで残すもの` | `View > Reload`、`scripts/capture-live.sh`、`Limit to display filter`、`キャプチャの途中でも開けます` |
+| 登録の前から記録されているもの | ノードを止めて起動し直すコマンドを手順書に任せ、その結果をスライドと本の章に残した | 移動 | `docs/guide/ja/capture.md#ノードを起動すると見えるもの`、`docs/book/ja/observing.md#登録の前から写っているもの` | `docker compose stop scscf`、`REBOOTING` |
+| ラボを開く | 開き方は手順書に任せた。ループバックだけに公開しパスワードを聞かないこと、ラボが IMS と呼の経路の外にあることを、デッキのほかのスライドと本の章に書いた | 移動 | `docs/guide/ja/lab.md#ラボを開く`、`slides/decks/ja/03-captures.md#copies`、`slides/decks/ja/03-captures.md#各パネルの内容`、`docs/book/ja/observing.md#ラボはノードが送るコピーから組み立てる` | `live`、`呼の経路にもいない`、`ループバックアドレスにだけ公開します` |
+| UE シミュレータを操作する | UE シミュレータで通話をかける手順は手順書に任せた。独自の API であることと、シーケンス図が描くものは仕様どおりの信号であることを、コピーのスライドに書いた | 移動 | `docs/guide/ja/lab.md#ue-シミュレータを操作する`、`slides/decks/ja/03-captures.md#copies` | `manual`、`phone1`、`このプロジェクト独自のもの` |
+| 振り返り | 5 つの問いの答えを、説明のスライドと本の章に書いた | 課題から解説へ | `slides/decks/ja/03-captures.md#one-file`、`slides/decks/ja/03-captures.md#表示フィルタ`、`slides/decks/ja/03-captures.md#infer`、`slides/decks/ja/03-captures.md#dialogs`、`slides/decks/ja/03-captures.md#キャプチャに写らないメッセージ`、`docs/book/ja/observing.md#cx-と-rx-の結び付きはラボの推定` | `キャプチャ用のコンテナが最初に起動`、`ip.addr == 172.28.0.70`、`2 秒`、`icid-value`、`自分自身` |
+| 振り返りの答え | 同上。答えのそれぞれを、その仕組みを説明するスライドと本の章の節に置いた | 課題から解説へ | `slides/decks/ja/03-captures.md#one-file`、`slides/decks/ja/03-captures.md#表示フィルタ`、`slides/decks/ja/03-captures.md#infer`、`slides/decks/ja/03-captures.md#dialogs`、`slides/decks/ja/03-captures.md#キャプチャに写らないメッセージ`、`slides/decks/ja/03-captures.md#copies`、`docs/book/ja/observing.md#cx-と-rx-の結び付きはラボの推定` | `not udp.port == 9060`、`推定`、`コンテナの外に出ない` |
+| 次回 | 次の回の案内を外した。起動のコマンドと止め方は手順書にあり、7 本の CER は登録の前から写っているもののスライドと本の章に書いた | 移動 | `docs/guide/ja/capture.md#システムを起動する`、`slides/decks/ja/03-captures.md#登録の前から記録されているもの`、`docs/book/ja/observing.md#登録の前から写っているもの` | `7 本の接続`、`docker compose up -d --build` |
+
+## en/03-captures.md
+
+| 旧の見出し | 内容 | 扱い | 行き先 | 確かめる語 |
+| --- | --- | --- | --- | --- |
+| What you will know after this session | 最初の問いに、同じスライドで答えた。回の言い方を外し、本の章への案内を足した | 再編集 | `slides/decks/en/03-captures.md#what-this-deck-covers`、`docs/book/en/observing.md#observed-and-inferred` | `The answer: the capture is the packets that crossed the bridge`、`Watching the signalling` |
+| One network, one file | 起動のコマンドを手順書に任せた。回の番号を網間接続の構成と言い換えた | 移動 | `docs/guide/en/capture.md#start-the-system`、`docs/book/en/observing.md#a-capture-shows-what-crossed-the-bridge` | `docker compose up -d --build`、`three bridges` |
+| Open it in Wireshark | ファイルの開き方とライブで見る方法は手順書に任せた。開いている途中でも読めること、ファイルが残ること、Flow Graph の使い方はデッキと本の章に残した | 移動 | `docs/guide/en/capture.md#open-the-capture-file`、`docs/guide/en/capture.md#watch-the-traffic-live`、`slides/decks/en/03-captures.md#one-file`、`docs/book/en/observing.md#what-a-display-filter-keeps` | `View > Reload`、`scripts/capture-live.sh`、`Limit to display filter`、`while the capture still runs` |
+| What is in the file before any UE registers | ノードを止めて起動し直すコマンドを手順書に任せ、その結果をスライドと本の章に残した | 移動 | `docs/guide/en/capture.md#what-you-see-when-the-nodes-start`、`docs/book/en/observing.md#what-is-in-the-file-before-any-registration` | `docker compose stop scscf`、`REBOOTING` |
+| Open the Lab | 開き方は手順書に任せた。ループバックだけに公開しパスワードを聞かないこと、ラボが IMS と呼の経路の外にあることを、デッキのほかのスライドと本の章に書いた | 移動 | `docs/guide/en/lab.md#open-the-lab`、`slides/decks/en/03-captures.md#copies`、`slides/decks/en/03-captures.md#what-each-panel-shows`、`docs/book/en/observing.md#the-lab-builds-from-the-copies-the-nodes-send` | `live`、`not on the path of any call`、`loopback address only` |
+| Drive the UE simulators | UE シミュレータで通話をかける手順は手順書に任せた。独自の API であることと、シーケンス図が描くものは仕様どおりの信号であることを、コピーのスライドに書いた | 移動 | `docs/guide/en/lab.md#drive-the-ue-simulators`、`slides/decks/en/03-captures.md#copies` | `manual`、`phone1`、`this project's own` |
+| Looking back | 5 つの問いの答えを、説明のスライドと本の章に書いた | 課題から解説へ | `slides/decks/en/03-captures.md#one-file`、`slides/decks/en/03-captures.md#the-display-filter`、`slides/decks/en/03-captures.md#infer`、`slides/decks/en/03-captures.md#dialogs`、`slides/decks/en/03-captures.md#the-one-message-the-capture-does-not-have`、`docs/book/en/observing.md#the-link-of-cx-and-rx-is-the-labs-inference` | `The capture container starts first`、`ip.addr == 172.28.0.70`、`2 seconds`、`icid-value`、`to itself` |
+| Looking back: answers | 同上。答えのそれぞれを、その仕組みを説明するスライドと本の章の節に置いた | 課題から解説へ | `slides/decks/en/03-captures.md#one-file`、`slides/decks/en/03-captures.md#the-display-filter`、`slides/decks/en/03-captures.md#infer`、`slides/decks/en/03-captures.md#dialogs`、`slides/decks/en/03-captures.md#the-one-message-the-capture-does-not-have`、`slides/decks/en/03-captures.md#copies`、`docs/book/en/observing.md#the-link-of-cx-and-rx-is-the-labs-inference` | `not udp.port == 9060`、`infer`、`never leaves the container` |
+| Next session | 次の回の案内を外した。起動のコマンドと止め方は手順書にあり、7 本の CER は登録の前から写っているもののスライドと本の章に書いた | 移動 | `docs/guide/en/capture.md#start-the-system`、`slides/decks/en/03-captures.md#what-is-in-the-file-before-any-ue-registers`、`docs/book/en/observing.md#what-is-in-the-file-before-any-registration` | `seven connections`、`docker compose up -d --build` |
+
 ## ja/05-call.md
 
 | 旧の見出し | 内容 | 扱い | 行き先 | 確かめる語 |

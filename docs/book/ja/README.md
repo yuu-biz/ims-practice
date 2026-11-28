@@ -10,6 +10,9 @@
 
 IMS のノードが何を受け持ち、登録と通話で何が決まるかを、最小の地図と代表的な信号で見ます。
 
+1. [この本の読み方](preface.md)
+2. [IMS が受け持つ仕事](overview.md)
+3. [信号を観測する](observing.md)
 4. [登録で決まる 3 つのこと](registration.md)
 5. [番号から相手の電話へ](call.md)
 6. [アプリケーションサーバーが加えるサービス](services.md)
@@ -35,6 +38,10 @@ IMS のノードが何を受け持ち、登録と通話で何が決まるかを�
 - [複数台と障害で引き継ぐもの](design-shared-state.md)
 - [メディアの再交渉が失敗したとき](design-media-rollback.md)
 - [保守で止めることと、突然失うこと](design-maintenance.md)
+
+## 付録
+
+- [コードを読むための Go](go-reading.md)
 
 ## スライドと手順書
 
