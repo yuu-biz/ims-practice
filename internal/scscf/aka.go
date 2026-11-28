@@ -83,14 +83,15 @@ func (s *SCSCF) registerAKA(st *sip.ServerTransaction, privateID, publicID, serv
 // authenticate again; it does not, because the REGISTER came over the
 // security associations of the last authentication (TS 33.203 7.4.0).
 func (s *SCSCF) reregister(st *sip.ServerTransaction, privateID, publicID string, c sip.Credentials, expires time.Duration, log *slog.Logger) {
-	reg, ok, err := s.store.Registration(context.Background(), privateID)
+	reg, ok, err := s.registration(context.Background(), privateID)
 	if err != nil {
 		s.storeFailed(st, err, log)
 		return
 	}
 	if !ok {
 		// 5.4.1.2.3A: protected, but nobody registered by that name, and
-		// this S-CSCF has no restoration procedures.
+		// this S-CSCF has no restoration procedures. A binding past its
+		// Expires is nobody registered either (SCSCF.registration).
 		log.Info("protected REGISTER of a user not registered here")
 		s.respond(st, 500, nil)
 		return

@@ -175,6 +175,14 @@ func (r Registration) sameBinding(other Registration) bool {
 	return r.ContactID == other.ContactID && r.CallID == other.CallID && r.CSeq == other.CSeq
 }
 
+// expired reports whether the binding is no longer one at now: a
+// registration is soft state that runs out unless a REGISTER refreshes
+// it (RFC 3261 10.2.2). The Store hands out a registration past its
+// Expires, so that the instance which handles its expiry finds whom to
+// tell (Store.Registration); everything else goes by the binding, which
+// is gone by then (SCSCF.registration).
+func (r Registration) expired(now time.Time) bool { return !now.Before(r.Expires) }
+
 func barred(barredIDs []string, id string) bool {
 	return slices.ContainsFunc(barredIDs, func(b string) bool { return ims.SamePublicIdentity(b, id) })
 }
