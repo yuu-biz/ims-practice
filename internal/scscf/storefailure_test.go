@@ -430,7 +430,7 @@ func TestStaleAKAResponseWhenTheStoreFails(t *testing.T) {
 	}
 	creds := akaAnswer(ch, aka.DigestPassword(res.RES), sip.IntegrityProtectedYes)
 	creds.NC = "00000002"
-	creds.Response, _ = sip.DigestResponse(sip.HA1(impi, ch.Realm, aka.DigestPassword(res.RES)), sip.REGISTER, creds)
+	creds.Response, _ = sip.DigestResponse(sip.HA1(creds.Algorithm, impi, ch.Realm, aka.DigestPassword(res.RES)), sip.REGISTER, creds)
 	h.failing.fail("PutChallenge")
 	if r := h.register(callID, 2, 600000, creds.String()); r.StatusCode != 500 {
 		t.Fatalf("stale response whose new challenge cannot be stored got %d, want 500", r.StatusCode)

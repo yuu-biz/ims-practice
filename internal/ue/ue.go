@@ -460,7 +460,7 @@ func (u *UE) authorization() string {
 }
 
 func (u *UE) ha1() string {
-	return sip.HA1(u.cfg.PrivateIdentity, u.challenge.Realm, u.cfg.Password)
+	return sip.HA1(u.challenge.Algorithm, u.cfg.PrivateIdentity, u.challenge.Realm, u.cfg.Password)
 }
 
 // checkRspauth verifies Authentication-Info, which proves the network
@@ -474,7 +474,7 @@ func (u *UE) checkRspauth(resp *sip.Message) error {
 		return nil
 	case u.answer != nil:
 		c := u.answer.creds
-		return u.verifyRspauth(info, sip.HA1(u.cfg.PrivateIdentity, c.Realm, aka.DigestPassword(u.answer.res)), c.Realm, c.Nonce)
+		return u.verifyRspauth(info, sip.HA1(c.Algorithm, u.cfg.PrivateIdentity, c.Realm, aka.DigestPassword(u.answer.res)), c.Realm, c.Nonce)
 	case u.challenge != nil:
 		return u.verifyRspauth(info, u.ha1(), u.challenge.Realm, u.challenge.Nonce)
 	}

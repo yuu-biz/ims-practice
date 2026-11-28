@@ -57,7 +57,7 @@ type Challenge struct {
 // challenge.
 func (c Challenge) digestHA1() string {
 	if c.Algorithm == sip.AlgorithmAKAv1MD5 {
-		return sip.HA1(c.PrivateIdentity, c.Realm, aka.DigestPassword(c.XRES))
+		return sip.HA1(c.Algorithm, c.PrivateIdentity, c.Realm, aka.DigestPassword(c.XRES))
 	}
 	return c.HA1
 }

@@ -402,7 +402,7 @@ func readChallenge(resp *sip.Message, client []ims.IPsec3GPP) (sip.Challenge, []
 // with the fields of TS 24.229 5.1.1.5.1 item 4.
 func (u *UE) answerCredentials(ch sip.Challenge, res []byte) sip.Credentials {
 	c := u.challengeCredentials(ch)
-	c.Response, _ = sip.DigestResponse(sip.HA1(u.cfg.PrivateIdentity, ch.Realm, aka.DigestPassword(res)), sip.REGISTER, c)
+	c.Response, _ = sip.DigestResponse(sip.HA1(ch.Algorithm, u.cfg.PrivateIdentity, ch.Realm, aka.DigestPassword(res)), sip.REGISTER, c)
 	return c
 }
 
@@ -416,7 +416,7 @@ func (u *UE) failureCredentials(ch sip.Challenge, auts *aka.AUTS) sip.Credential
 	}
 	c := u.challengeCredentials(ch)
 	c.SetAUTS(aka.EncodeAUTS(*auts))
-	c.Response, _ = sip.DigestResponse(sip.HA1(u.cfg.PrivateIdentity, ch.Realm, ""), sip.REGISTER, c)
+	c.Response, _ = sip.DigestResponse(sip.HA1(ch.Algorithm, u.cfg.PrivateIdentity, ch.Realm, ""), sip.REGISTER, c)
 	return c
 }
 
