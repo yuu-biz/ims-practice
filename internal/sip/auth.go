@@ -48,9 +48,15 @@ type Credentials struct {
 	AuthParams Params
 }
 
-// AlgorithmAKAv1MD5 is the algorithm of Digest AKA version 1 (RFC 3310
-// 3.1), the one that IMS AKA uses in this project.
-const AlgorithmAKAv1MD5 = "AKAv1-MD5"
+// The algorithms of Digest AKA that IMS AKA uses (TS 33.203 6.1.1).
+const (
+	// AlgorithmAKAv2SHA256 is Digest AKA version 2 (RFC 4169 2) with the
+	// SHA-256 digest, the one the UE and the S-CSCF prefer.
+	AlgorithmAKAv2SHA256 = "AKAv2-SHA-256"
+	// AlgorithmAKAv1MD5 is Digest AKA version 1 (RFC 3310 3.1), kept for
+	// backward compatibility.
+	AlgorithmAKAv1MD5 = "AKAv1-MD5"
+)
 
 // Keys returns the ik and ck auth-params of a challenge, IK and CK in
 // hexadecimal, and whether both are there. With IMS AKA the S-CSCF adds

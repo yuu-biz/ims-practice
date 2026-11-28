@@ -53,7 +53,7 @@ func akaChallenge(t *testing.T, r *sip.Message) sip.Challenge {
 func akaAnswer(ch sip.Challenge, password string, integrity sip.IntegrityProtected) sip.Credentials {
 	c := sip.Credentials{Username: impi, Realm: ch.Realm, Nonce: ch.Nonce, URI: "sip:" + domain,
 		Algorithm: sip.AlgorithmAKAv1MD5, CNonce: "0a4f113b", QOP: "auth", NC: "00000001"}
-	c.Response, _ = sip.DigestResponse(sip.HA1(impi, ch.Realm, password), sip.REGISTER, c)
+	c.Response, _ = sip.DigestResponse(sip.HA1(c.Algorithm, impi, ch.Realm, password), sip.REGISTER, c)
 	c.SetIntegrityProtected(integrity)
 	return c
 }
@@ -92,7 +92,7 @@ func TestRegistrationWithIMSAKA(t *testing.T) {
 		t.Fatalf("answer got %d, want 200", r.StatusCode)
 	}
 	// RFC 3310 3.5: rspauth with XRES as the password.
-	rspauth, _ := sip.DigestResponse(sip.HA1(impi, ch.Realm, aka.DigestPassword(res.RES)), "", creds)
+	rspauth, _ := sip.DigestResponse(sip.HA1(creds.Algorithm, impi, ch.Realm, aka.DigestPassword(res.RES)), "", creds)
 	if got := r.Get("Authentication-Info"); !strings.Contains(got, `rspauth="`+rspauth+`"`) {
 		t.Errorf("Authentication-Info = %q, want rspauth %s", got, rspauth)
 	}
