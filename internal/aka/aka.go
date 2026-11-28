@@ -3,7 +3,8 @@
 // authentication vector that the HSS builds, the checks of the USIM
 // (or ISIM) and the re-synchronisation of the sequence numbers, with
 // the MILENAGE functions of TS 35.206. It also has the parts of RFC 3310
-// that carry AKA in SIP Digest: the nonce, the auts and the password.
+// and RFC 4169 that carry AKA in SIP Digest: the nonce, the auts and the
+// password of each AKA version.
 //
 // The HSS uses NewAuthenticationVector and Resynchronise; the UE uses
 // USIM. The package knows nothing of SIP or Diameter, so that both

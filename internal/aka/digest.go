@@ -1,8 +1,11 @@
 package aka
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"slices"
 )
 
 // Nonce is the nonce of the challenge, RFC 3310 3.2: the base64 of RAND
@@ -56,4 +59,24 @@ func ParseAUTS(s string) (AUTS, error) {
 // pass nil then.
 func DigestPassword(res []byte) string {
 	return string(res)
+}
+
+// akav2PasswordLabel is the string that the password is derived with
+// (RFC 4169 2.1). It is case sensitive.
+const akav2PasswordLabel = "http-digest-akav2-password"
+
+// AKAv2DigestPassword is the password that the Digest response of
+// AKAv2-SHA-256 is computed with (RFC 4169 2.1): the base64 of
+// PRF(RES || IK || CK, "http-digest-akav2-password"), where res is RES
+// on the UE and XRES on the S-CSCF. Binding the session keys into the
+// password is all that AKAv2 changes, and it is what makes the response
+// prove that the sender holds them and not only RES (RFC 4169 1).
+//
+// The PRF is HMAC with the hash that produces the digest (RFC 4169
+// 2.1), SHA-256 for AKAv2-SHA-256. A response that carries auts uses
+// the empty password of RFC 3310 3.4 instead, whatever the version.
+func AKAv2DigestPassword(res []byte, ik IK, ck CK) string {
+	prf := hmac.New(sha256.New, slices.Concat(res, ik[:], ck[:]))
+	prf.Write([]byte(akav2PasswordLabel))
+	return base64.StdEncoding.EncodeToString(prf.Sum(nil))
 }
