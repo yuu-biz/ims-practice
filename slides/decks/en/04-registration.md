@@ -1431,7 +1431,7 @@ steps:
 ```
 
 - A and B for the Call-ID and C for the Contact are long values written short for the example. They are not values of a capture.
-- The rule is step 6 of RFC 3261 10.3. With the same Call-ID, the binding changes only with a CSeq higher than the stored one; otherwise the request fails. The rule names no status code. This implementation answers 500, the code that step 7 of the same section names for a binding update that fails.
+- The rule is step 7 of RFC 3261 10.3. With the same Call-ID, the binding changes only with a CSeq higher than the stored one; otherwise the request fails. The rule names no status code. This implementation answers 500, the code that the same step names for binding updates that cannot be committed.
 - The S-CSCF compares after it has checked the answer to the challenge, and before it sends an SAR to the HSS. A deregistration is compared without a new challenge when there is an IP association. Either way, a refused request leaves nothing behind, at the HSS or in the binding.
 
 > Book: [Why a late deregistration does not remove a newer registration](../../../docs/book/en/registration-stale-deregistration.md). Guide: [7](../../../docs/guide/en/registration.md#7-the-ue-answers-the-challenge).

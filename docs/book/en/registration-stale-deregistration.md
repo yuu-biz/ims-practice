@@ -24,7 +24,7 @@ CSeq is a number that goes up with each request within the same Call-ID. The der
 
 ## The rule for the comparison
 
-Step 6 of RFC 3261 10.3 sets this rule. The registrar looks for a binding with the same Contact as the request. If there is one, it compares the Call-ID.
+Step 7 of RFC 3261 10.3 sets this rule. The registrar looks for a binding with the same Contact as the request. If there is one, it compares the Call-ID.
 
 - If the Call-ID differs from that of the binding, the registrar updates the binding (and removes it if Expires is 0).
 - If the Call-ID is the same, it compares the CSeq. If the request's CSeq is higher than that of the binding, the registrar updates or removes the binding. If not, it abandons the update, and the request fails.
@@ -117,7 +117,7 @@ If the P-CSCF holds an IP association, the deregistering REGISTER carries `integ
 
 When the S-CSCF finds a request out of order, it returns a 500 in `refuseOutOfOrder`. The Contact, the expiry, the Call-ID and the CSeq of the binding do not change, and no SAR goes to the HSS.
 
-The response code needs a separate look. Step 6 of RFC 3261 10.3 says only that such a request fails. It does not say which response code to return. This implementation chooses 500, the code that step 7 of the same section gives for a failed update of a binding. The standard does not fix 500 as the only code for this case; it is the choice of this implementation. Sending the same request again is refused for the same reason, so there is no Retry-After.
+The response code needs a separate look. Step 7 of RFC 3261 10.3 says only that such a request fails. It does not say which response code to return. This implementation chooses 500, the code that the same step gives for binding updates that cannot be committed. The standard does not fix 500 as the only code for this case; it is the choice of this implementation. Sending the same request again is refused for the same reason, so there is no Retry-After.
 
 On the re-registration side, the challenge that the refused request used was removed when the answer was checked. What remains after the refusal is the binding from before.
 
